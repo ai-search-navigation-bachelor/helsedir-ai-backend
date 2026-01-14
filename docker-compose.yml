@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: helsedir-ai-backend
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - CONTENT_FILE=/app/data/content.json
+      - LOGS_FILE=/app/logs/logs.jsonl
+      - HELSEDIR_API_KEY=${HELSEDIR_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      # Mount logs directory for persistence
+      - ./logs:/app/logs
+      # Mount code for development (comment out for production)
+      - ./app:/app/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Add a database in the future
+  # db:
+  #   image: postgres:15-alpine
+  #   container_name: helsedir-db
+  #   environment:
+  #     - POSTGRES_USER=helsedir
+  #     - POSTGRES_PASSWORD=helsedir
+  #     - POSTGRES_DB=helsedir
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+
+# volumes:
+#   postgres_data:

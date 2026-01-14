@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Logs (we'll mount these as volumes)
+logs/*.jsonl
+logs/*.log
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+
+# Development
+.editorconfig
+
+# OS
+.DS_Store
+Thumbs.db
+tmpclaude-*
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Old structure (before refactor)
+main.py
+config.py
+models/
+services/
+routes/
+run.py
+test_setup.py
+setup_venv.bat
+setup_venv.sh
