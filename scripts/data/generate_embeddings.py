@@ -46,7 +46,7 @@ def main():
         print("Error: TensorFlow required. Install with: pip install tensorflow")
         sys.exit(1)
 
-    from app.services.database_service import database_service
+    from app.services.data.database_service import database_service
     from app.ml.embedding_model import HealthContentEmbedding
 
     # Check database

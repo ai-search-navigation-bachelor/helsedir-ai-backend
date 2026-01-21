@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from app.config import settings
-from app.services.content_service import content_service
+from app.services.data.content_service import content_service
 from app.ml.embedding_model import HealthContentEmbedding
 from app.ml.ranking_model import HealthContentRanker
 

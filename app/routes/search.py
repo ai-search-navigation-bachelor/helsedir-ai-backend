@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from app.models.schemas import SearchResponse
-from app.services.search_service import search_service
-from app.services.logging_service import logging_service
+from app.controllers.search_controller import search_controller
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -27,28 +26,13 @@ async def search(
         SearchResponse with list of results, query, and total count
     """
     try:
-        # Select search method
-        if method == "semantic":
-            results = search_service.search_semantic(
-                query=query, role=role, k=k
-            )
-        elif method == "keyword":
-            results = search_service.search(
-                query=query, role=role, k=k
-            )
-        else:  # hybrid (default)
-            results = search_service.search_hybrid(
-                query=query, role=role, k=k
-            )
-
-        # Log the search event
-        logging_service.log_event(
-            event_type="search", query=query, role=role
+        return await search_controller.search(
+            query=query,
+            role=role,
+            k=k,
+            method=method
         )
-
-        return SearchResponse(
-            results=results, query=query, total=len(results)
-        )
-
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

@@ -202,7 +202,7 @@ def main():
         print("Error: TensorFlow is required. Install with: pip install tensorflow>=2.15.0")
         sys.exit(1)
 
-    from app.services.database_service import database_service
+    from app.services.data.database_service import database_service
     from app.ml.embedding_model import HealthContentEmbedding
 
     # Check database connection

@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from app.services.database_service import database_service
+from app.services.data.database_service import database_service
 
 
 # Feature names used by the ranking model

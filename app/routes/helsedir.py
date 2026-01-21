@@ -1,19 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-from typing import List, Optional
-from app.services.helsedir_api_service import (
-    helsedir_api_service,
-    HelseDirectorateAPIError,
+from typing import Optional
+from app.controllers.helsedir_controller import (
+    helsedir_controller,
+    HelseDirectorateSearchResponse,
 )
+from app.services.external.helsedir_api_service import HelseDirectorateAPIError
 
 router = APIRouter(prefix="/helsedir", tags=["helsedirektoratet"])
-
-
-class HelseDirectorateSearchResponse(BaseModel):
-    """Response from Helsedirektoratet API search."""
-    results: List[dict]
-    total: int
-    query: str
 
 
 @router.get("/search", response_model=HelseDirectorateSearchResponse)
@@ -58,25 +51,13 @@ async def search_helsedirektoratet(
         Search results directly from Helsedirektoratet API with Norwegian field names
     """
     try:
-        # Search API with all parameters
-        results = await helsedir_api_service.search_infobits_async(
-            query_text=query,
+        return await helsedir_controller.search(
+            query=query,
             filter_query=filter,
             search_mode=search_mode,
             query_type=query_type,
             get_full_infobits=get_full_infobits,
         )
-
-        # Results is a list
-        if not isinstance(results, list):
-            results = []
-
-        return HelseDirectorateSearchResponse(
-            results=results,
-            total=len(results),
-            query=query,
-        )
-
     except HelseDirectorateAPIError as e:
         raise HTTPException(
             status_code=503, detail=f"Helsedirektoratet API unavailable: {str(e)}"

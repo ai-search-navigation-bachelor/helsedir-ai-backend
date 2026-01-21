@@ -24,7 +24,7 @@ from typing import List, Set
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.database_service import database_service
+from app.services.data.database_service import database_service
 
 
 # Norwegian stopwords (common words to ignore)

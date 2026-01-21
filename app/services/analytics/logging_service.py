@@ -6,7 +6,7 @@ Logs search and click events to MySQL database for ML training.
 
 from datetime import datetime
 from typing import Optional, List
-from app.services.database_service import database_service
+from app.services.data.database_service import database_service
 
 
 class LoggingService:

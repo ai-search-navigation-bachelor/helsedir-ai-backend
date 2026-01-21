@@ -6,7 +6,7 @@ Loads content from database cache or Helsedirektoratet API.
 
 from typing import List, Optional
 from app.models.schemas import ContentItem
-from app.services.database_service import database_service
+from app.services.data.database_service import database_service
 
 
 class ContentService:
@@ -52,7 +52,7 @@ class ContentService:
         Example:
             >>> content_service.load_from_api(query_text="helse", max_items=50)
         """
-        from app.services.helsedir_api_service import (
+        from app.services.external.helsedir_api_service import (
             helsedir_api_service,
             HelseDirectorateAPIError,
         )

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.models.schemas import HealthResponse
-from datetime import datetime
+from app.controllers.health_controller import health_controller
 
 router = APIRouter(tags=["health"])
 
@@ -12,4 +12,4 @@ async def health_check():
 
     Returns the current status of the API.
     """
-    return HealthResponse(status="ok", timestamp=datetime.utcnow())
+    return await health_controller.check_health()

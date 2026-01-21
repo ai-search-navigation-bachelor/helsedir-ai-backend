@@ -16,7 +16,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.search_service import search_service
+from app.services.search.search_service import search_service
 
 
 def print_results(title: str, results: list, max_results: int = 5):

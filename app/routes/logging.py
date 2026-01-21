@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import LogRequest, LogResponse
-from app.services.logging_service import logging_service
+from app.controllers.logging_controller import logging_controller
 
 router = APIRouter(prefix="/log", tags=["logging"])
 
@@ -18,19 +18,7 @@ async def log_event(request: LogRequest):
         LogResponse indicating success or failure
     """
     try:
-        # Convert results_shown to list of dicts if provided
-        results_shown = None
-        if request.results_shown:
-            results_shown = [
-                {
-                    "content_id": r.content_id,
-                    "position": r.position,
-                    "score": r.score,
-                }
-                for r in request.results_shown
-            ]
-
-        success = logging_service.log_event(
+        return await logging_controller.log_event(
             event_type=request.event_type,
             query=request.query,
             content_id=request.content_id,
@@ -38,10 +26,7 @@ async def log_event(request: LogRequest):
             timestamp=request.timestamp,
             search_id=request.search_id,
             position=request.position,
-            results_shown=results_shown,
+            results_shown=request.results_shown,
         )
-
-        return LogResponse(success=success)
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Logging failed: {str(e)}")

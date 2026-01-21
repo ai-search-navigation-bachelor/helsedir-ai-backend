@@ -15,11 +15,11 @@ import os
 # Add parent directory to path so we can import from app
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.helsedir_api_service import (
+from app.services.external.helsedir_api_service import (
     helsedir_api_service,
     HelseDirectorateAPIError,
 )
-from app.services.database_service import database_service
+from app.services.data.database_service import database_service
 
 
 # Default search terms for broad medical coverage

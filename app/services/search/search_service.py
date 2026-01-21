@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from app.models.schemas import SearchResult, ContentItem
-from app.services.content_service import content_service
+from app.services.data.content_service import content_service
 from app.config import settings
 import re
 
@@ -204,7 +204,7 @@ class SearchService:
         if self._embeddings_loaded:
             return True
 
-        from app.services.database_service import database_service
+        from app.services.data.database_service import database_service
 
         conn = database_service._get_connection()
         if not conn:

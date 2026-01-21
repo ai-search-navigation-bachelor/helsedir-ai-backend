@@ -9,7 +9,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.helsedir_api_service import helsedir_api_service, HelseDirectorateAPIError
+from app.services.external.helsedir_api_service import helsedir_api_service, HelseDirectorateAPIError
 from app.config import settings
 
 
