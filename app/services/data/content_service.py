@@ -5,7 +5,7 @@ Loads content from database cache or Helsedirektoratet API.
 """
 
 from typing import List, Optional
-from app.models.schemas import ContentItem
+from app.entities.content import ContentItem
 from app.services.data.database_service import database_service
 
 

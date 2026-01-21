@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends
+from app.dto.request.search import HelseDirectorateSearchRequest
 from app.controllers.helsedir_controller import (
     helsedir_controller,
     HelseDirectorateSearchResponse,
@@ -10,13 +10,7 @@ router = APIRouter(prefix="/helsedir", tags=["helsedirektoratet"])
 
 
 @router.get("/search", response_model=HelseDirectorateSearchResponse)
-async def search_helsedirektoratet(
-    query: str = Query(..., description="Search query text", min_length=1, alias="QueryText"),
-    filter: Optional[str] = Query(None, description="OData filter expression (e.g., infoType eq 'retningslinje')", alias="Filter"),
-    search_mode: Optional[str] = Query(None, description="Search mode: 'Any' or 'All'", alias="SearchMode"),
-    query_type: Optional[str] = Query(None, description="Query type: 'Simple' or 'Full'", alias="QueryType"),
-    get_full_infobits: bool = Query(False, description="Return full infobit content", alias="getFullInfobits"),
-):
+async def search_helsedirektoratet(request: HelseDirectorateSearchRequest = Depends()):
     """
     Search directly in Helsedirektoratet API.
 
@@ -52,11 +46,11 @@ async def search_helsedirektoratet(
     """
     try:
         return await helsedir_controller.search(
-            query=query,
-            filter_query=filter,
-            search_mode=search_mode,
-            query_type=query_type,
-            get_full_infobits=get_full_infobits,
+            query=request.query,
+            filter_query=request.filter,
+            search_mode=request.search_mode,
+            query_type=request.query_type,
+            get_full_infobits=request.get_full_infobits,
         )
     except HelseDirectorateAPIError as e:
         raise HTTPException(

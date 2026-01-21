@@ -3,7 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from app.models.schemas import SearchResult, ContentItem
+from app.dto.response.search import SearchResult
+from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.config import settings
 import re

@@ -6,7 +6,8 @@ Handles business logic for event logging operations.
 
 from typing import Optional, List
 from datetime import datetime
-from app.models.schemas import LogResponse, SearchResultLog
+from app.dto.response.logging import LogResponse
+from app.dto.request.logging import SearchResultLog
 from app.services.analytics.logging_service import logging_service
 
 

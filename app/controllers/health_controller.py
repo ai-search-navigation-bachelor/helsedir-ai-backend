@@ -5,7 +5,7 @@ Handles business logic for health check operations.
 """
 
 from datetime import datetime
-from app.models.schemas import HealthResponse
+from app.dto.response.health import HealthResponse
 
 
 class HealthController:

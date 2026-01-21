@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.models.schemas import HealthResponse
+from app.dto.response.health import HealthResponse
 from app.controllers.health_controller import health_controller
 
 router = APIRouter(tags=["health"])

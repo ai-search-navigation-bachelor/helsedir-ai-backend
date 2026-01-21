@@ -5,7 +5,7 @@ Handles business logic for search operations.
 """
 
 from typing import Optional, List
-from app.models.schemas import SearchResult, SearchResponse
+from app.dto.response.search import SearchResult, SearchResponse
 from app.services.search.search_service import search_service
 from app.services.analytics.logging_service import logging_service
 
