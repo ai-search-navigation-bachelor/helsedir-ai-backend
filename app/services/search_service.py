@@ -1,6 +1,7 @@
 from typing import List, Optional
 from app.models.schemas import SearchResult, ContentItem
 from app.services.content_service import content_service
+from app.config import settings
 import re
 
 
@@ -52,7 +53,7 @@ class SearchService:
         return results[:k]
 
     def _calculate_score(self, item: ContentItem, query_lower: str, query_keywords: set) -> float:
-        """Calculate relevance score for a content item."""
+        """Calculate relevance score for a content item using configurable weights."""
         score = 0.0
 
         title_lower = item.title.lower()
@@ -60,28 +61,28 @@ class SearchService:
 
         # Exact phrase match in title (highest weight)
         if query_lower in title_lower:
-            score += 10.0
+            score += settings.search_exact_phrase_title_weight
 
         # Keyword matches in title
         title_keywords = set(re.findall(r'\w+', title_lower))
         title_matches = query_keywords & title_keywords
-        score += len(title_matches) * 3.0
+        score += len(title_matches) * settings.search_keyword_title_weight
 
         # Keyword matches in body
         body_keywords = set(re.findall(r'\w+', body_lower))
         body_matches = query_keywords & body_keywords
-        score += len(body_matches) * 1.0
+        score += len(body_matches) * settings.search_keyword_body_weight
 
         # Exact phrase match in body
         if query_lower in body_lower:
-            score += 2.0
+            score += settings.search_exact_phrase_body_weight
 
         # Tag matches
         if item.tags:
             tag_text = " ".join(item.tags).lower()
             tag_keywords = set(re.findall(r'\w+', tag_text))
             tag_matches = query_keywords & tag_keywords
-            score += len(tag_matches) * 2.0
+            score += len(tag_matches) * settings.search_tag_match_weight
 
         return score
 

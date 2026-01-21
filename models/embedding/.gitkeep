@@ -1,0 +1,2 @@
+# This directory stores trained embedding models
+# Models are created by: python scripts/train_embedding_model.py

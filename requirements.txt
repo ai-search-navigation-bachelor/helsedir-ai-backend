@@ -21,3 +21,7 @@ requests>=2.32.0
 # Optional: LLM integration (uncomment when ready)
 # openai>=1.57.0
 # langchain>=0.3.0
+
+# Machine Learning
+tensorflow>=2.15.0
+numpy>=1.26.0

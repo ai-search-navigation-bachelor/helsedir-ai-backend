@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     # Optional: OpenAI
     openai_api_key: str = ""
 
+    # Search scoring weights
+    search_exact_phrase_title_weight: float = 10.0
+    search_keyword_title_weight: float = 3.0
+    search_keyword_body_weight: float = 1.0
+    search_exact_phrase_body_weight: float = 2.0
+    search_tag_match_weight: float = 2.0
+
+    # ML settings
+    ml_embedding_enabled: bool = False
+    ml_ranking_enabled: bool = False
+    ml_models_dir: str = "models"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -42,6 +54,7 @@ settings = Settings()
 # Ensure directories exist
 Path("data").mkdir(exist_ok=True)
 Path("logs").mkdir(exist_ok=True)
+Path(settings.ml_models_dir).mkdir(exist_ok=True)
 
 # Print loaded configuration (useful for debugging)
 if settings.debug:
