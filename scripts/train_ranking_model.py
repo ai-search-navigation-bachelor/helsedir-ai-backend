@@ -3,18 +3,17 @@
 Training script for the health content ranking model.
 
 This script:
-1. Loads click logs from logs/logs.jsonl
+1. Loads training data from MySQL database (search_logs, click_logs)
 2. Prepares training data from search/click events
 3. Trains the ranking model
 4. Saves the trained model to models/ranking/
 
 Usage:
     python scripts/train_ranking_model.py
-    python scripts/train_ranking_model.py --data logs/logs.jsonl --epochs 50
+    python scripts/train_ranking_model.py --epochs 50 --batch-size 32
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -23,44 +22,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def load_logs(logs_file: str) -> list:
-    """Load logs from JSONL file."""
-    logs = []
-    with open(logs_file, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                logs.append(json.loads(line))
-    return logs
-
-
-def analyze_logs(logs: list) -> dict:
-    """Analyze logs for training statistics."""
-    search_events = [log for log in logs if log.get("event_type") == "search"]
-    click_events = [log for log in logs if log.get("event_type") == "click"]
-
-    # Count searches with results_shown (needed for training)
-    valid_searches = [
-        s for s in search_events if s.get("results_shown") and len(s["results_shown"]) > 0
-    ]
-
-    return {
-        "total_logs": len(logs),
-        "search_events": len(search_events),
-        "click_events": len(click_events),
-        "valid_searches": len(valid_searches),
-        "click_rate": len(click_events) / max(len(search_events), 1),
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Train the health content ranking model"
-    )
-    parser.add_argument(
-        "--data",
-        type=str,
-        default="logs/logs.jsonl",
-        help="Path to logs JSONL file",
     )
     parser.add_argument(
         "--output-dir",
@@ -110,60 +74,73 @@ def main():
         print("Error: TensorFlow is required. Install with: pip install tensorflow>=2.15.0")
         sys.exit(1)
 
+    from app.services.database_service import database_service
     from app.ml.ranking_model import (
         HealthContentRanker,
-        prepare_training_data_from_logs,
         RANKING_FEATURES,
     )
 
-    # Load logs
-    logs_file = Path(args.data)
-    if not logs_file.exists():
-        print(f"Error: Logs file not found: {logs_file}")
+    # Check database connection
+    if not database_service.is_connected():
+        print("Error: Cannot connect to database")
+        print("Check your MySQL settings in .env")
+        sys.exit(1)
+
+    # Get training data from database
+    print("Loading training data from database...")
+    training_data = database_service.get_training_data()
+
+    search_count = database_service.get_search_count()
+    click_count = database_service.get_click_count()
+
+    print(f"\nDatabase Statistics:")
+    print(f"  Total searches: {search_count}")
+    print(f"  Total clicks: {click_count}")
+    print(f"  Training samples: {len(training_data)}")
+
+    if not training_data:
+        print("\nNo training data available.")
+        print("Training data requires searches that have at least one click.")
         print("\nTo collect training data:")
-        print("1. Ensure your frontend logs search events with results_shown")
-        print("2. Ensure click events include query and position")
+        print("1. Ensure frontend sends search_id with search events")
+        print("2. Ensure frontend sends search_id with click events")
         print("3. Collect data over time until you have sufficient examples")
         sys.exit(1)
 
-    print(f"Loading logs from {logs_file}...")
-    logs = load_logs(logs_file)
+    # Convert training data to features and labels
+    positive_count = sum(1 for d in training_data if d["clicked"] == 1)
+    negative_count = len(training_data) - positive_count
 
-    # Analyze logs
-    stats = analyze_logs(logs)
-    print(f"\nLog Statistics:")
-    print(f"  Total logs: {stats['total_logs']}")
-    print(f"  Search events: {stats['search_events']}")
-    print(f"  Click events: {stats['click_events']}")
-    print(f"  Valid searches (with results): {stats['valid_searches']}")
-    print(f"  Click rate: {stats['click_rate']:.2%}")
+    print(f"  Positive samples (clicks): {positive_count}")
+    print(f"  Negative samples (no click): {negative_count}")
 
-    # Check for minimum data
-    if stats["valid_searches"] < 10:
-        print(f"\nWarning: Not enough valid search events with results_shown.")
-        print("Ensure your frontend logs search results like this:")
-        print("""
-{
-  "event_type": "search",
-  "query": "diabetes",
-  "results_shown": [
-    {"content_id": "1", "position": 0, "score": 12.5},
-    {"content_id": "2", "position": 1, "score": 8.3}
-  ]
-}
-""")
-
-    # Prepare training data
-    print("\nPreparing training data...")
-    features, labels = prepare_training_data_from_logs(logs)
-    print(f"Training samples: {len(features)}")
-    print(f"Positive samples (clicks): {int(labels.sum())}")
-    print(f"Negative samples (no click): {int(len(labels) - labels.sum())}")
-
-    if len(features) < args.min_samples:
-        print(f"\nError: Not enough training samples ({len(features)} < {args.min_samples})")
+    if len(training_data) < args.min_samples:
+        print(f"\nError: Not enough training samples ({len(training_data)} < {args.min_samples})")
         print("Continue collecting click data and try again later.")
         sys.exit(1)
+
+    # Prepare features and labels
+    features = []
+    labels = []
+
+    for sample in training_data:
+        feature_dict = {
+            "title_keyword_score": 0.0,
+            "body_keyword_score": 0.0,
+            "tag_match_score": 0.0,
+            "semantic_similarity": 0.0,
+            "content_type_encoded": 0.0,
+            "days_since_published": 0.0,
+            "historical_ctr": database_service.get_ctr(sample["content_id"]),
+            "role_match": 1.0 if sample.get("role") else 0.0,
+            "position_shown": float(sample.get("position", 0)) / 10.0,
+            "baseline_score": float(sample.get("score", 0)) / 20.0,
+        }
+        features.append([feature_dict.get(name, 0.0) for name in RANKING_FEATURES])
+        labels.append(sample["clicked"])
+
+    features = np.array(features, dtype=np.float32)
+    labels = np.array(labels, dtype=np.float32)
 
     # Parse hidden units
     hidden_units = [int(x.strip()) for x in args.hidden_units.split(",")]
@@ -214,13 +191,11 @@ def main():
     loaded_model = HealthContentRanker.load(str(model_path))
 
     # Test prediction
-    test_features = [
-        {name: 0.5 for name in RANKING_FEATURES}
-    ]
+    test_features = [{name: 0.5 for name in RANKING_FEATURES}]
     test_pred = loaded_model.predict(test_features)
     print(f"Test prediction: {test_pred[0]:.4f}")
 
-    print("\n✓ Training complete!")
+    print("\nTraining complete!")
     print(f"Model saved to: {model_path}.keras")
     print("\nTo enable learning-to-rank, set in .env:")
     print("  ML_RANKING_ENABLED=true")

@@ -11,6 +11,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
+from app.services.database_service import database_service
+
 
 # Feature names used by the ranking model
 RANKING_FEATURES = [
@@ -265,9 +267,9 @@ def extract_features(
     }
 
 
-def prepare_training_data_from_logs(logs: List[dict]) -> tuple:
+def prepare_training_data_from_database() -> tuple:
     """
-    Prepare training data from log entries.
+    Prepare training data from MySQL database.
 
     For each search event that has at least one click:
     - Positive example for clicked results (label=1)
@@ -276,69 +278,56 @@ def prepare_training_data_from_logs(logs: List[dict]) -> tuple:
     Searches without any clicks are ignored to avoid polluting training data
     with potentially irrelevant negative examples (e.g., user refined query).
 
-    Uses search_id to correctly link searches with their clicks.
-
-    Args:
-        logs: List of log entries
-
     Returns:
         Tuple of (features_array, labels_array)
     """
-    # Group logs by search sessions
-    search_events = [log for log in logs if log.get("event_type") == "search"]
-    click_events = [log for log in logs if log.get("event_type") == "click"]
+    # Get training data from database
+    training_data = database_service.get_training_data()
 
-    # Build click lookup by search_id
-    # Key: search_id -> Set of clicked content_ids
-    clicks_by_search_id = {}
-    for click in click_events:
-        search_id = click.get("search_id")
-        content_id = click.get("content_id", "")
-        if search_id and content_id:
-            if search_id not in clicks_by_search_id:
-                clicks_by_search_id[search_id] = set()
-            clicks_by_search_id[search_id].add(content_id)
+    if not training_data:
+        print("No training data found in database")
+        return np.array([]), np.array([])
 
     features_list = []
     labels_list = []
 
-    for search in search_events:
-        search_id = search.get("search_id")
-        results_shown = search.get("results_shown", [])
+    for row in training_data:
+        content_id = row.get("content_id", "")
+        score = row.get("score", 0.0)
+        clicked = row.get("clicked", 0)
 
-        # Skip searches without search_id (can't link to clicks)
-        if not search_id:
-            continue
+        # Get historical CTR for this content
+        historical_ctr = database_service.get_ctr(content_id)
 
-        # Skip searches that have no clicks (avoid polluting with bad negatives)
-        if search_id not in clicks_by_search_id:
-            continue
+        # Create feature dict (simplified for now)
+        # In production, you would fetch actual content and compute real features
+        feature_dict = {
+            "title_keyword_score": score * 0.3,  # Approximation
+            "body_keyword_score": score * 0.1,
+            "tag_match_score": score * 0.2,
+            "exact_phrase_title": 0.0,
+            "exact_phrase_body": 0.0,
+            "semantic_similarity": 0.0,
+            "content_type_encoded": 0.5,
+            "days_since_published": 0.0,
+            "historical_ctr": historical_ctr,
+            "role_match": 0.0,
+        }
 
-        clicked_content_ids = clicks_by_search_id[search_id]
-
-        for result in results_shown:
-            content_id = result.get("content_id", "")
-            position = result.get("position", 0)
-            score = result.get("score", 0.0)
-
-            # Check if this result was clicked
-            was_clicked = content_id in clicked_content_ids
-
-            # Create feature dict (simplified for now)
-            feature_dict = {
-                "title_keyword_score": score * 0.3,  # Approximation
-                "body_keyword_score": score * 0.1,
-                "tag_match_score": score * 0.2,
-                "exact_phrase_title": 0.0,
-                "exact_phrase_body": 0.0,
-                "semantic_similarity": 0.0,
-                "content_type_encoded": 0.5,
-                "days_since_published": 0.0,
-                "historical_ctr": 0.0,
-                "role_match": 0.0,
-            }
-
-            features_list.append(list(feature_dict.values()))
-            labels_list.append(1.0 if was_clicked else 0.0)
+        features_list.append(list(feature_dict.values()))
+        labels_list.append(float(clicked))
 
     return np.array(features_list), np.array(labels_list)
+
+
+def get_historical_ctr_from_database(content_id: str) -> float:
+    """
+    Get historical click-through rate for a content item from database.
+
+    Args:
+        content_id: The content ID
+
+    Returns:
+        CTR as float (0.0 if not found)
+    """
+    return database_service.get_ctr(content_id)

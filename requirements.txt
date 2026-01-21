@@ -25,3 +25,6 @@ requests>=2.32.0
 # Machine Learning
 tensorflow>=2.15.0
 numpy>=1.26.0
+
+# Database
+mysql-connector-python>=8.0.0

@@ -11,8 +11,7 @@ class ContentItem(BaseModel):
     body: str
     url: str
     content_type: str
-    published_at: str
-    target_groups: List[str]
+    target_groups: List[str] = []
     tags: Optional[List[str]] = []
 
 
@@ -22,6 +21,7 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Search query")
     role: Optional[str] = Field(None, description="User role for filtering")
     k: int = Field(10, ge=1, le=100, description="Number of results to return")
+    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
 
 
 class SearchResult(BaseModel):
