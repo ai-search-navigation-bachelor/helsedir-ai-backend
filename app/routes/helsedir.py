@@ -58,3 +58,44 @@ async def search_helsedirektoratet(request: HelseDirectorateSearchRequest = Depe
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@router.get("/infobit/{infobit_id}")
+async def get_infobit(infobit_id: str, include_children: bool = False, depth: int = 1):
+    """
+    Get detailed information for a specific infobit.
+
+    This endpoint fetches the full details of an infobit from the Helsedirektoratet API.
+
+    **Parameters:**
+    - **infobit_id** (required): The infobit ID (e.g., 0006-0014-70b46b52-eb30-4ee9-b8c8-ef5e238c419f)
+    - **include_children** (optional): If true, fetches child content (kapitler, etc.)
+    - **depth** (optional): How many levels deep to fetch children (default: 1)
+      - depth=1: Direct children only (kapitler)
+      - depth=2: Children and grandchildren (kapitler + pakkeforlop-anbefaling)
+      - depth=3+: Continue recursively
+
+    **Examples:**
+    ```
+    GET /helsedir/infobit/0006-0007-4569133a-5426-4072-a96b-3a4dc43def2e
+    GET /helsedir/infobit/0006-0007-4569133a-5426-4072-a96b-3a4dc43def2e?include_children=true
+    GET /helsedir/infobit/0006-0007-4569133a-5426-4072-a96b-3a4dc43def2e?include_children=true&depth=2
+    ```
+
+    Returns:
+        Full infobit details with nested children structure:
+        - Main infobit data (tittel, tekst, koder, etc.)
+        - children (if include_children=true):
+          - Kapitler with their full data
+          - children (if depth >= 2):
+            - Pakkeforlop-anbefaling or other child types
+            - And so on based on depth parameter
+    """
+    try:
+        return await helsedir_controller.get_infobit(infobit_id, include_children, depth)
+    except HelseDirectorateAPIError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch infobit: {str(e)}")

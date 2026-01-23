@@ -69,6 +69,90 @@ class HelseDirectorateController:
             query=query,
         )
 
+    async def get_infobit(
+        self,
+        infobit_id: str,
+        include_children: bool = False,
+        depth: int = 1,
+    ) -> dict:
+        """
+        Get detailed information for a specific infobit.
+
+        Args:
+            infobit_id: The infobit ID
+            include_children: Whether to fetch child content as well
+            depth: How many levels deep to fetch (1 = only direct children, 2 = grandchildren, etc.)
+
+        Returns:
+            Dictionary with full infobit details, optionally including nested children data
+
+        Raises:
+            HelseDirectorateAPIError: If API is unavailable or infobit not found
+        """
+        # Fetch main infobit
+        infobit = await self.api_service.get_infobit_by_id_async(infobit_id)
+
+        # If children are requested, fetch them recursively
+        if include_children and depth > 0:
+            infobit["children"] = await self._fetch_children(
+                infobit.get("links", []),
+                depth - 1
+            )
+
+        return infobit
+
+    async def _fetch_children(
+        self,
+        links: list,
+        remaining_depth: int,
+    ) -> list:
+        """
+        Recursively fetch child content from links.
+
+        Args:
+            links: List of link objects from parent content
+            remaining_depth: How many more levels to fetch (0 = no more children)
+
+        Returns:
+            List of child content with their data
+        """
+        children = []
+        
+        for link in links:
+            # Only fetch "barn" (child) links
+            if link.get("rel") != "barn":
+                continue
+
+            href = link.get("href", "")
+            if not href:
+                continue
+
+            try:
+                # Fetch child content using generic method
+                child_data = await self.api_service.get_content_by_href_async(href)
+                
+                child_item = {
+                    "tittel": link.get("tittel"),
+                    "type": link.get("type"),
+                    "href": href,
+                    "data": child_data
+                }
+
+                # Recursively fetch grandchildren if depth allows
+                if remaining_depth > 0 and "links" in child_data:
+                    child_item["children"] = await self._fetch_children(
+                        child_data.get("links", []),
+                        remaining_depth - 1
+                    )
+
+                children.append(child_item)
+                
+            except HelseDirectorateAPIError:
+                # Skip if content cannot be fetched
+                pass
+
+        return children
+
 
 # Global instance
 helsedir_controller = HelseDirectorateController()
