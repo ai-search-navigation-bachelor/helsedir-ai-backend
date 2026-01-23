@@ -288,8 +288,8 @@ class SearchService:
         query: str,
         role: Optional[str] = None,
         k: int = 10,
-        keyword_weight: float = 0.4,
-        semantic_weight: float = 0.6,
+        keyword_weight: float = 0.2,
+        semantic_weight: float = 0.8,
     ) -> List[SearchResult]:
         """
         Perform hybrid search combining keyword and semantic scores.

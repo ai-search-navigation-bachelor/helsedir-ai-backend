@@ -14,6 +14,7 @@ requests>=2.32.0
 sentence-transformers>=3.3.0
 numpy>=1.26.0
 torch>=2.0.0
+xgboost>=2.0.0
 
 # Optional: Vector search optimization
 # faiss-cpu>=1.9.0

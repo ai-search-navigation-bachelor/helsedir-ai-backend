@@ -1,332 +1,443 @@
 """
-TensorFlow learning-to-rank model for health content search.
+Professional Learning-to-Rank reranker for health content search (LambdaMART / XGBoost).
 
-This module provides a ranking model that combines multiple features
-to predict the relevance of search results.
+This module replaces the previous TensorFlow binary classifier approach.
+
+Why this version is better:
+- Trains a *ranking* model (LambdaMART) grouped by search_id (true LTR), not global click classification.
+- Uses IPS (inverse propensity scoring) sample weights to reduce position bias.
+- Uses smoothed CTR as a weak prior (avoids one-click wonders).
+- Works with your existing DB logging tables:
+  - search_logs
+  - search_results_shown (impressions + per-result features)
+  - click_logs (click + dwell)
+  - content_stats (global clicks/impressions)
+
+Runtime usage:
+1) Generate candidates (vector search / hybrid), compute per-result features.
+2) Call reranker.rerank(...) to sort candidates.
+3) Log shown results + clicks (already in your system).
+
+Training usage:
+- Call reranker.train_from_database() periodically (offline job / manual).
 """
 
-from typing import Dict, List, Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
+
+try:
+    import xgboost as xgb
+except ImportError as e:
+    raise ImportError(
+        "Missing dependency: xgboost. Install with: pip install xgboost"
+    ) from e
 
 from app.services.data.database_service import database_service
 
 
-# Feature names used by the ranking model
-RANKING_FEATURES = [
-    "title_keyword_score",
-    "body_keyword_score",
-    "tag_match_score",
-    "exact_phrase_title",
-    "exact_phrase_body",
-    "semantic_similarity",
-    "content_type_encoded",
-    "historical_ctr",
-    "role_match",
+# ---------------------------------------------------------------------
+# Feature schema (MUST be consistent between training and inference)
+# ---------------------------------------------------------------------
+
+RERANK_FEATURES: List[str] = [
+    # Main relevance signals
+    "semantic_similarity",      # cosine similarity (0..1-ish)
+    "title_keyword_score",      # BM25/keyword score for title
+    "body_keyword_score",       # BM25/keyword score for body
+    "exact_phrase_title",       # 0/1
+    "exact_phrase_body",        # 0/1
+
+    # Metadata / intent alignment
+    "type_match",               # 0/1  (info_type matches query intent)
+    "role_match",               # 0/1  (role matches allowed roles)
+    "code_match_count",         # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
+    "lis_match",                # 0/1
+    "maalgruppe_match",         # 0/1
+
+    # Popularity priors (weak)
+    "smoothed_ctr",             # smoothed CTR in [0..1]
+    "log_impressions",          # log(1 + impressions)
+
+    # Bias/context
+    "position",                 # shown position (1..N)
 ]
 
 
-class HealthContentRanker:
+def _f(x, default: float = 0.0) -> float:
+    """Safe float conversion."""
+    try:
+        if x is None:
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
+def smoothed_ctr(clicks: int, impressions: int, alpha: float = 1.0, beta: float = 20.0) -> float:
     """
-    Learning-to-rank model that combines multiple features.
+    Smoothed CTR prevents "one-click wonders" from dominating.
+    (clicks + alpha) / (impressions + alpha + beta)
+    """
+    clicks = max(0, int(clicks))
+    impressions = max(0, int(impressions))
+    return float((clicks + alpha) / (impressions + alpha + beta))
 
-    Features include:
-    - Keyword match scores (from baseline search)
-    - Semantic similarity (from embedding model)
-    - Content metadata (type, age, etc.)
-    - Historical CTR (click-through rate)
 
-    Architecture:
-    - Multi-layer feedforward neural network
-    - Sigmoid output for relevance probability
+def log1p_int(x: int) -> float:
+    return float(np.log1p(max(0, int(x))))
+
+
+def propensity_for_position(pos: int) -> float:
+    """
+    Approximate propensity (P(click | position)) used for IPS weighting.
+    Replace with DB-driven propensities if you created `position_propensity`.
+    """
+    if pos <= 1:
+        return 1.00
+    if pos == 2:
+        return 0.70
+    if pos == 3:
+        return 0.55
+    if pos == 4:
+        return 0.45
+    if pos == 5:
+        return 0.40
+    if pos == 6:
+        return 0.35
+    if pos == 7:
+        return 0.30
+    if pos == 8:
+        return 0.28
+    if pos == 9:
+        return 0.26
+    if pos == 10:
+        return 0.24
+    return 0.20
+
+
+# ---------------------------------------------------------------------
+# Candidate dataclass used at inference time
+# ---------------------------------------------------------------------
+
+@dataclass
+class RerankCandidate:
+    content_id: str
+    position: int
+
+    # main signals
+    semantic_similarity: float = 0.0
+    title_keyword_score: float = 0.0
+    body_keyword_score: float = 0.0
+    exact_phrase_title: float = 0.0
+    exact_phrase_body: float = 0.0
+
+    # metadata alignment
+    type_match: float = 0.0
+    role_match: float = 0.0
+    code_match_count: float = 0.0
+    lis_match: float = 0.0
+    maalgruppe_match: float = 0.0
+
+    # popularity (filled from content_stats)
+    smoothed_ctr: float = 0.0
+    log_impressions: float = 0.0
+
+
+# ---------------------------------------------------------------------
+# Reranker class
+# ---------------------------------------------------------------------
+
+class HealthContentReranker:
+    """
+    Professional reranker using LambdaMART (XGBoost XGBRanker).
+
+    - train_from_database(): builds groupwise training data from logs.
+    - rerank(): scores candidates and returns sorted list.
+    - save()/load(): persists model.
+
+    Notes:
+    - This model is trained on clicks as weak labels. Use dwell time if available.
+    - Make sure search_results_shown logs per-result features (semantic_similarity, title/body scores, etc.).
     """
 
-    def __init__(self, num_features: int = 9, hidden_units: List[int] = None):
-        """
-        Initialize the ranking model.
+    def __init__(self) -> None:
+        self.model: Optional[xgb.XGBRanker] = None
+        self.feature_names: List[str] = list(RERANK_FEATURES)
 
-        Args:
-            num_features: Number of input features
-            hidden_units: List of hidden layer sizes (default: [64, 32])
-        """
-        self.num_features = num_features
-        self.hidden_units = hidden_units or [64, 32]
-        self.feature_names = RANKING_FEATURES[:num_features]
+    # -------------------------
+    # Training
+    # -------------------------
 
-        self.model = self._build_model()
-
-    def _build_model(self) -> "keras.Model":
-        """Build the ranking model architecture."""
-        # Input layer
-        features_input = keras.Input(
-            shape=(self.num_features,), name="features_input"
-        )
-
-        x = features_input
-
-        # Hidden layers with batch normalization and dropout
-        for i, units in enumerate(self.hidden_units):
-            x = keras.layers.Dense(
-                units,
-                activation="relu",
-                kernel_regularizer=keras.regularizers.l2(1e-4),
-                name=f"dense_{i}",
-            )(x)
-            x = keras.layers.BatchNormalization(name=f"bn_{i}")(x)
-            x = keras.layers.Dropout(0.2, name=f"dropout_{i}")(x)
-
-        # Output layer - relevance score
-        output = keras.layers.Dense(
-            1, activation="sigmoid", name="relevance_score"
-        )(x)
-
-        model = keras.Model(
-            inputs=features_input, outputs=output, name="health_ranker"
-        )
-        return model
-
-    def compile(
+    def train_from_database(
         self,
-        learning_rate: float = 1e-3,
-        loss: str = "binary_crossentropy",
-    ) -> None:
+        *,
+        days_back: int = 180,
+        min_group_size: int = 5,
+        require_any_click: bool = True,
+        use_dwell: bool = True,
+        dwell_positive_ms: int = 8000,
+        use_db_propensity: bool = True,
+        verbose: bool = True,
+    ) -> Dict[str, float]:
         """
-        Compile the model for training.
+        Train a LambdaMART reranker from DB logs.
 
-        Args:
-            learning_rate: Learning rate for optimizer
-            loss: Loss function (default: binary_crossentropy for click/no-click)
+        Expected database_service methods:
+          - get_ltr_training_rows(days_back) -> list[dict]
+            Each row should include:
+              search_id, content_id, position, clicked, dwell_ms,
+              semantic_similarity, title_keyword_score, body_keyword_score,
+              exact_phrase_title, exact_phrase_body,
+              type_match, role_match, code_match_count, lis_match, maalgruppe_match
+          - get_content_stats_bulk() -> dict[content_id] = {"clicks": int, "impressions": int}
+          - (optional) get_position_propensities() -> dict[position] = propensity float
         """
-        self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-            loss=loss,
-            metrics=["accuracy", keras.metrics.AUC(name="auc")],
+        rows = database_service.get_ltr_training_rows(days_back=days_back)
+        if not rows:
+            return {"trained": 0.0, "groups": 0.0, "rows": 0.0}
+
+        # Group by search_id
+        groups: Dict[str, List[dict]] = {}
+        for r in rows:
+            sid = r.get("search_id")
+            if sid is None:
+                continue
+            groups.setdefault(str(sid), []).append(r)
+
+        # Bulk content stats for priors
+        stats = database_service.get_content_stats_bulk()
+
+        # Optional propensity table from DB
+        pos_prop: Dict[int, float] = {}
+        if use_db_propensity:
+            try:
+                pos_prop = database_service.get_position_propensities()
+            except Exception:
+                pos_prop = {}
+
+        X_all: List[List[float]] = []
+        y_all: List[float] = []
+        w_all: List[float] = []
+        group_sizes: List[int] = []
+
+        used_groups = 0
+        used_rows = 0
+
+        for sid, items in groups.items():
+            if len(items) < min_group_size:
+                continue
+
+            # Sort by position (stable)
+            items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
+
+            # Build labels and detect click presence
+            labels: List[int] = []
+            feats: List[List[float]] = []
+            weights: List[float] = []
+
+            any_pos = False
+            any_click = False
+
+            for rr in items_sorted:
+                cid = str(rr.get("content_id", ""))
+                pos = int(rr.get("position") or 0)
+                if pos <= 0:
+                    pos = 10  # fallback
+                any_pos = True
+
+                clicked = int(rr.get("clicked") or 0)
+                dwell = rr.get("dwell_ms")
+
+                # Optional: clean positives with dwell threshold
+                if use_dwell and clicked == 1:
+                    try:
+                        if dwell is None or int(dwell) < dwell_positive_ms:
+                            clicked = 0
+                    except Exception:
+                        clicked = 0
+
+                if clicked == 1:
+                    any_click = True
+
+                # popularity priors
+                st = stats.get(cid, {"clicks": 0, "impressions": 0})
+                ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
+                log_imp = log1p_int(st.get("impressions", 0))
+
+                # build feature dict from logged row (preferred) + priors
+                feat_dict = {
+                    "semantic_similarity": _f(rr.get("semantic_similarity"), _f(rr.get("candidate_score"), 0.0)),
+                    "title_keyword_score": _f(rr.get("title_keyword_score"), 0.0),
+                    "body_keyword_score": _f(rr.get("body_keyword_score"), 0.0),
+                    "exact_phrase_title": _f(rr.get("exact_phrase_title"), 0.0),
+                    "exact_phrase_body": _f(rr.get("exact_phrase_body"), 0.0),
+                    "type_match": _f(rr.get("type_match"), 0.0),
+                    "role_match": _f(rr.get("role_match"), 0.0),
+                    "code_match_count": _f(rr.get("code_match_count"), 0.0),
+                    "lis_match": _f(rr.get("lis_match"), 0.0),
+                    "maalgruppe_match": _f(rr.get("maalgruppe_match"), 0.0),
+                    "smoothed_ctr": ctr,
+                    "log_impressions": log_imp,
+                    "position": float(pos),
+                }
+
+                feats.append([feat_dict[n] for n in self.feature_names])
+                labels.append(float(clicked))
+
+                # IPS weight to reduce position bias
+                prop = pos_prop.get(pos) if pos_prop else None
+                if prop is None:
+                    prop = propensity_for_position(pos)
+                weights.append(1.0 / max(float(prop), 1e-6))
+
+            if not any_pos:
+                continue
+            if require_any_click and not any_click:
+                continue
+
+            X_all.extend(feats)
+            y_all.extend(labels)
+            w_all.extend(weights)
+            group_sizes.append(len(labels))
+            used_groups += 1
+            used_rows += len(labels)
+
+        if used_groups == 0:
+            return {"trained": 0.0, "groups": 0.0, "rows": 0.0}
+
+        X = np.asarray(X_all, dtype=np.float32)
+        y = np.asarray(y_all, dtype=np.float32)
+        w = np.asarray(w_all, dtype=np.float32)
+
+        self.model = xgb.XGBRanker(
+            objective="rank:ndcg",
+            learning_rate=0.08,
+            max_depth=6,
+            n_estimators=350,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            random_state=42,
+            tree_method="hist",
         )
 
-    def train(
+        self.model.fit(X, y, sample_weight=w, group=group_sizes, verbose=verbose)
+
+        return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
+
+    # -------------------------
+    # Inference
+    # -------------------------
+
+    def rerank(
         self,
-        features: np.ndarray,
-        labels: np.ndarray,
-        validation_split: float = 0.2,
-        epochs: int = 50,
-        batch_size: int = 32,
-        early_stopping_patience: int = 5,
-    ) -> "keras.callbacks.History":
+        query: str,
+        role: str,
+        candidates: Sequence[RerankCandidate],
+        *,
+        content_stats: Optional[Dict[str, Dict[str, int]]] = None,
+    ) -> List[Tuple[RerankCandidate, float]]:
         """
-        Train the ranking model.
+        Rerank a list of candidates.
 
-        Args:
-            features: Training features of shape (n_samples, num_features)
-            labels: Training labels (1 = clicked, 0 = not clicked)
-            validation_split: Fraction of data for validation
-            epochs: Maximum number of training epochs
-            batch_size: Training batch size
-            early_stopping_patience: Epochs to wait before early stopping
+        Provide candidates with their precomputed features (semantic/keyword/metadata).
+        This method adds popularity priors (smoothed_ctr/log_impressions) automatically.
 
-        Returns:
-            Training history
+        Returns: list of (candidate, score), sorted by score descending.
         """
-        callbacks = [
-            keras.callbacks.EarlyStopping(
-                monitor="val_auc",
-                patience=early_stopping_patience,
-                mode="max",
-                restore_best_weights=True,
-            ),
-            keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss",
-                factor=0.5,
-                patience=3,
-                min_lr=1e-6,
-            ),
-        ]
+        if not candidates:
+            return []
 
-        return self.model.fit(
-            features,
-            labels,
-            validation_split=validation_split,
-            epochs=epochs,
-            batch_size=batch_size,
-            callbacks=callbacks,
-            verbose=1,
-        )
+        if self.model is None:
+            # Safe fallback if model isn't available yet:
+            scored = [(c, float(c.semantic_similarity)) for c in candidates]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored
 
-    def predict(self, features: List[Dict[str, float]]) -> List[float]:
-        """
-        Predict relevance scores for search results.
+        # Fetch stats once (bulk)
+        stats = content_stats or database_service.get_content_stats_bulk()
 
-        Args:
-            features: List of feature dictionaries
+        # Build feature matrix
+        X = []
+        for c in candidates:
+            st = stats.get(c.content_id, {"clicks": 0, "impressions": 0})
+            c.smoothed_ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
+            c.log_impressions = log1p_int(st.get("impressions", 0))
 
-        Returns:
-            List of relevance scores (0-1)
-        """
-        # Convert feature dicts to numpy array
-        feature_array = self._features_to_array(features)
-        predictions = self.model.predict(feature_array, verbose=0)
-        return predictions.flatten().tolist()
+            feat_dict = {
+                "semantic_similarity": _f(c.semantic_similarity),
+                "title_keyword_score": _f(c.title_keyword_score),
+                "body_keyword_score": _f(c.body_keyword_score),
+                "exact_phrase_title": _f(c.exact_phrase_title),
+                "exact_phrase_body": _f(c.exact_phrase_body),
+                "type_match": _f(c.type_match),
+                "role_match": _f(c.role_match),
+                "code_match_count": _f(c.code_match_count),
+                "lis_match": _f(c.lis_match),
+                "maalgruppe_match": _f(c.maalgruppe_match),
+                "smoothed_ctr": _f(c.smoothed_ctr),
+                "log_impressions": _f(c.log_impressions),
+                "position": float(int(c.position) if c.position else 0),
+            }
+            X.append([feat_dict[n] for n in self.feature_names])
 
-    def _features_to_array(
-        self, features: List[Dict[str, float]]
-    ) -> np.ndarray:
-        """Convert list of feature dicts to numpy array."""
-        result = np.zeros((len(features), self.num_features))
+        X_np = np.asarray(X, dtype=np.float32)
+        scores = self.model.predict(X_np)
+        out = list(zip(list(candidates), [float(s) for s in scores]))
+        out.sort(key=lambda x: x[1], reverse=True)
+        return out
 
-        for i, feature_dict in enumerate(features):
-            for j, name in enumerate(self.feature_names):
-                result[i, j] = feature_dict.get(name, 0.0)
-
-        return result
+    # -------------------------
+    # Persistence
+    # -------------------------
 
     def save(self, path: str) -> None:
-        """
-        Save the model to disk.
+        """Save model to disk."""
+        if self.model is None:
+            raise ValueError("No reranker model loaded/trained. Cannot save.")
+        self.model.save_model(path)
 
-        Args:
-            path: Path to save the model (without extension)
-        """
-        self.model.save(f"{path}.keras")
-
-    @classmethod
-    def load(cls, path: str) -> "HealthContentRanker":
-        """
-        Load a saved model from disk.
-
-        Args:
-            path: Path to the saved model (without extension)
-
-        Returns:
-            Loaded HealthContentRanker instance
-        """
-        instance = cls.__new__(cls)
-        instance.model = keras.models.load_model(f"{path}.keras")
-        instance.num_features = instance.model.input_shape[1]
-        instance.feature_names = RANKING_FEATURES[: instance.num_features]
-        return instance
+    def load(self, path: str) -> None:
+        """Load model from disk."""
+        m = xgb.XGBRanker()
+        m.load_model(path)
+        self.model = m
 
 
-def extract_features(
-    query: str,
-    result: dict,
-    semantic_score: float = 0.0,
-    historical_ctr: float = 0.0,
-    content_type_map: Optional[Dict[str, int]] = None,
+# ---------------------------------------------------------------------
+# Compatibility helpers (if old code expects feature dicts)
+# ---------------------------------------------------------------------
+
+def extract_features_for_candidate(
+    *,
+    semantic_similarity: float,
+    title_keyword_score: float = 0.0,
+    body_keyword_score: float = 0.0,
+    exact_phrase_title: bool = False,
+    exact_phrase_body: bool = False,
+    type_match: bool = False,
+    role_match: bool = False,
+    code_match_count: int = 0,
+    lis_match: bool = False,
+    maalgruppe_match: bool = False,
 ) -> Dict[str, float]:
     """
-    Extract ranking features for a search result.
-
-    Args:
-        query: Search query
-        result: Search result dict with score breakdown
-        semantic_score: Semantic similarity score (0-1)
-        historical_ctr: Historical click-through rate for this content
-        content_type_map: Mapping from content type to encoded value
-
-    Returns:
-        Feature dictionary
+    Optional helper if your pipeline builds dict features first.
+    (RerankCandidate is preferred.)
     """
-    content_type_map = content_type_map or {
-        "retningslinje": 0,
-        "veileder": 1,
-        "informasjon": 2,
-    }
-
-    # Parse days since published if available
-    days_since_published = 0.0
-    if "published_at" in result:
-        from datetime import datetime
-
-        try:
-            pub_date = datetime.fromisoformat(
-                result["published_at"].replace("Z", "+00:00")
-            )
-            days_since_published = (datetime.now(pub_date.tzinfo) - pub_date).days
-        except (ValueError, AttributeError):
-            pass
-
-    # Normalize days to 0-1 range (cap at 5 years)
-    days_normalized = min(days_since_published / 1825.0, 1.0)
-
     return {
-        "title_keyword_score": result.get("title_keyword_score", 0.0),
-        "body_keyword_score": result.get("body_keyword_score", 0.0),
-        "tag_match_score": result.get("tag_match_score", 0.0),
-        "exact_phrase_title": float(result.get("exact_phrase_title", False)),
-        "exact_phrase_body": float(result.get("exact_phrase_body", False)),
-        "semantic_similarity": semantic_score,
-        "content_type_encoded": content_type_map.get(
-            result.get("content_type", "").lower(), 2
-        )
-        / 2.0,  # Normalize to 0-1
-        "days_since_published": days_normalized,
-        "historical_ctr": historical_ctr,
-        "role_match": float(result.get("role_match", False)),
+        "semantic_similarity": float(semantic_similarity),
+        "title_keyword_score": float(title_keyword_score),
+        "body_keyword_score": float(body_keyword_score),
+        "exact_phrase_title": float(bool(exact_phrase_title)),
+        "exact_phrase_body": float(bool(exact_phrase_body)),
+        "type_match": float(bool(type_match)),
+        "role_match": float(bool(role_match)),
+        "code_match_count": float(int(code_match_count)),
+        "lis_match": float(bool(lis_match)),
+        "maalgruppe_match": float(bool(maalgruppe_match)),
     }
-
-
-def prepare_training_data_from_database() -> tuple:
-    """
-    Prepare training data from MySQL database.
-
-    For each search event that has at least one click:
-    - Positive example for clicked results (label=1)
-    - Negative example for shown but not clicked (label=0)
-
-    Searches without any clicks are ignored to avoid polluting training data
-    with potentially irrelevant negative examples (e.g., user refined query).
-
-    Returns:
-        Tuple of (features_array, labels_array)
-    """
-    # Get training data from database
-    training_data = database_service.get_training_data()
-
-    if not training_data:
-        print("No training data found in database")
-        return np.array([]), np.array([])
-
-    features_list = []
-    labels_list = []
-
-    for row in training_data:
-        content_id = row.get("content_id", "")
-        score = row.get("score", 0.0)
-        clicked = row.get("clicked", 0)
-
-        # Get historical CTR for this content
-        historical_ctr = database_service.get_ctr(content_id)
-
-        # Create feature dict (simplified for now)
-        # In production, you would fetch actual content and compute real features
-        feature_dict = {
-            "title_keyword_score": score * 0.3,  # Approximation
-            "body_keyword_score": score * 0.1,
-            "tag_match_score": score * 0.2,
-            "exact_phrase_title": 0.0,
-            "exact_phrase_body": 0.0,
-            "semantic_similarity": 0.0,
-            "content_type_encoded": 0.5,
-            "days_since_published": 0.0,
-            "historical_ctr": historical_ctr,
-            "role_match": 0.0,
-        }
-
-        features_list.append(list(feature_dict.values()))
-        labels_list.append(float(clicked))
-
-    return np.array(features_list), np.array(labels_list)
-
-
-def get_historical_ctr_from_database(content_id: str) -> float:
-    """
-    Get historical click-through rate for a content item from database.
-
-    Args:
-        content_id: The content ID
-
-    Returns:
-        CTR as float (0.0 if not found)
-    """
-    return database_service.get_ctr(content_id)

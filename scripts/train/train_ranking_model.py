@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """
-Training script for the health content ranking model.
+Train the learning-to-rank reranker model.
 
-This script:
-1. Loads training data from MySQL database (search_logs, click_logs)
-2. Prepares training data from search/click events
-3. Trains the ranking model
-4. Saves the trained model to models/ranking/
-
-Usage:
-    python scripts/train_ranking_model.py
-    python scripts/train_ranking_model.py --epochs 50 --batch-size 32
+This script trains a XGBoost LambdaMART model from database logs.
 """
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -21,170 +12,60 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from app.ml.ranking_model import HealthContentReranker
+
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Train the health content ranking model"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="models/ranking",
-        help="Directory to save trained model",
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=50,
-        help="Maximum training epochs",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=32,
-        help="Training batch size",
-    )
-    parser.add_argument(
-        "--validation-split",
-        type=float,
-        default=0.2,
-        help="Validation data fraction",
-    )
-    parser.add_argument(
-        "--min-samples",
-        type=int,
-        default=100,
-        help="Minimum training samples required",
-    )
-    parser.add_argument(
-        "--hidden-units",
-        type=str,
-        default="64,32",
-        help="Hidden layer sizes (comma-separated)",
-    )
-    args = parser.parse_args()
+    print("=" * 50)
+    print("Training Learning-to-Rank Reranker")
+    print("=" * 50)
 
-    # Check for TensorFlow
-    try:
-        import tensorflow as tf
-        import numpy as np
+    # Create reranker
+    reranker = HealthContentReranker()
 
-        print(f"TensorFlow version: {tf.__version__}")
-    except ImportError:
-        print("Error: TensorFlow is required. Install with: pip install tensorflow>=2.15.0")
-        sys.exit(1)
+    # Train from database
+    print("\nTraining from database logs...")
+    print("This may take a few minutes depending on the amount of data.\n")
 
-    from app.services.data.database_service import database_service
-    from app.ml.ranking_model import (
-        HealthContentRanker,
-        RANKING_FEATURES,
+    results = reranker.train_from_database(
+        days_back=180,           # Use last 6 months of data
+        min_group_size=5,        # Only use searches with at least 5 results
+        require_any_click=True,  # Only use searches where user clicked something
+        use_dwell=True,          # Use dwell time to filter out accidental clicks
+        dwell_positive_ms=8000,  # Click is positive if dwell >= 8 seconds
+        use_db_propensity=True,  # Use position propensities from database
+        verbose=True,            # Show training progress
     )
 
-    # Check database connection
-    if not database_service.is_connected():
-        print("Error: Cannot connect to database")
-        print("Check your MySQL settings in .env")
-        sys.exit(1)
+    print("\n" + "=" * 50)
+    print("Training Results")
+    print("=" * 50)
+    print(f"Trained: {'Yes' if results['trained'] else 'No'}")
+    print(f"Training groups (searches): {int(results['groups'])}")
+    print(f"Training rows (results): {int(results['rows'])}")
 
-    # Get training data from database
-    print("Loading training data from database...")
-    training_data = database_service.get_training_data()
+    if results["trained"]:
+        # Save model
+        model_path = project_root / "models" / "ranking" / "reranker.json"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        reranker.save(str(model_path))
+        print(f"\n✓ Model saved to: {model_path}")
+    else:
+        print("\n✗ Training failed - not enough data")
+        print("  Make sure you have:")
+        print("  - Search logs with results shown (search_results_shown table)")
+        print("  - Click logs (click_logs table)")
+        print("  - At least a few searches with clicks")
 
-    search_count = database_service.get_search_count()
-    click_count = database_service.get_click_count()
+    print("\n" + "=" * 50)
+    print("Training Complete!")
+    print("=" * 50)
 
-    print(f"\nDatabase Statistics:")
-    print(f"  Total searches: {search_count}")
-    print(f"  Total clicks: {click_count}")
-    print(f"  Training samples: {len(training_data)}")
 
-    if not training_data:
-        print("\nNo training data available.")
-        print("Training data requires searches that have at least one click.")
-        print("\nTo collect training data:")
-        print("1. Ensure frontend sends search_id with search events")
-        print("2. Ensure frontend sends search_id with click events")
-        print("3. Collect data over time until you have sufficient examples")
-        sys.exit(1)
+if __name__ == "__main__":
+    main()
 
-    # Convert training data to features and labels
-    positive_count = sum(1 for d in training_data if d["clicked"] == 1)
-    negative_count = len(training_data) - positive_count
-
-    print(f"  Positive samples (clicks): {positive_count}")
-    print(f"  Negative samples (no click): {negative_count}")
-
-    if len(training_data) < args.min_samples:
-        print(f"\nError: Not enough training samples ({len(training_data)} < {args.min_samples})")
-        print("Continue collecting click data and try again later.")
-        sys.exit(1)
-
-    # Prepare features and labels
-    features = []
-    labels = []
-
-    for sample in training_data:
-        feature_dict = {
-            "title_keyword_score": 0.0,
-            "body_keyword_score": 0.0,
-            "tag_match_score": 0.0,
-            "semantic_similarity": 0.0,
-            "content_type_encoded": 0.0,
-            "days_since_published": 0.0,
-            "historical_ctr": database_service.get_ctr(sample["content_id"]),
-            "role_match": 1.0 if sample.get("role") else 0.0,
-            "position_shown": float(sample.get("position", 0)) / 10.0,
-            "baseline_score": float(sample.get("score", 0)) / 20.0,
-        }
-        features.append([feature_dict.get(name, 0.0) for name in RANKING_FEATURES])
-        labels.append(sample["clicked"])
-
-    features = np.array(features, dtype=np.float32)
-    labels = np.array(labels, dtype=np.float32)
-
-    # Parse hidden units
-    hidden_units = [int(x.strip()) for x in args.hidden_units.split(",")]
-
-    # Create model
-    print(f"\nCreating ranking model...")
-    print(f"  Features: {len(RANKING_FEATURES)}")
-    print(f"  Hidden units: {hidden_units}")
-
-    model = HealthContentRanker(
-        num_features=len(RANKING_FEATURES),
-        hidden_units=hidden_units,
-    )
-    model.compile()
-
-    # Train model
-    print(f"\nTraining model...")
-    print(f"  Epochs: {args.epochs}")
-    print(f"  Batch size: {args.batch_size}")
-    print(f"  Validation split: {args.validation_split}")
-
-    history = model.train(
-        features,
-        labels,
-        validation_split=args.validation_split,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-    )
-
-    # Print final metrics
-    final_metrics = {
-        key: values[-1] for key, values in history.history.items() if values
-    }
-    print(f"\nFinal metrics:")
-    for key, value in final_metrics.items():
-        print(f"  {key}: {value:.4f}")
-
-    # Save model
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    model_path = output_dir / "model"
-
-    print(f"\nSaving model to {model_path}.keras...")
-    model.save(str(model_path))
 
     # Verify saved model
     print("Verifying saved model...")

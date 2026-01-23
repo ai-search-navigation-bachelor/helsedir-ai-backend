@@ -66,7 +66,7 @@ class SearchController:
         # Prepare results for logging (convert SearchResult to dict)
         results_shown = [
             {
-                "content_id": r.content_id,
+                "content_id": r.id,  # SearchResult.id is the content_id
                 "position": i + 1,
                 "score": r.score
             }

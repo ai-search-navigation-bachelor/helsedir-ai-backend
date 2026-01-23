@@ -737,6 +737,126 @@ class DatabaseService:
             cursor.close()
             conn.close()
 
+    # ==================== Learning-to-Rank Operations ====================
+
+    def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:
+        """
+        Get training data for learning-to-rank model.
+        
+        Returns all search results shown with their features and click labels.
+        Joins search_results_shown with click_logs to determine which results were clicked.
+        
+        Args:
+            days_back: Number of days of history to include
+            
+        Returns:
+            List of training rows with features and labels
+        """
+        conn = self._get_connection()
+        if not conn:
+            return []
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT 
+                    srs.search_id,
+                    srs.content_id,
+                    srs.position,
+                    srs.score,
+                    srs.semantic_similarity,
+                    srs.title_keyword_score,
+                    srs.body_keyword_score,
+                    srs.exact_phrase_title,
+                    srs.exact_phrase_body,
+                    srs.type_match,
+                    srs.role_match,
+                    srs.code_match_count,
+                    srs.lis_match,
+                    srs.maalgruppe_match,
+                    CASE WHEN cl.content_id IS NOT NULL THEN 1 ELSE 0 END as clicked,
+                    cl.dwell_ms
+                FROM search_results_shown srs
+                INNER JOIN search_logs sl ON srs.search_id = sl.search_id
+                LEFT JOIN click_logs cl ON srs.search_id = cl.search_id 
+                    AND srs.content_id = cl.content_id
+                WHERE sl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ORDER BY srs.search_id, srs.position
+                """,
+                (days_back,),
+            )
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            print(f"Error getting LTR training rows: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_content_stats_bulk(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get content statistics for all content items in bulk.
+        
+        Returns:
+            Dictionary mapping content_id to dict with 'clicks' and 'impressions'
+        """
+        conn = self._get_connection()
+        if not conn:
+            return {}
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT content_id, clicks, impressions
+                FROM content_stats
+                """
+            )
+            results = cursor.fetchall()
+            return {
+                row["content_id"]: {
+                    "clicks": int(row["clicks"] or 0),
+                    "impressions": int(row["impressions"] or 0),
+                }
+                for row in results
+            }
+        except mysql.connector.Error as e:
+            print(f"Error getting content stats bulk: {e}")
+            return {}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_position_propensities(self) -> Dict[int, float]:
+        """
+        Get position propensities from database.
+        
+        Returns:
+            Dictionary mapping position to propensity value
+        """
+        conn = self._get_connection()
+        if not conn:
+            return {}
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT position, propensity
+                FROM position_propensity
+                ORDER BY position
+                """
+            )
+            results = cursor.fetchall()
+            return {int(row["position"]): float(row["propensity"]) for row in results}
+        except mysql.connector.Error as e:
+            print(f"Error getting position propensities: {e}")
+            return {}
+        finally:
+            cursor.close()
+            conn.close()
+
 
 # Global instance
 database_service = DatabaseService()
