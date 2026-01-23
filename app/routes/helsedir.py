@@ -8,6 +8,9 @@ from app.services.external.helsedir_api_service import HelseDirectorateAPIError
 
 router = APIRouter(prefix="/helsedir", tags=["helsedirektoratet"])
 
+# Maximum depth for recursive children fetching to prevent DoS
+MAX_DEPTH = 5
+
 
 @router.get("/search", response_model=HelseDirectorateSearchResponse)
 async def search_helsedirektoratet(request: HelseDirectorateSearchRequest = Depends()):
@@ -70,10 +73,10 @@ async def get_infobit(infobit_id: str, include_children: bool = False, depth: in
     **Parameters:**
     - **infobit_id** (required): The infobit ID (e.g., 0006-0014-70b46b52-eb30-4ee9-b8c8-ef5e238c419f)
     - **include_children** (optional): If true, fetches child content (kapitler, etc.)
-    - **depth** (optional): How many levels deep to fetch children (default: 1)
+    - **depth** (optional): How many levels deep to fetch children (default: 1, max: 5)
       - depth=1: Direct children only (kapitler)
       - depth=2: Children and grandchildren (kapitler + pakkeforlop-anbefaling)
-      - depth=3+: Continue recursively
+      - depth=3-5: Continue recursively (max 5 to prevent excessive API calls)
 
     **Examples:**
     ```
@@ -91,6 +94,18 @@ async def get_infobit(infobit_id: str, include_children: bool = False, depth: in
             - Pakkeforlop-anbefaling or other child types
             - And so on based on depth parameter
     """
+    # Validate depth parameter to prevent DoS attacks
+    if depth < 1:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Depth must be at least 1, got {depth}"
+        )
+    if depth > MAX_DEPTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Depth cannot exceed {MAX_DEPTH} to prevent excessive API calls, got {depth}"
+        )
+    
     try:
         return await helsedir_controller.get_infobit(infobit_id, include_children, depth)
     except HelseDirectorateAPIError as e:
