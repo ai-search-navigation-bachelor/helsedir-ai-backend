@@ -17,7 +17,7 @@ if __name__ == "__main__":
     print(f"Environment: {settings.environment}")
     print(f"Host: {settings.host}")
     print(f"Port: {settings.port}")
-    print(f"Content file: {settings.content_file}")
+    print(f"Database: {settings.mysql_database} @ {settings.mysql_host}:{settings.mysql_port}")
     print("-" * 50)
     print(f"API Documentation:")
     print(f"  - Swagger UI: http://localhost:{settings.port}/docs")

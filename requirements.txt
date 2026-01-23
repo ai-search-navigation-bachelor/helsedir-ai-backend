@@ -10,14 +10,18 @@ pytest>=8.3.0
 httpx>=0.28.0
 requests>=2.32.0
 
-# Optional: Data processing (uncomment when needed for semantic search)
-# numpy>=1.26.0
-# scikit-learn>=1.5.0
+# Machine Learning & Embeddings
+sentence-transformers>=3.3.0
+numpy>=1.26.0
+torch>=2.0.0
+xgboost>=2.0.0
 
-# Optional: Semantic search (uncomment when ready)
-# sentence-transformers>=3.3.0
+# Optional: Vector search optimization
 # faiss-cpu>=1.9.0
 
 # Optional: LLM integration (uncomment when ready)
 # openai>=1.57.0
 # langchain>=0.3.0
+
+# Database
+mysql-connector-python>=8.0.0

@@ -32,8 +32,8 @@ app.include_router(helsedir.router)
 async def startup_event():
     """Run startup tasks."""
     print(f"Starting Helsedirektoratet AI Backend in {settings.environment} mode")
-    print(f"Content file: {settings.content_file}")
-    print(f"Logs file: {settings.logs_file}")
+    print(f"Database: {settings.mysql_database} @ {settings.mysql_host}:{settings.mysql_port}")
+    print(f"ML models directory: {settings.ml_models_dir}")
 
 
 @app.on_event("shutdown")

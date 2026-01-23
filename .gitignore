@@ -43,6 +43,12 @@ data/embeddings/
 *.pkl
 *.npy
 
+# ML Models (large binary files)
+models/**/*.keras
+models/**/*.h5
+models/**/*.pb
+!models/**/.gitkeep
+
 # Testing
 .pytest_cache/
 .coverage

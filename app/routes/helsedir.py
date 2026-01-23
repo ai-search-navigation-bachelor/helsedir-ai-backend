@@ -1,29 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-from typing import List, Optional
-from app.services.helsedir_api_service import (
-    helsedir_api_service,
-    HelseDirectorateAPIError,
+from fastapi import APIRouter, HTTPException, Depends
+from app.dto.request.search import HelseDirectorateSearchRequest
+from app.controllers.helsedir_controller import (
+    helsedir_controller,
+    HelseDirectorateSearchResponse,
 )
+from app.services.external.helsedir_api_service import HelseDirectorateAPIError
 
 router = APIRouter(prefix="/helsedir", tags=["helsedirektoratet"])
 
 
-class HelseDirectorateSearchResponse(BaseModel):
-    """Response from Helsedirektoratet API search."""
-    results: List[dict]
-    total: int
-    query: str
-
-
 @router.get("/search", response_model=HelseDirectorateSearchResponse)
-async def search_helsedirektoratet(
-    query: str = Query(..., description="Search query text", min_length=1, alias="QueryText"),
-    filter: Optional[str] = Query(None, description="OData filter expression (e.g., infoType eq 'retningslinje')", alias="Filter"),
-    search_mode: Optional[str] = Query(None, description="Search mode: 'Any' or 'All'", alias="SearchMode"),
-    query_type: Optional[str] = Query(None, description="Query type: 'Simple' or 'Full'", alias="QueryType"),
-    get_full_infobits: bool = Query(False, description="Return full infobit content", alias="getFullInfobits"),
-):
+async def search_helsedirektoratet(request: HelseDirectorateSearchRequest = Depends()):
     """
     Search directly in Helsedirektoratet API.
 
@@ -58,25 +45,13 @@ async def search_helsedirektoratet(
         Search results directly from Helsedirektoratet API with Norwegian field names
     """
     try:
-        # Search API with all parameters
-        results = await helsedir_api_service.search_infobits_async(
-            query_text=query,
-            filter_query=filter,
-            search_mode=search_mode,
-            query_type=query_type,
-            get_full_infobits=get_full_infobits,
+        return await helsedir_controller.search(
+            query=request.query,
+            filter_query=request.filter,
+            search_mode=request.search_mode,
+            query_type=request.query_type,
+            get_full_infobits=request.get_full_infobits,
         )
-
-        # Results is a list
-        if not isinstance(results, list):
-            results = []
-
-        return HelseDirectorateSearchResponse(
-            results=results,
-            total=len(results),
-            query=query,
-        )
-
     except HelseDirectorateAPIError as e:
         raise HTTPException(
             status_code=503, detail=f"Helsedirektoratet API unavailable: {str(e)}"
