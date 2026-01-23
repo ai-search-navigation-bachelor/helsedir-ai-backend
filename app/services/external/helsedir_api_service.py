@@ -5,6 +5,7 @@ API Documentation: https://utvikler.helsedirektoratet.no
 """
 import httpx
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 from app.config import settings
 
 
@@ -327,10 +328,14 @@ class HelseDirectorateAPIService:
                 "HELSEDIR_API_KEY not configured. Add it to your .env file."
             )
 
-        # Validate that URL is from the correct API
-        if not href_url.startswith(self.base_url):
+        # Validate that URL is from the correct API (using proper URL parsing)
+        expected_parsed = urlparse(self.base_url)
+        actual_parsed = urlparse(href_url)
+        
+        if (actual_parsed.scheme != expected_parsed.scheme or 
+            actual_parsed.netloc != expected_parsed.netloc):
             raise HelseDirectorateAPIError(
-                f"Invalid href URL: must start with {self.base_url}"
+                f"Invalid href URL: must be from {expected_parsed.scheme}://{expected_parsed.netloc}"
             )
 
         try:

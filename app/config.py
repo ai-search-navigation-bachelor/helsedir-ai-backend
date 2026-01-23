@@ -51,10 +51,10 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
-# Ensure directories exist
-Path("data").mkdir(exist_ok=True)
-Path("logs").mkdir(exist_ok=True)
-Path(settings.ml_models_dir).mkdir(exist_ok=True)
+# Ensure directories exist from configured paths
+Path(settings.content_file).parent.mkdir(parents=True, exist_ok=True)
+Path(settings.logs_file).parent.mkdir(parents=True, exist_ok=True)
+Path(settings.ml_models_dir).mkdir(parents=True, exist_ok=True)
 
 # Print loaded configuration (useful for debugging)
 if settings.debug:
