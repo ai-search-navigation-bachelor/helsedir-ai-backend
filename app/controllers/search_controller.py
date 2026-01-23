@@ -4,6 +4,7 @@ Search controller.
 Handles business logic for search operations.
 """
 
+import uuid
 from typing import Optional, List
 from app.dto.response.search import SearchResult, SearchResponse
 from app.services.search.search_service import search_service
@@ -40,6 +41,9 @@ class SearchController:
             ValueError: If invalid search method
             Exception: If search fails
         """
+        # Generate unique search ID for linking search and clicks
+        search_id = str(uuid.uuid4())
+        
         # Validate method
         valid_methods = {"keyword", "semantic", "hybrid"}
         if method not in valid_methods:
@@ -59,13 +63,30 @@ class SearchController:
                 query=query, role=role, k=k
             )
 
-        # Log the search event
+        # Prepare results for logging (convert SearchResult to dict)
+        results_shown = [
+            {
+                "content_id": r.content_id,
+                "position": i + 1,
+                "score": r.score
+            }
+            for i, r in enumerate(results)
+        ]
+
+        # Log the search event with results shown
         self.logging_service.log_event(
-            event_type="search", query=query, role=role
+            event_type="search",
+            query=query,
+            role=role,
+            search_id=search_id,
+            results_shown=results_shown
         )
 
         return SearchResponse(
-            results=results, query=query, total=len(results)
+            results=results,
+            query=query,
+            total=len(results),
+            search_id=search_id  # Return search_id to client for click tracking
         )
 
 

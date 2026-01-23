@@ -23,7 +23,6 @@ RANKING_FEATURES = [
     "exact_phrase_body",
     "semantic_similarity",
     "content_type_encoded",
-    "days_since_published",
     "historical_ctr",
     "role_match",
 ]
@@ -44,7 +43,7 @@ class HealthContentRanker:
     - Sigmoid output for relevance probability
     """
 
-    def __init__(self, num_features: int = 10, hidden_units: List[int] = None):
+    def __init__(self, num_features: int = 9, hidden_units: List[int] = None):
         """
         Initialize the ranking model.
 

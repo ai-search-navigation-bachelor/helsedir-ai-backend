@@ -3,7 +3,7 @@ Search response DTOs.
 """
 
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 
 
 class SearchResult(BaseModel):
@@ -21,6 +21,7 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     query: str
     total: int
+    search_id: Optional[str] = None  # For linking clicks to searches
 
 
 class TagResponse(BaseModel):

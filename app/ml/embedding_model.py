@@ -1,129 +1,220 @@
 """
-TensorFlow embedding model for Norwegian health content semantic search.
+Multilingual E5 embedding model for Norwegian health content semantic search.
 
-This module provides a custom embedding model that can be trained on
-health content to learn domain-specific representations.
+This module provides a wrapper around the intfloat/multilingual-e5-base model
+optimized for health content with structured passage formatting.
 """
 
-from typing import List, Optional
+import re
+from typing import List, Optional, Dict, Any
 
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
 
 
 class HealthContentEmbedding:
     """
-    Custom TensorFlow embedding model for Norwegian health content.
+    Multilingual E5 embedding model wrapper for Norwegian health content.
+
+    Uses intfloat/multilingual-e5-base pre-trained transformer model.
+    Formats content items as structured passages with metadata fields.
 
     Architecture:
-    - TextVectorization for tokenization
-    - Embedding layer (learned)
-    - Bidirectional LSTM encoder
-    - Dense projection to embedding space
-    - L2 normalization for cosine similarity
+    - Pre-trained multilingual E5 model (768-dim embeddings)
+    - Passage formatting with health-specific fields
+    - Query/passage prefixes for optimal retrieval
 
     Usage:
         model = HealthContentEmbedding()
-        model.adapt(corpus)  # Fit vectorizer on corpus
+        # No adaptation needed - pre-trained model
         embeddings = model.encode(texts)
+        query_emb = model.encode_query("diabetes behandling")
     """
 
     def __init__(
         self,
-        vocab_size: int = 10000,
-        embedding_dim: int = 128,
-        output_dim: int = 256,
-        max_sequence_length: int = 512,
+        model_name: str = "intfloat/multilingual-e5-base",
+        device: Optional[str] = None,
     ):
         """
         Initialize the embedding model.
 
         Args:
-            vocab_size: Maximum vocabulary size
-            embedding_dim: Dimension of token embeddings
-            output_dim: Dimension of output sentence embeddings
-            max_sequence_length: Maximum sequence length for input texts
+            model_name: HuggingFace model identifier (default: intfloat/multilingual-e5-base)
+            device: Device to use ('cuda', 'cpu', or None for auto)
         """
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
-        self.output_dim = output_dim
-        self.max_sequence_length = max_sequence_length
+        self.model_name = model_name
+        self.device = device
+        self.model = None
+        self._is_loaded = False
 
-        self.model = self._build_model()
-        self._is_adapted = False
+    def _load_model(self):
+        """Load the sentence transformer model."""
+        if self._is_loaded:
+            return
 
-    def _build_model(self) -> "keras.Model":
-        """Build the embedding model architecture."""
-        # Input layer
-        text_input = keras.Input(shape=(1,), dtype=tf.string, name="text_input")
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required. Install with: "
+                "pip install sentence-transformers"
+            )
 
-        # Text vectorization layer
-        self.vectorizer = keras.layers.TextVectorization(
-            max_tokens=self.vocab_size,
-            output_sequence_length=self.max_sequence_length,
-            standardize="lower_and_strip_punctuation",
-            name="vectorizer",
-        )
+        print(f"Loading embedding model: {self.model_name}...")
+        self.model = SentenceTransformer(self.model_name, device=self.device)
+        self._is_loaded = True
+        print(f"Model loaded. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
 
-        # Apply vectorization
-        x = self.vectorizer(text_input)
-
-        # Embedding layer
-        x = keras.layers.Embedding(
-            input_dim=self.vocab_size,
-            output_dim=self.embedding_dim,
-            mask_zero=True,
-            name="token_embedding",
-        )(x)
-
-        # Bidirectional LSTM encoder
-        x = keras.layers.Bidirectional(
-            keras.layers.LSTM(128, return_sequences=False, name="lstm"),
-            name="bidirectional",
-        )(x)
-
-        # Dense projection
-        x = keras.layers.Dense(self.output_dim, activation=None, name="projection")(x)
-
-        # L2 normalization for cosine similarity
-        output = keras.layers.Lambda(
-            lambda x: tf.nn.l2_normalize(x, axis=1), name="normalize"
-        )(x)
-
-        model = keras.Model(inputs=text_input, outputs=output, name="health_embedding")
-        return model
-
-    def adapt(self, corpus: List[str]) -> None:
+    @staticmethod
+    def strip_html_tags(text: str) -> str:
         """
-        Adapt the text vectorizer to a corpus.
+        Remove HTML tags from text.
 
         Args:
-            corpus: List of texts to build vocabulary from
-        """
-        # Convert to tensor dataset for vectorizer
-        text_ds = tf.data.Dataset.from_tensor_slices(corpus)
-        self.vectorizer.adapt(text_ds)
-        self._is_adapted = True
+            text: Text possibly containing HTML
 
-    def encode(self, texts: List[str]) -> np.ndarray:
+        Returns:
+            Clean text without HTML tags
+        """
+        if not text:
+            return ""
+        # Replace HTML tags with space to preserve word boundaries
+        clean = re.sub(r'<[^>]+>', ' ', text)
+        # Replace multiple whitespace with single space
+        clean = re.sub(r'\s+', ' ', clean)
+        return clean.strip()
+
+    @staticmethod
+    def format_passage(content_item: Dict[str, Any]) -> str:
+        """
+        Format a content item as a structured passage.
+
+        Creates a text representation with all relevant metadata fields:
+        - tittel (title)
+        - type (content type)
+        - icd-10 (diagnose kode)
+        - icpc-2 (primærhelsetjeneste kode)
+        - snomed-ct (medisinsk terminologi)
+        - lis-spesialitet (spesialist område)
+        - lis-læringsmål (læringsmål)
+        - innhold (clean body text without HTML)
+
+        Args:
+            content_item: Dict with content fields
+
+        Returns:
+            Formatted passage string
+        """
+        parts = []
+
+        # Title
+        title = content_item.get("title") or content_item.get("tittel")
+        if title:
+            parts.append(f"Tittel: {title}")
+
+        # Content type
+        content_type = content_item.get("content_type") or content_item.get("type")
+        if content_type:
+            parts.append(f"Type: {content_type}")
+
+        # ICD-10 code
+        icd10 = content_item.get("icd10") or content_item.get("icd_10")
+        if icd10:
+            parts.append(f"ICD-10: {icd10}")
+
+        # ICPC-2 code
+        icpc2 = content_item.get("icpc2") or content_item.get("icpc_2")
+        if icpc2:
+            parts.append(f"ICPC-2: {icpc2}")
+
+        # SNOMED CT
+        snomed = content_item.get("snomed_ct") or content_item.get("snomed")
+        if snomed:
+            parts.append(f"SNOMED-CT: {snomed}")
+
+        # LIS spesialitet
+        lis_spec = content_item.get("lis_spesialitet") or content_item.get("lis_specialty")
+        if lis_spec:
+            parts.append(f"LIS-spesialitet: {lis_spec}")
+
+        # LIS læringsmål
+        lis_goal = content_item.get("lis_læringsmål") or content_item.get("lis_learning_goal")
+        if lis_goal:
+            parts.append(f"LIS-læringsmål: {lis_goal}")
+
+        # Body content (strip HTML)
+        body = content_item.get("body") or content_item.get("tekst") or content_item.get("innhold")
+        if body:
+            clean_body = HealthContentEmbedding.strip_html_tags(body)
+            if clean_body:
+                parts.append(f"Innhold: {clean_body}")
+
+        return " ".join(parts)
+
+    def encode(
+        self, 
+        texts: List[str], 
+        is_query: bool = False,
+        show_progress_bar: bool = False
+    ) -> np.ndarray:
         """
         Encode texts into embedding vectors.
 
         Args:
             texts: List of texts to encode
+            is_query: If True, adds "query: " prefix (for search queries)
+                     If False, adds "passage: " prefix (for documents)
+            show_progress_bar: Show encoding progress
 
         Returns:
-            NumPy array of shape (len(texts), output_dim)
+            NumPy array of shape (len(texts), 768)
         """
-        if not self._is_adapted:
-            raise ValueError(
-                "Model must be adapted to a corpus first. Call adapt(corpus)."
-            )
+        if not self._is_loaded:
+            self._load_model()
 
-        # Convert to TensorFlow tensor to avoid numpy dtype issues with long strings
-        texts_tensor = tf.constant([[t] for t in texts], dtype=tf.string)
-        return self.model.predict(texts_tensor, verbose=0)
+        # Add E5 prefix for better retrieval performance
+        prefix = "query: " if is_query else "passage: "
+        prefixed_texts = [prefix + text for text in texts]
+
+        embeddings = self.model.encode(
+            prefixed_texts,
+            show_progress_bar=show_progress_bar,
+            normalize_embeddings=True  # L2 normalization
+        )
+
+        return embeddings
+
+    def encode_query(self, query: str) -> np.ndarray:
+        """
+        Encode a search query.
+
+        Args:
+            query: Search query text
+
+        Returns:
+            Query embedding of shape (768,)
+        """
+        return self.encode([query], is_query=True)[0]
+
+    def encode_passages(
+        self, 
+        content_items: List[Dict[str, Any]],
+        show_progress_bar: bool = True
+    ) -> np.ndarray:
+        """
+        Encode content items as passages.
+
+        Formats each content item with structured metadata before encoding.
+
+        Args:
+            content_items: List of content item dicts
+            show_progress_bar: Show encoding progress
+
+        Returns:
+            NumPy array of shape (len(content_items), 768)
+        """
+        passages = [self.format_passage(item) for item in content_items]
+        return self.encode(passages, is_query=False, show_progress_bar=show_progress_bar)
 
     def compute_similarity(
         self, query_embedding: np.ndarray, doc_embeddings: np.ndarray
@@ -132,225 +223,73 @@ class HealthContentEmbedding:
         Compute cosine similarity between query and document embeddings.
 
         Args:
-            query_embedding: Query embedding of shape (1, output_dim)
-            doc_embeddings: Document embeddings of shape (n_docs, output_dim)
+            query_embedding: Query embedding of shape (768,) or (1, 768)
+            doc_embeddings: Document embeddings of shape (n_docs, 768)
 
         Returns:
             Similarity scores of shape (n_docs,)
         """
+        # Ensure query is 2D
+        if query_embedding.ndim == 1:
+            query_embedding = query_embedding.reshape(1, -1)
+
         # Since embeddings are L2-normalized, dot product equals cosine similarity
         similarities = np.matmul(query_embedding, doc_embeddings.T)
         return similarities.flatten()
 
     def save(self, path: str) -> None:
         """
-        Save the model to disk.
+        Save model configuration.
+
+        Note: The pre-trained model itself doesn't need to be saved,
+        only the configuration for reloading.
 
         Args:
-            path: Path to save the model (without extension)
+            path: Path to save the config (without extension)
         """
+        import json
         import os
-        os.environ["PYTHONUTF8"] = "1"
 
-        # Save weights separately (more robust for special characters)
-        self.model.save_weights(f"{path}_weights.weights.h5")
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
 
-        # Save vocabulary separately with UTF-8 encoding
-        vocab = self.vectorizer.get_vocabulary()
-        vocab_path = f"{path}_vocab.json"
-        with open(vocab_path, "w", encoding="utf-8") as f:
-            import json
-            json.dump(vocab, f, ensure_ascii=False, indent=2)
-
-        # Save config
         config = {
-            "vocab_size": self.vocab_size,
-            "embedding_dim": self.embedding_dim,
-            "output_dim": self.output_dim,
-            "max_sequence_length": self.max_sequence_length,
+            "model_name": self.model_name,
+            "device": self.device,
+            "embedding_dim": 768,  # E5-base dimension
         }
+
         config_path = f"{path}_config.json"
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
-        print(f"Saved: weights, vocabulary ({len(vocab)} words), config")
+        print(f"Saved config to: {config_path}")
+        print(f"Model: {self.model_name}")
 
     @classmethod
     def load(cls, path: str) -> "HealthContentEmbedding":
         """
-        Load a saved model from disk.
+        Load model from saved configuration.
 
         Args:
-            path: Path to the saved model (without extension)
+            path: Path to the saved config (without extension)
 
         Returns:
             Loaded HealthContentEmbedding instance
         """
         import json
 
-        # Load config
         config_path = f"{path}_config.json"
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
-        # Create instance with same config
+        # Create instance with saved config
         instance = cls(
-            vocab_size=config["vocab_size"],
-            embedding_dim=config["embedding_dim"],
-            output_dim=config["output_dim"],
-            max_sequence_length=config["max_sequence_length"],
+            model_name=config["model_name"],
+            device=config.get("device"),
         )
 
-        # Load vocabulary
-        vocab_path = f"{path}_vocab.json"
-        with open(vocab_path, "r", encoding="utf-8") as f:
-            vocab = json.load(f)
+        # Model will be lazy-loaded on first encode()
+        print(f"Loaded config: {config['model_name']}")
 
-        # Set vocabulary on vectorizer
-        instance.vectorizer.set_vocabulary(vocab)
-        instance._is_adapted = True
-
-        # Load weights
-        instance.model.load_weights(f"{path}_weights.weights.h5")
-
-        print(f"Loaded: weights, vocabulary ({len(vocab)} words)")
         return instance
 
-    def compile_for_training(
-        self,
-        learning_rate: float = 1e-4,
-        loss: str = "cosine_similarity",
-    ) -> None:
-        """
-        Compile the model for training with contrastive learning.
-
-        Args:
-            learning_rate: Learning rate for optimizer
-            loss: Loss function to use
-        """
-        self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-            loss=loss,
-        )
-
-
-def create_contrastive_pairs(
-    texts: List[str],
-    labels: List[List[int]],
-    pairs_per_doc: int = 3,
-    weight_by_overlap: bool = True,
-) -> tuple:
-    """
-    Create contrastive learning pairs from texts with multi-label support.
-
-    Documents sharing ANY tag are positive pairs. Documents sharing MORE tags
-    get higher weights (stronger positive signal).
-
-    Args:
-        texts: List of texts
-        labels: List of label lists (each doc has multiple labels/tags)
-        pairs_per_doc: Number of pairs to create per document
-        weight_by_overlap: If True, weight pairs by number of shared tags
-
-    Returns:
-        Tuple of (anchors, positives, negatives, weights)
-        - weights: Float weights based on tag overlap (1.0, 2.0, 3.0, etc.)
-
-    Example:
-        Doc A: [1, 2, 3] (diabetes, behandling, barn)
-        Doc B: [1, 4, 5] (diabetes, eldre, kosthold)
-        Doc C: [1, 2, 6] (diabetes, behandling, voksen)
-
-        A-C share 2 tags → weight = 2.0
-        A-B share 1 tag  → weight = 1.0
-    """
-    import random
-
-    n_docs = len(texts)
-
-    # Build index: tag -> list of doc indices
-    tag_to_docs = {}
-    for doc_idx, doc_labels in enumerate(labels):
-        for tag in doc_labels:
-            if tag not in tag_to_docs:
-                tag_to_docs[tag] = []
-            tag_to_docs[tag].append(doc_idx)
-
-    # Convert labels to sets for faster overlap calculation
-    label_sets = [set(doc_labels) for doc_labels in labels]
-
-    anchors = []
-    positives = []
-    negatives = []
-    weights = []
-
-    for anchor_idx in range(n_docs):
-        anchor_tags = label_sets[anchor_idx]
-
-        if not anchor_tags:
-            continue
-
-        # Find all docs that share at least one tag (potential positives)
-        positive_candidates = set()
-        for tag in anchor_tags:
-            for doc_idx in tag_to_docs.get(tag, []):
-                if doc_idx != anchor_idx:
-                    positive_candidates.add(doc_idx)
-
-        # Find docs that share NO tags (negatives)
-        negative_candidates = [
-            idx for idx in range(n_docs)
-            if idx != anchor_idx and idx not in positive_candidates
-        ]
-
-        if not positive_candidates or not negative_candidates:
-            continue
-
-        # Create multiple pairs per document
-        positive_list = list(positive_candidates)
-
-        for _ in range(min(pairs_per_doc, len(positive_list))):
-            pos_idx = random.choice(positive_list)
-
-            # Calculate weight based on tag overlap (squared for stronger effect)
-            if weight_by_overlap:
-                overlap = len(anchor_tags & label_sets[pos_idx])
-                weight = float(overlap ** 2)  # 1→1, 2→4, 3→9, 4→16, 5→25
-            else:
-                weight = 1.0
-
-            neg_idx = random.choice(negative_candidates)
-
-            anchors.append(texts[anchor_idx])
-            positives.append(texts[pos_idx])
-            negatives.append(texts[neg_idx])
-            weights.append(weight)
-
-    return anchors, positives, negatives, weights
-
-
-def triplet_loss(anchor_emb, positive_emb, negative_emb, margin: float = 0.5, weights=None):
-    """
-    Compute triplet loss with optional sample weights.
-
-    Args:
-        anchor_emb: Anchor embeddings (batch_size, embedding_dim)
-        positive_emb: Positive embeddings (batch_size, embedding_dim)
-        negative_emb: Negative embeddings (batch_size, embedding_dim)
-        margin: Margin for triplet loss
-        weights: Optional sample weights (batch_size,)
-
-    Returns:
-        Scalar loss value
-    """
-    # Compute similarities (L2-normalized embeddings → dot product = cosine similarity)
-    pos_similarity = tf.reduce_sum(anchor_emb * positive_emb, axis=1)
-    neg_similarity = tf.reduce_sum(anchor_emb * negative_emb, axis=1)
-
-    # Triplet loss: want pos_similarity > neg_similarity + margin
-    loss = tf.maximum(0.0, neg_similarity - pos_similarity + margin)
-
-    if weights is not None:
-        loss = loss * weights
-
-    return tf.reduce_mean(loss)

@@ -6,6 +6,7 @@ import numpy as np
 from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
+from app.services.data.database_service import database_service
 from app.config import settings
 import re
 
@@ -184,20 +185,19 @@ class SearchService:
 
 
     def _load_embedding_model(self) -> bool:
-        """Load the embedding model if available."""
+        """Load the E5 embedding model if available."""
         if self.embedding_model is not None:
             return True
 
-        model_path = Path("models/embedding/model")
-        if not model_path.with_suffix(".keras").exists():
-            return False
-
         try:
             from app.ml.embedding_model import HealthContentEmbedding
-            self.embedding_model = HealthContentEmbedding.load(str(model_path))
+            
+            # E5 model doesn't need to be loaded from disk - it's pre-trained
+            self.embedding_model = HealthContentEmbedding()
+            # Model will be lazy-loaded from HuggingFace on first encode
             return True
         except Exception as e:
-            print(f"Error loading embedding model: {e}")
+            print(f"Error initializing embedding model: {e}")
             return False
 
     def _load_content_embeddings(self) -> bool:
@@ -237,7 +237,7 @@ class SearchService:
         self, query: str, role: Optional[str] = None, k: int = 10
     ) -> List[SearchResult]:
         """
-        Perform semantic search using embeddings.
+        Perform semantic search using E5 embeddings.
 
         Returns empty list if embeddings not available.
         """
@@ -247,8 +247,8 @@ class SearchService:
         if not self._load_content_embeddings():
             return []
 
-        # Encode query
-        query_embedding = self.embedding_model.encode([query])[0]
+        # Encode query with "query:" prefix (E5 optimization)
+        query_embedding = self.embedding_model.encode_query(query)
 
         # Calculate similarities
         similarities = []
@@ -374,12 +374,18 @@ class SearchService:
         # Sort by combined score
         normalized_items.sort(key=lambda x: -x[1])
 
+        # Apply ranking model if enabled
+        if settings.ml_ranking_enabled:
+            normalized_items = self._apply_ranking_model(
+                normalized_items, query, query_keywords, role
+            )
+
         # Create results
         results = []
         for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in normalized_items[:k]:
             snippet = self._create_snippet(item.body, query_keywords)
             explanation = self._create_explanation(item, query_keywords, role)
-            explanation += f" | Scores: kw={kw_raw:.1f}→{kw_norm:.2f}, sem={sem_raw:.2f}→{sem_norm:.2f}"
+            explanation += f" | Scores: kw={kw_raw:.1f}→{kw_norm:.2f}, sem={sem_raw:.2f}→{sem_norm:.2f}, final={combined:.2f}"
 
             results.append(
                 SearchResult(
@@ -393,6 +399,159 @@ class SearchService:
             )
 
         return results
+
+    def _apply_ranking_model(
+        self,
+        items: List[tuple],
+        query: str,
+        query_keywords: set,
+        role: Optional[str]
+    ) -> List[tuple]:
+        """
+        Apply ranking model to re-rank results.
+
+        Args:
+            items: List of (item, combined, kw_raw, sem_raw, kw_norm, sem_norm)
+            query: Search query
+            query_keywords: Query keywords set
+            role: User role
+
+        Returns:
+            Re-ranked list with new scores
+        """
+        try:
+            from app.services.search.ml_service import ml_service
+
+            if not ml_service.is_ranking_available():
+                ml_service.load_ranking_model()
+                if not ml_service.is_ranking_available():
+                    return items  # Model not available, return as-is
+
+            # Get CTR data
+            ctr_data = database_service.get_content_ctr()
+
+            # Extract features for each item
+            features_list = []
+            for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items:
+                features = self._extract_ranking_features(
+                    item, query, query_keywords, role,
+                    kw_raw, sem_raw, ctr_data.get(item.id, 0.0)
+                )
+                features_list.append(features)
+
+            # Get ranking scores from model
+            ranking_scores = ml_service.get_ranking_scores(features_list)
+
+            # Replace combined score with ranking score and re-sort
+            re_ranked = []
+            for i, (item, _, kw_raw, sem_raw, kw_norm, sem_norm) in enumerate(items):
+                re_ranked.append((item, ranking_scores[i], kw_raw, sem_raw, kw_norm, sem_norm))
+
+            re_ranked.sort(key=lambda x: -x[1])
+            return re_ranked
+
+        except Exception as e:
+            print(f"Error applying ranking model: {e}")
+            return items  # Return original if ranking fails
+
+    def _extract_ranking_features(
+        self,
+        item: ContentItem,
+        query: str,
+        query_keywords: set,
+        role: Optional[str],
+        keyword_score: float,
+        semantic_score: float,
+        ctr: float
+    ) -> Dict[str, float]:
+        """
+        Extract features for ranking model.
+
+        Features match RANKING_FEATURES in ranking_model.py:
+        1. title_keyword_score (normalized 0-1) - Ratio of query keywords in title
+        2. body_keyword_score (normalized 0-1) - Ratio of query keywords in body
+        3. tag_match_score (normalized 0-1) - Ratio of query keywords in tags
+        4. exact_phrase_title (binary 0/1) - Full query phrase in title
+        5. exact_phrase_body (binary 0/1) - Full query phrase in body
+        6. semantic_similarity (0-1) - Cosine similarity from embedding
+        7. content_type_encoded (0-1) - Authority level of content type
+        8. historical_ctr (0-1) - Click-through rate
+        9. role_match (0-1) - User role match with target groups
+        
+        All features are normalized to [0, 1] range for consistent learning.
+        """
+        query_lower = query.lower()
+        title_lower = item.title.lower()
+        body_lower = item.body.lower()
+
+        # Title keyword score (normalized)
+        title_keywords = set(re.findall(r'\w+', title_lower))
+        title_matches = len(query_keywords & title_keywords)
+        # Normalize: assume max 5 keyword matches in title
+        title_kw_score = min(title_matches / 5.0, 1.0)
+
+        # Body keyword score (normalized)
+        body_keywords = set(re.findall(r'\w+', body_lower))
+        body_matches = len(query_keywords & body_keywords)
+        # Normalize: assume max 10 keyword matches in body
+        body_kw_score = min(body_matches / 10.0, 1.0)
+
+        # Tag match score (normalized)
+        tag_score = 0.0
+        if item.tags:
+            tag_text = " ".join(item.tags).lower()
+            tag_keywords = set(re.findall(r'\w+', tag_text))
+            tag_matches = len(query_keywords & tag_keywords)
+            # Normalize: assume max 3 tag matches
+            tag_score = min(tag_matches / 3.0, 1.0)
+
+        # Exact phrase matches (binary: 1.0 or 0.0)
+        exact_title = 1.0 if query_lower in title_lower else 0.0
+        exact_body = 1.0 if query_lower in body_lower else 0.0
+
+        # Semantic similarity (already normalized 0-1)
+        semantic = semantic_score
+
+        # Content type encoding based on authority level
+        content_type_map = {
+            "retningslinje": 0.9,
+            "veileder": 0.8,
+            "fagprosedyre": 0.75,
+            "faktaark": 0.6,
+            "artikkel": 0.5,
+        }
+        content_type = content_type_map.get(
+            item.info_type.lower() if item.info_type else None,
+            0.5  # Default for unknown types
+        )
+
+        # Historical CTR (already normalized 0-1)
+        historical_ctr = ctr
+
+        # Role match - gradient based on specificity
+        role_match = 0.0
+        if role and item.target_groups:
+            if role in item.target_groups:
+                # Perfect match, but penalize if shared with many groups
+                role_match = 1.0 / len(item.target_groups)
+        elif not role and not item.target_groups:
+            # General content for general search
+            role_match = 0.5
+        elif not item.target_groups:
+            # Content for everyone
+            role_match = 0.3
+
+        return {
+            "title_keyword_score": title_kw_score,
+            "body_keyword_score": body_kw_score,
+            "tag_match_score": tag_score,
+            "exact_phrase_title": exact_title,
+            "exact_phrase_body": exact_body,
+            "semantic_similarity": semantic,
+            "content_type_encoded": content_type,
+            "historical_ctr": historical_ctr,
+            "role_match": role_match,
+        }
 
 
 # Global instance

@@ -708,6 +708,35 @@ class DatabaseService:
             cursor.close()
             conn.close()
 
+    def get_content_ctr(self) -> Dict[str, float]:
+        """
+        Get CTR (click-through rate) for all content items.
+
+        Returns:
+            Dictionary mapping content_id to CTR value (0.0-1.0)
+        """
+        conn = self._get_connection()
+        if not conn:
+            return {}
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT content_id, ctr
+                FROM content_stats
+                WHERE impressions > 0
+                """
+            )
+            results = cursor.fetchall()
+            return {row["content_id"]: float(row["ctr"] or 0.0) for row in results}
+        except mysql.connector.Error as e:
+            print(f"Error getting CTR data: {e}")
+            return {}
+        finally:
+            cursor.close()
+            conn.close()
+
 
 # Global instance
 database_service = DatabaseService()
