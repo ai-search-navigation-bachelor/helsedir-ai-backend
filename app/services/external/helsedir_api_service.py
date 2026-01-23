@@ -5,6 +5,7 @@ API Documentation: https://utvikler.helsedirektoratet.no
 """
 import httpx
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 from app.config import settings
 
 
@@ -167,6 +168,192 @@ class HelseDirectorateAPIService:
                     headers=self._get_headers(),
                     timeout=timeout,
                 )
+
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.TimeoutException:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            )
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            )
+
+    async def get_infobit_by_id_async(
+        self,
+        infobit_id: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Get a specific infobit by ID (async version for FastAPI).
+
+        Args:
+            infobit_id: The infobit ID (format: 0006-0014-70b46b52-eb30-4ee9-b8c8-ef5e238c419f)
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dictionary containing the full infobit data with all details
+
+        Raises:
+            HelseDirectorateAPIError: If the API request fails
+
+        Example:
+            >>> result = await service.get_infobit_by_id_async(
+            ...     "0006-0014-70b46b52-eb30-4ee9-b8c8-ef5e238c419f"
+            ... )
+        """
+        if not self.api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/infobit/{infobit_id}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=self._get_headers(),
+                    timeout=timeout,
+                )
+
+                # Check for errors
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError(
+                        "Unauthorized: Invalid API key"
+                    )
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(
+                        f"Infobit not found: {infobit_id}"
+                    )
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.TimeoutException:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            )
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            )
+
+    async def get_kapittel_by_id_async(
+        self,
+        kapittel_id: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Get a specific kapittel (chapter) by ID (async version for FastAPI).
+
+        Args:
+            kapittel_id: The kapittel ID
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dictionary containing the kapittel data
+
+        Raises:
+            HelseDirectorateAPIError: If the API request fails
+        """
+        if not self.api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/kapitler/{kapittel_id}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=self._get_headers(),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 404:
+                    raise HelseDirectorateAPIError(
+                        f"Kapittel not found: {kapittel_id}"
+                    )
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.TimeoutException:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            )
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            )
+
+    async def get_content_by_href_async(
+        self,
+        href_url: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Get content from Helsedirektoratet API by full href URL.
+        
+        This is a generic method that can fetch any content type:
+        - kapitler
+        - pakkeforlop-anbefalinger
+        - infobit
+        - etc.
+
+        Args:
+            href_url: Full API URL (e.g., https://api.helsedirektoratet.no/innhold/...)
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dictionary containing the content data
+
+        Raises:
+            HelseDirectorateAPIError: If the API request fails
+        """
+        if not self.api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_API_KEY not configured. Add it to your .env file."
+            )
+
+        # Validate that URL is from the correct API (using proper URL parsing)
+        expected_parsed = urlparse(self.base_url)
+        actual_parsed = urlparse(href_url)
+        
+        if (actual_parsed.scheme != expected_parsed.scheme or 
+            actual_parsed.netloc != expected_parsed.netloc):
+            raise HelseDirectorateAPIError(
+                f"Invalid href URL: must be from {expected_parsed.scheme}://{expected_parsed.netloc}"
+            )
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    href_url,
+                    headers=self._get_headers(),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 404:
+                    raise HelseDirectorateAPIError(
+                        f"Content not found: {href_url}"
+                    )
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}"
+                    )
 
                 response.raise_for_status()
                 return response.json()
