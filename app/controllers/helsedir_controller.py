@@ -72,19 +72,20 @@ class HelseDirectorateController:
     async def get_infobit(
         self,
         infobit_id: str,
-        include_children: bool = False,
-        depth: int = 1,
+        include_children: bool = True,
+        depth: int = 10,
     ) -> dict:
         """
-        Get detailed information for a specific infobit.
+        Get complete information for a specific infobit with all nested content.
 
         Args:
             infobit_id: The infobit ID
-            include_children: Whether to fetch child content as well
-            depth: How many levels deep to fetch (1 = only direct children, 2 = grandchildren, etc.)
+            include_children: Whether to fetch ALL child content recursively (default: True)
+            depth: How many levels deep to fetch (default: 10 for complete data)
 
         Returns:
-            Dictionary with full infobit details, optionally including nested children data
+            Dictionary with COMPLETE infobit details and all nested children data.
+            Creates a full \"mock\" of the website content - no \"read more\" needed.
 
         Raises:
             HelseDirectorateAPIError: If API is unavailable or infobit not found
