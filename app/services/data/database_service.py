@@ -503,17 +503,19 @@ class DatabaseService:
         self,
         search_id: str,
         query: str,
-        results: List[Dict[str, Any]],
         role: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """
-        Log a search event with results shown.
+        Log a new search event to search_logs.
 
         Args:
             search_id: Unique ID for this search (UUID)
             query: The search query
-            results: List of results shown, each with content_id, position, score
             role: Optional user role
+            session_id: Optional session ID
+            user_id: Optional user ID
 
         Returns:
             True if logged successfully
@@ -524,31 +526,14 @@ class DatabaseService:
 
         try:
             cursor = conn.cursor()
-
-            # Insert search log
             cursor.execute(
                 """
-                INSERT INTO search_logs (search_id, query, role, results_count)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO search_logs (search_id, query, role, session_id, user_id)
+                VALUES (%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE query = VALUES(query)
                 """,
-                (search_id, query, role, len(results)),
+                (search_id, query, role, session_id, user_id),
             )
-
-            # Insert results shown
-            for result in results:
-                cursor.execute(
-                    """
-                    INSERT INTO search_results_shown (search_id, content_id, position, score)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        search_id,
-                        result.get("content_id"),
-                        result.get("position"),
-                        result.get("score", 0.0),
-                    ),
-                )
-
             conn.commit()
             return True
         except mysql.connector.Error as e:
@@ -558,23 +543,22 @@ class DatabaseService:
             cursor.close()
             conn.close()
 
-    def log_click(
+    def log_search_results(
         self,
         search_id: str,
-        content_id: str,
-        position: Optional[int] = None,
-        query: Optional[str] = None,
-        role: Optional[str] = None,
+        results: List[Dict[str, Any]],
     ) -> bool:
         """
-        Log a click event.
+        Log search results shown with ML features.
 
         Args:
-            search_id: The search_id this click belongs to
-            content_id: The clicked content ID
-            position: Position of the clicked result
-            query: The original search query
-            role: Optional user role
+            search_id: The search ID
+            results: List of results with features:
+                - content_id, position
+                - semantic_similarity, keyword_score_total
+                - exact_title_proportion, full_coverage_proportion
+                - title_keyword_proportion, body_keyword_proportion, exact_body_proportion
+                - type_match, role_match, code_match_count, lis_match, maalgruppe_match
 
         Returns:
             True if logged successfully
@@ -585,13 +569,97 @@ class DatabaseService:
 
         try:
             cursor = conn.cursor()
+
+            for result in results:
+                cursor.execute(
+                    """
+                    INSERT INTO search_results_shown (
+                        search_id, content_id, position,
+                        semantic_similarity, keyword_score_total,
+                        exact_title_proportion, full_coverage_proportion,
+                        title_keyword_proportion, body_keyword_proportion, exact_body_proportion,
+                        type_match, role_match, code_match_count, lis_match, maalgruppe_match
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        search_id,
+                        result.get("content_id"),
+                        result.get("position"),
+                        result.get("semantic_similarity"),
+                        result.get("keyword_score_total"),
+                        result.get("exact_title_proportion"),
+                        result.get("full_coverage_proportion"),
+                        result.get("title_keyword_proportion"),
+                        result.get("body_keyword_proportion"),
+                        result.get("exact_body_proportion"),
+                        result.get("type_match"),
+                        result.get("role_match"),
+                        result.get("code_match_count", 0),
+                        result.get("lis_match", 0),
+                        result.get("maalgruppe_match", 0),
+                    ),
+                )
+
+            # Also update content_stats impressions
+            content_ids = [r.get("content_id") for r in results if r.get("content_id")]
+            self.record_impressions_batch(content_ids)
+
+            conn.commit()
+            return True
+        except mysql.connector.Error as e:
+            print(f"Error logging search results: {e}")
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def log_click(
+        self,
+        search_id: str,
+        content_id: str,
+    ) -> bool:
+        """
+        Log a click event. Position is looked up from search_results_shown.
+
+        Args:
+            search_id: The search_id this click belongs to
+            content_id: The clicked content ID
+
+        Returns:
+            True if logged successfully
+        """
+        conn = self._get_connection()
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+
+            # Look up position from search_results_shown
             cursor.execute(
                 """
-                INSERT INTO click_logs (search_id, content_id, position, query, role)
-                VALUES (%s, %s, %s, %s, %s)
+                SELECT position FROM search_results_shown
+                WHERE search_id = %s AND content_id = %s
+                LIMIT 1
                 """,
-                (search_id, content_id, position, query, role),
+                (search_id, content_id),
             )
+            result = cursor.fetchone()
+            position = result[0] if result else None
+
+            # Insert click log
+            cursor.execute(
+                """
+                INSERT INTO click_logs (search_id, content_id, position)
+                VALUES (%s, %s, %s)
+                """,
+                (search_id, content_id, position),
+            )
+
+            # Also update content_stats clicks
+            self.record_click(content_id)
+
             conn.commit()
             return True
         except mysql.connector.Error as e:
@@ -747,13 +815,13 @@ class DatabaseService:
     def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:
         """
         Get training data for learning-to-rank model.
-        
+
         Returns all search results shown with their features and click labels.
         Joins search_results_shown with click_logs to determine which results were clicked.
-        
+
         Args:
             days_back: Number of days of history to include
-            
+
         Returns:
             List of training rows with features and labels
         """
@@ -765,26 +833,26 @@ class DatabaseService:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     srs.search_id,
                     srs.content_id,
                     srs.position,
-                    srs.score,
                     srs.semantic_similarity,
-                    srs.title_keyword_score,
-                    srs.body_keyword_score,
-                    srs.exact_phrase_title,
-                    srs.exact_phrase_body,
+                    srs.keyword_score_total,
+                    srs.exact_title_proportion,
+                    srs.full_coverage_proportion,
+                    srs.title_keyword_proportion,
+                    srs.body_keyword_proportion,
+                    srs.exact_body_proportion,
                     srs.type_match,
                     srs.role_match,
                     srs.code_match_count,
                     srs.lis_match,
                     srs.maalgruppe_match,
-                    CASE WHEN cl.content_id IS NOT NULL THEN 1 ELSE 0 END as clicked,
-                    cl.dwell_ms
+                    CASE WHEN cl.content_id IS NOT NULL THEN 1 ELSE 0 END as clicked
                 FROM search_results_shown srs
                 INNER JOIN search_logs sl ON srs.search_id = sl.search_id
-                LEFT JOIN click_logs cl ON srs.search_id = cl.search_id 
+                LEFT JOIN click_logs cl ON srs.search_id = cl.search_id
                     AND srs.content_id = cl.content_id
                 WHERE sl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
                 ORDER BY srs.search_id, srs.position

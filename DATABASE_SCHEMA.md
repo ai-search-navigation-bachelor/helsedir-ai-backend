@@ -96,7 +96,7 @@ exact_body_proportion    = exact_body_score / total_keyword_score
 
 ## Tabell: `click_logs`
 
-Logger bruker-klikk på søkeresultater med dwell time.
+Logger bruker-klikk på søkeresultater.
 
 | Kolonne      | Type         | Beskrivelse                         |
 | ------------ | ------------ | ----------------------------------- |
@@ -104,7 +104,6 @@ Logger bruker-klikk på søkeresultater med dwell time.
 | `search_id`  | VARCHAR(36)  | Referanse til search_logs.search_id |
 | `content_id` | VARCHAR(100) | Hvilken content som ble klikket     |
 | `position`   | INT          | Posisjon i resultatlisten           |
-| `dwell_ms`   | INT          | Tid brukt på siden (millisekunder)  |
 | `timestamp`  | DATETIME     | Tidspunkt for klikk                 |
 
 **Indekser:**
@@ -112,10 +111,6 @@ Logger bruker-klikk på søkeresultater med dwell time.
 - PRIMARY KEY: `id`
 - INDEX: `search_id`, `content_id`
 - FOREIGN KEY: `search_id` → `search_logs(search_id)`
-
-**Dwell time brukes til:**
-- Filtrere "bounce clicks" (kort dwell = ikke relevant)
-- Default threshold: 8000ms for positiv label i LTR-trening
 
 ---
 
@@ -207,8 +202,7 @@ SELECT
     srs.maalgruppe_match,
 
     -- Labels
-    CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END AS clicked,
-    cl.dwell_ms
+    CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END AS clicked
 
 FROM search_results_shown srs
 JOIN search_logs sl ON srs.search_id = sl.search_id

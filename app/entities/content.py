@@ -17,3 +17,8 @@ class ContentItem(BaseModel):
     content_type: str
     target_groups: List[str] = []
     tags: Optional[List[str]] = []
+
+    @property
+    def info_type(self) -> str:
+        """Alias for content_type (used by ranking features)."""
+        return self.content_type

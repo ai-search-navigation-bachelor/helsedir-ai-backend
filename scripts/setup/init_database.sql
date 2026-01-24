@@ -83,13 +83,12 @@ CREATE TABLE IF NOT EXISTS search_results_shown (
 -- ============================================================
 -- Click Logs Table
 -- ============================================================
--- Tracks user clicks on search results with dwell time
+-- Tracks user clicks on search results
 CREATE TABLE IF NOT EXISTS click_logs (
     id INT PRIMARY KEY AUTO_INCREMENT,
     search_id VARCHAR(36) NOT NULL,
     content_id VARCHAR(100) NOT NULL,
     position INT,
-    dwell_ms INT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (search_id) REFERENCES search_logs(search_id),
     INDEX idx_search_id (search_id),

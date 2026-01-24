@@ -17,11 +17,17 @@ class SearchResult(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    """Response model for search endpoint."""
+    """Response model for search endpoint with pagination."""
     results: List[SearchResult]
     query: str
     total: int
-    search_id: Optional[str] = None  # For linking clicks to searches
+    search_id: str  # For linking clicks to searches
+
+    # Pagination info
+    offset: int
+    limit: int
+    has_next: bool
+    has_prev: bool
 
 
 class TagResponse(BaseModel):

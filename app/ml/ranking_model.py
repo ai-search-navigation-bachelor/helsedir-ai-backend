@@ -172,8 +172,8 @@ class HealthContentReranker:
     - save()/load(): persists model.
 
     Notes:
-    - This model is trained on clicks as weak labels. Use dwell time if available.
-    - Make sure search_results_shown logs per-result features (semantic_similarity, title/body scores, etc.).
+    - This model is trained on clicks as weak labels.
+    - Make sure search_results_shown logs per-result features.
     """
 
     def __init__(self) -> None:
@@ -190,8 +190,6 @@ class HealthContentReranker:
         days_back: int = 180,
         min_group_size: int = 5,
         require_any_click: bool = True,
-        use_dwell: bool = True,
-        dwell_positive_ms: int = 8000,
         use_db_propensity: bool = True,
         verbose: bool = True,
     ) -> Dict[str, float]:
@@ -201,9 +199,10 @@ class HealthContentReranker:
         Expected database_service methods:
           - get_ltr_training_rows(days_back) -> list[dict]
             Each row should include:
-              search_id, content_id, position, clicked, dwell_ms,
-              semantic_similarity, title_keyword_score, body_keyword_score,
-              exact_phrase_title, exact_phrase_body,
+              search_id, content_id, position, clicked,
+              semantic_similarity, keyword_score_total,
+              exact_title_proportion, full_coverage_proportion,
+              title_keyword_proportion, body_keyword_proportion, exact_body_proportion,
               type_match, role_match, code_match_count, lis_match, maalgruppe_match
           - get_content_stats_bulk() -> dict[content_id] = {"clicks": int, "impressions": int}
           - (optional) get_position_propensities() -> dict[position] = propensity float
@@ -262,16 +261,6 @@ class HealthContentReranker:
                 any_pos = True
 
                 clicked = int(rr.get("clicked") or 0)
-                dwell = rr.get("dwell_ms")
-
-                # Optional: clean positives with dwell threshold
-                if use_dwell and clicked == 1:
-                    try:
-                        if dwell is None or int(dwell) < dwell_positive_ms:
-                            clicked = 0
-                    except Exception:
-                        clicked = 0
-
                 if clicked == 1:
                     any_click = True
 
