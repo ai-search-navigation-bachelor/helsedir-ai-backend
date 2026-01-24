@@ -87,7 +87,12 @@ class DatabaseService:
 
             maalgruppe = content.get("maalgruppe")
             if maalgruppe is None:
-                maalgruppe_json = None
+                maalgrupp# The `get_ltr_training_rows()` method is a part of the database service
+                # being tested in the script. This method is used to retrieve training rows
+                # for Learning to Rank (LTR) models. In the context of a ranking model, LTR
+                # is a machine learning technique that is used to improve the ranking of
+                # search results based on relevance feedback.
+                e_json = None
             elif isinstance(maalgruppe, str):
                 maalgruppe_json = maalgruppe  # Already a JSON string
             else:

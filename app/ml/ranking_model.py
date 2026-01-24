@@ -44,26 +44,32 @@ from app.services.data.database_service import database_service
 # ---------------------------------------------------------------------
 
 RERANK_FEATURES: List[str] = [
-    # Main relevance signals
-    "semantic_similarity",      # cosine similarity (0..1-ish)
-    "title_keyword_score",      # BM25/keyword score for title
-    "body_keyword_score",       # BM25/keyword score for body
-    "exact_phrase_title",       # 0/1
-    "exact_phrase_body",        # 0/1
+    # Semantic signal
+    "semantic_similarity",          # cosine similarity (-1 to 1, typically 0-1)
+
+    # Keyword signals - absolute magnitude
+    "keyword_score_total",          # total keyword score normalized (0-1)
+
+    # Keyword signals - proportions (where did the score come from?)
+    "exact_title_proportion",       # exact phrase in title / total
+    "full_coverage_proportion",     # full title coverage / total
+    "title_keyword_proportion",     # title keyword matches / total
+    "body_keyword_proportion",      # body keyword matches / total
+    "exact_body_proportion",        # exact phrase in body / total
 
     # Metadata / intent alignment
-    "type_match",               # 0/1  (info_type matches query intent)
-    "role_match",               # 0/1  (role matches allowed roles)
-    "code_match_count",         # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
-    "lis_match",                # 0/1
-    "maalgruppe_match",         # 0/1
+    "type_match",                   # 0/1  (info_type matches query intent)
+    "role_match",                   # 0/1  (role matches allowed roles)
+    "code_match_count",             # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
+    "lis_match",                    # 0/1
+    "maalgruppe_match",             # 0/1
 
     # Popularity priors (weak)
-    "smoothed_ctr",             # smoothed CTR in [0..1]
-    "log_impressions",          # log(1 + impressions)
+    "smoothed_ctr",                 # smoothed CTR in [0..1]
+    "log_impressions",              # log(1 + impressions)
 
     # Bias/context
-    "position",                 # shown position (1..N)
+    "position",                     # shown position (1..N)
 ]
 
 
@@ -128,21 +134,27 @@ class RerankCandidate:
     content_id: str
     position: int
 
-    # main signals
+    # Semantic signal
     semantic_similarity: float = 0.0
-    title_keyword_score: float = 0.0
-    body_keyword_score: float = 0.0
-    exact_phrase_title: float = 0.0
-    exact_phrase_body: float = 0.0
 
-    # metadata alignment
+    # Keyword signals - absolute magnitude
+    keyword_score_total: float = 0.0
+
+    # Keyword signals - proportions
+    exact_title_proportion: float = 0.0
+    full_coverage_proportion: float = 0.0
+    title_keyword_proportion: float = 0.0
+    body_keyword_proportion: float = 0.0
+    exact_body_proportion: float = 0.0
+
+    # Metadata alignment
     type_match: float = 0.0
     role_match: float = 0.0
     code_match_count: float = 0.0
     lis_match: float = 0.0
     maalgruppe_match: float = 0.0
 
-    # popularity (filled from content_stats)
+    # Popularity (filled from content_stats)
     smoothed_ctr: float = 0.0
     log_impressions: float = 0.0
 
@@ -234,9 +246,9 @@ class HealthContentReranker:
             # Sort by position (stable)
             items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
 
-            # Build labels and detect click presence
+            # First pass: build feature dicts and find max keyword_score_total
+            feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
-            feats: List[List[float]] = []
             weights: List[float] = []
 
             any_pos = False
@@ -271,10 +283,12 @@ class HealthContentReranker:
                 # build feature dict from logged row (preferred) + priors
                 feat_dict = {
                     "semantic_similarity": _f(rr.get("semantic_similarity"), _f(rr.get("candidate_score"), 0.0)),
-                    "title_keyword_score": _f(rr.get("title_keyword_score"), 0.0),
-                    "body_keyword_score": _f(rr.get("body_keyword_score"), 0.0),
-                    "exact_phrase_title": _f(rr.get("exact_phrase_title"), 0.0),
-                    "exact_phrase_body": _f(rr.get("exact_phrase_body"), 0.0),
+                    "keyword_score_total": _f(rr.get("keyword_score_total"), 0.0),  # RAW - normalized below
+                    "exact_title_proportion": _f(rr.get("exact_title_proportion"), 0.0),
+                    "full_coverage_proportion": _f(rr.get("full_coverage_proportion"), 0.0),
+                    "title_keyword_proportion": _f(rr.get("title_keyword_proportion"), 0.0),
+                    "body_keyword_proportion": _f(rr.get("body_keyword_proportion"), 0.0),
+                    "exact_body_proportion": _f(rr.get("exact_body_proportion"), 0.0),
                     "type_match": _f(rr.get("type_match"), 0.0),
                     "role_match": _f(rr.get("role_match"), 0.0),
                     "code_match_count": _f(rr.get("code_match_count"), 0.0),
@@ -285,7 +299,7 @@ class HealthContentReranker:
                     "position": float(pos),
                 }
 
-                feats.append([feat_dict[n] for n in self.feature_names])
+                feat_dicts.append(feat_dict)
                 labels.append(float(clicked))
 
                 # IPS weight to reduce position bias
@@ -298,6 +312,17 @@ class HealthContentReranker:
                 continue
             if require_any_click and not any_click:
                 continue
+
+            # Normalize keyword_score_total by max in this search group
+            max_kw = max((fd["keyword_score_total"] for fd in feat_dicts), default=1.0)
+            if max_kw > 0:
+                for fd in feat_dicts:
+                    fd["keyword_score_total"] = fd["keyword_score_total"] / max_kw
+
+            # Second pass: build feature vectors
+            feats: List[List[float]] = []
+            for fd in feat_dicts:
+                feats.append([fd[n] for n in self.feature_names])
 
             X_all.extend(feats)
             y_all.extend(labels)
@@ -370,10 +395,12 @@ class HealthContentReranker:
 
             feat_dict = {
                 "semantic_similarity": _f(c.semantic_similarity),
-                "title_keyword_score": _f(c.title_keyword_score),
-                "body_keyword_score": _f(c.body_keyword_score),
-                "exact_phrase_title": _f(c.exact_phrase_title),
-                "exact_phrase_body": _f(c.exact_phrase_body),
+                "keyword_score_total": _f(c.keyword_score_total),
+                "exact_title_proportion": _f(c.exact_title_proportion),
+                "full_coverage_proportion": _f(c.full_coverage_proportion),
+                "title_keyword_proportion": _f(c.title_keyword_proportion),
+                "body_keyword_proportion": _f(c.body_keyword_proportion),
+                "exact_body_proportion": _f(c.exact_body_proportion),
                 "type_match": _f(c.type_match),
                 "role_match": _f(c.role_match),
                 "code_match_count": _f(c.code_match_count),
@@ -415,10 +442,12 @@ class HealthContentReranker:
 def extract_features_for_candidate(
     *,
     semantic_similarity: float,
-    title_keyword_score: float = 0.0,
-    body_keyword_score: float = 0.0,
-    exact_phrase_title: bool = False,
-    exact_phrase_body: bool = False,
+    keyword_score_total: float = 0.0,
+    exact_title_proportion: float = 0.0,
+    full_coverage_proportion: float = 0.0,
+    title_keyword_proportion: float = 0.0,
+    body_keyword_proportion: float = 0.0,
+    exact_body_proportion: float = 0.0,
     type_match: bool = False,
     role_match: bool = False,
     code_match_count: int = 0,
@@ -431,10 +460,12 @@ def extract_features_for_candidate(
     """
     return {
         "semantic_similarity": float(semantic_similarity),
-        "title_keyword_score": float(title_keyword_score),
-        "body_keyword_score": float(body_keyword_score),
-        "exact_phrase_title": float(bool(exact_phrase_title)),
-        "exact_phrase_body": float(bool(exact_phrase_body)),
+        "keyword_score_total": float(keyword_score_total),
+        "exact_title_proportion": float(exact_title_proportion),
+        "full_coverage_proportion": float(full_coverage_proportion),
+        "title_keyword_proportion": float(title_keyword_proportion),
+        "body_keyword_proportion": float(body_keyword_proportion),
+        "exact_body_proportion": float(exact_body_proportion),
         "type_match": float(bool(type_match)),
         "role_match": float(bool(role_match)),
         "code_match_count": float(int(code_match_count)),

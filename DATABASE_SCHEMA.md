@@ -2,7 +2,7 @@
 
 Dette dokumentet beskriver tabellstrukturen i MySQL-databasen for helsedir-ai-backend.
 
-## Database: `helsedir`
+## Database: `helsedir_ai`
 
 ---
 
@@ -15,60 +15,17 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `id`         | VARCHAR(100) PK | Unik ID fra Helsedir API                            |
 | `tittel`     | TEXT            | Dokumenttittel                                      |
 | `tekst`      | LONGTEXT        | Fulltekst innhold                                   |
-| `url`        | TEXT            | URL til originaldokument                            |
 | `info_type`  | VARCHAR(50)     | Dokumenttype (retningslinje, veileder, informasjon) |
-| `koder`      | JSON            | Fagkoder fra Helsedir (LIS-koder, etc.)             |
+| `url`        | TEXT            | URL til originaldokument                            |
+| `koder`      | JSON            | Fagkoder fra Helsedir (ICD, ICPC, SNOMED, LIS)      |
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
-| `tags`       | JSON            | Auto-genererte semantiske tags                      |
-| `embedding`  | BLOB            | Embedding-vektor (256D) for semantisk søk           |
+| `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
 
 **Indekser:**
 
 - PRIMARY KEY: `id`
 - INDEX: `info_type`
-
-**Eksempel:**
-
-```json
-{
-  "id": "abc123",
-  "tittel": "Nasjonal faglig retningslinje for diabetes type 2",
-  "tekst": "Denne retningslinjen omhandler...",
-  "url": "https://helsedirektoratet.no/...",
-  "info_type": "Retningslinje",
-  "koder": { "lis-laeringsmal": ["NKI 036"] },
-  "maalgruppe": ["Fastlege", "Sykepleier"],
-  "tags": ["diabetes", "behandling", "type_2_diabetes", "retningslinje"],
-  "embedding": null
-}
-```
-
----
-
-## Tabell: `content_stats`
-
-Sporer impressions og klikk for hver content item (brukes til CTR-beregning).
-
-| Kolonne       | Type            | Beskrivelse                                       |
-| ------------- | --------------- | ------------------------------------------------- |
-| `content_id`  | VARCHAR(100) PK | Referanse til content.id                          |
-| `impressions` | INT             | Antall ganger vist i søkeresultater               |
-| `clicks`      | INT             | Antall ganger klikket på                          |
-| `ctr`         | FLOAT           | Click-through rate (beregnet: clicks/impressions) |
-
-**Indekser:**
-
-- PRIMARY KEY: `content_id`
-- FOREIGN KEY: `content_id` → `content(id)`
-
-**Eksempel:**
-
-```
-content_id  | impressions | clicks | ctr
-------------|-------------|--------|-------
-abc123      | 150         | 12     | 0.0800
-def456      | 200         | 5      | 0.0250
-```
+- FULLTEXT: `tittel`, `tekst`
 
 ---
 
@@ -76,93 +33,137 @@ def456      | 200         | 5      | 0.0250
 
 Logger alle søk som utføres.
 
-| Kolonne         | Type               | Beskrivelse                                  |
-| --------------- | ------------------ | -------------------------------------------- |
-| `id`            | INT AI PK          | Auto-increment ID                            |
-| `search_id`     | VARCHAR(36) UNIQUE | UUID for dette søket                         |
-| `query`         | TEXT               | Søketekst fra bruker                         |
-| `role`          | VARCHAR(50)        | Brukerens rolle (fastlege, sykepleier, etc.) |
-| `results_count` | INT                | Antall resultater returnert                  |
-| `timestamp`     | DATETIME           | Tidspunkt for søk                            |
+| Kolonne      | Type               | Beskrivelse                                  |
+| ------------ | ------------------ | -------------------------------------------- |
+| `id`         | INT AI PK          | Auto-increment ID                            |
+| `search_id`  | VARCHAR(36) UNIQUE | UUID for dette søket                         |
+| `query`      | TEXT               | Søketekst fra bruker                         |
+| `role`       | VARCHAR(100)       | Brukerens rolle (fastlege, sykepleier, etc.) |
+| `session_id` | VARCHAR(36)        | Sesjon-ID for å gruppere brukerinteraksjoner |
+| `user_id`    | VARCHAR(36)        | Bruker-ID (hvis innlogget)                   |
+| `timestamp`  | DATETIME           | Tidspunkt for søk                            |
 
 **Indekser:**
 
 - PRIMARY KEY: `id`
 - UNIQUE: `search_id`
-- INDEX: `timestamp`
-
-**Eksempel:**
-
-```
-id | search_id                            | query              | role     | results_count | timestamp
----|--------------------------------------|--------------------|-----------|--------------|-----------
-1  | 550e8400-e29b-41d4-a716-446655440000 | diabetes behandling| fastlege | 10           | 2026-01-21 14:30:00
-```
+- INDEX: `timestamp`, `session_id`
 
 ---
 
 ## Tabell: `search_results_shown`
 
-Logger hvilke resultater som ble vist for hvert søk (brukes til ML-trening).
+Logger hvilke resultater som ble vist for hvert søk med ML-features for LTR-trening.
 
-| Kolonne      | Type         | Beskrivelse                          |
-| ------------ | ------------ | ------------------------------------ |
-| `id`         | INT AI PK    | Auto-increment ID                    |
-| `search_id`  | VARCHAR(36)  | Referanse til search_logs.search_id  |
-| `content_id` | VARCHAR(100) | Referanse til content.id             |
-| `position`   | INT          | Posisjon i resultatlisten (0-basert) |
-| `score`      | FLOAT        | Relevans-score fra søkemotoren       |
+| Kolonne                    | Type         | Beskrivelse                                       |
+| -------------------------- | ------------ | ------------------------------------------------- |
+| `id`                       | INT AI PK    | Auto-increment ID                                 |
+| `search_id`                | VARCHAR(36)  | Referanse til search_logs.search_id               |
+| `content_id`               | VARCHAR(100) | Referanse til content.id                          |
+| `position`                 | INT          | Posisjon i resultatlisten (1, 2, 3, ...)          |
+| `semantic_similarity`      | FLOAT        | Cosine similarity fra embedding (-1 til 1)        |
+| `keyword_score_total`      | FLOAT        | Rå total keyword score (normaliseres ved trening) |
+| `exact_title_proportion`   | FLOAT        | Andel av score fra eksakt tittel-match (0-1)      |
+| `full_coverage_proportion` | FLOAT        | Andel fra full tittel-dekning (0-1)               |
+| `title_keyword_proportion` | FLOAT        | Andel fra tittel keyword-matcher (0-1)            |
+| `body_keyword_proportion`  | FLOAT        | Andel fra body keyword-matcher (0-1)              |
+| `exact_body_proportion`    | FLOAT        | Andel fra eksakt body-match (0-1)                 |
+| `type_match`               | FLOAT        | Innholdstype autoritetsnivå (0-1)                 |
+| `role_match`               | FLOAT        | Brukerrolle-match score (0-1)                     |
+| `code_match_count`         | INT          | Antall matchede koder (ICD/ICPC/SNOMED/LIS)       |
+| `lis_match`                | TINYINT      | LIS-kode match (0/1)                              |
+| `maalgruppe_match`         | TINYINT      | Målgruppe match (0/1)                             |
+| `timestamp`                | DATETIME     | Tidspunkt resultat ble vist                       |
 
 **Indekser:**
 
 - PRIMARY KEY: `id`
-- INDEX: `search_id`
+- INDEX: `search_id`, `content_id`
 - FOREIGN KEY: `search_id` → `search_logs(search_id)`
-- FOREIGN KEY: `content_id` → `content(id)`
 
-**Eksempel:**
+**Feature-forklaring:**
 
+Proporsjonene (`*_proportion`) summerer til 1.0 og viser hvor keyword-scoren kom fra:
 ```
-id | search_id                            | content_id | position | score
----|--------------------------------------|------------|----------|-------
-1  | 550e8400-e29b-41d4-a716-446655440000 | abc123     | 0        | 15.3
-2  | 550e8400-e29b-41d4-a716-446655440000 | def456     | 1        | 12.1
-3  | 550e8400-e29b-41d4-a716-446655440000 | ghi789     | 2        | 8.7
+exact_title_proportion   = exact_title_score / total_keyword_score
+full_coverage_proportion = full_coverage_score / total_keyword_score
+title_keyword_proportion = title_keyword_score / total_keyword_score
+body_keyword_proportion  = body_keyword_score / total_keyword_score
+exact_body_proportion    = exact_body_score / total_keyword_score
 ```
 
 ---
 
 ## Tabell: `click_logs`
 
-Logger bruker-klikk på søkeresultater (brukes til ML-trening).
+Logger bruker-klikk på søkeresultater med dwell time.
 
-| Kolonne      | Type         | Beskrivelse                                   |
-| ------------ | ------------ | --------------------------------------------- |
-| `id`         | INT AI PK    | Auto-increment ID                             |
-| `search_id`  | VARCHAR(36)  | Referanse til search_logs.search_id           |
-| `content_id` | VARCHAR(100) | Hvilken content som ble klikket               |
-| `position`   | INT          | Posisjon i resultatlisten (0-basert)          |
-| `query`      | TEXT         | Søketekst (denormalisert for lettere analyse) |
-| `role`       | VARCHAR(50)  | Brukerens rolle (denormalisert)               |
-| `timestamp`  | DATETIME     | Tidspunkt for klikk                           |
+| Kolonne      | Type         | Beskrivelse                         |
+| ------------ | ------------ | ----------------------------------- |
+| `id`         | INT AI PK    | Auto-increment ID                   |
+| `search_id`  | VARCHAR(36)  | Referanse til search_logs.search_id |
+| `content_id` | VARCHAR(100) | Hvilken content som ble klikket     |
+| `position`   | INT          | Posisjon i resultatlisten           |
+| `dwell_ms`   | INT          | Tid brukt på siden (millisekunder)  |
+| `timestamp`  | DATETIME     | Tidspunkt for klikk                 |
 
 **Indekser:**
 
 - PRIMARY KEY: `id`
-- INDEX: `search_id`
-- INDEX: `content_id`
-- INDEX: `timestamp`
+- INDEX: `search_id`, `content_id`
 - FOREIGN KEY: `search_id` → `search_logs(search_id)`
+
+**Dwell time brukes til:**
+- Filtrere "bounce clicks" (kort dwell = ikke relevant)
+- Default threshold: 8000ms for positiv label i LTR-trening
+
+---
+
+## Tabell: `content_stats`
+
+Aggregert statistikk for innholdsperformance.
+
+| Kolonne        | Type            | Beskrivelse                              |
+| -------------- | --------------- | ---------------------------------------- |
+| `content_id`   | VARCHAR(100) PK | Referanse til content.id                 |
+| `clicks`       | INT             | Totalt antall klikk                      |
+| `impressions`  | INT             | Totalt antall visninger i søkeresultater |
+| `last_updated` | DATETIME        | Sist oppdatert                           |
+
+**Indekser:**
+
+- PRIMARY KEY: `content_id`
 - FOREIGN KEY: `content_id` → `content(id)`
 
-**Eksempel:**
+---
 
-```
-id | search_id                            | content_id | position | query               | role     | timestamp
----|--------------------------------------|------------|----------|---------------------|----------|----------
-1  | 550e8400-e29b-41d4-a716-446655440000 | abc123     | 0        | diabetes behandling | fastlege | 2026-01-21 14:30:15
-2  | 550e8400-e29b-41d4-a716-446655440000 | ghi789     | 2        | diabetes behandling | fastlege | 2026-01-21 14:30:45
-```
+## Tabell: `position_propensity`
+
+Lagrer lært position bias for IPS-vekting i LTR-trening.
+
+| Kolonne     | Type      | Beskrivelse                            |
+| ----------- | --------- | -------------------------------------- |
+| `position`  | INT PK    | Posisjon i resultatlisten (1, 2, ...) |
+| `propensity`| FLOAT     | P(click \| position) - klikksannsynlighet |
+
+**Default verdier:**
+
+| Position | Propensity |
+| -------- | ---------- |
+| 1        | 1.00       |
+| 2        | 0.70       |
+| 3        | 0.55       |
+| 4        | 0.45       |
+| 5        | 0.40       |
+| 6        | 0.35       |
+| 7        | 0.30       |
+| 8        | 0.28       |
+| 9        | 0.26       |
+| 10       | 0.24       |
+
+**Brukes til:**
+- Inverse Propensity Scoring (IPS) i LTR-trening
+- Korrigerer for position bias (høyere posisjoner får flere klikk)
 
 ---
 
@@ -181,59 +182,56 @@ search_logs
 
 ---
 
-## ML Training Data Flow
+## LTR Training Data Query
 
-### For Ranking Model:
+Hent treningsdata for Learning-to-Rank modellen:
 
 ```sql
--- Hent treningsdata: søk med minst ett klikk
 SELECT
     sl.search_id,
-    sl.query,
-    sl.role,
     srs.content_id,
     srs.position,
-    srs.score,
-    CASE WHEN cl.content_id IS NOT NULL THEN 1 ELSE 0 END as clicked
-FROM search_logs sl
-INNER JOIN search_results_shown srs ON sl.search_id = srs.search_id
-LEFT JOIN click_logs cl ON sl.search_id = cl.search_id
+
+    -- Features
+    srs.semantic_similarity,
+    srs.keyword_score_total,
+    srs.exact_title_proportion,
+    srs.full_coverage_proportion,
+    srs.title_keyword_proportion,
+    srs.body_keyword_proportion,
+    srs.exact_body_proportion,
+    srs.type_match,
+    srs.role_match,
+    srs.code_match_count,
+    srs.lis_match,
+    srs.maalgruppe_match,
+
+    -- Labels
+    CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END AS clicked,
+    cl.dwell_ms
+
+FROM search_results_shown srs
+JOIN search_logs sl ON srs.search_id = sl.search_id
+LEFT JOIN click_logs cl ON srs.search_id = cl.search_id
                         AND srs.content_id = cl.content_id
-WHERE sl.search_id IN (
-    SELECT DISTINCT search_id FROM click_logs
-)
+WHERE sl.timestamp > DATE_SUB(NOW(), INTERVAL 180 DAY)
 ORDER BY sl.search_id, srs.position;
 ```
 
-**Resultat:**
+**Normalisering ved trening:**
 
-- Positive samples: `clicked = 1` (brukeren klikket)
-- Negative samples: `clicked = 0` (vist men ikke klikket)
-
-### For Embedding Model:
-
-```sql
--- Hent innhold med tags for supervised learning
-SELECT
-    id,
-    tittel,
-    tekst,
-    tags
-FROM content
-WHERE tags IS NOT NULL;
+`keyword_score_total` normaliseres per `search_id` gruppe:
+```python
+max_kw = max(row["keyword_score_total"] for row in group)
+for row in group:
+    row["keyword_score_total"] /= max_kw  # Beste match = 1.0
 ```
-
-**Resultat:**
-
-- Primary tag (første i tags-arrayet) brukes som label
-- Dokumenter med samme primary tag = positive pairs
-- Dokumenter med ulike primary tags = negative pairs
 
 ---
 
 ## Statistikk-queries
 
-### CTR per dokument:
+### Smoothed CTR per dokument:
 
 ```sql
 SELECT
@@ -241,11 +239,11 @@ SELECT
     c.tittel,
     cs.impressions,
     cs.clicks,
-    cs.clicks / cs.impressions as ctr
+    (cs.clicks + 1) / (cs.impressions + 21) as smoothed_ctr
 FROM content c
 LEFT JOIN content_stats cs ON c.id = cs.content_id
 WHERE cs.impressions > 0
-ORDER BY ctr DESC;
+ORDER BY smoothed_ctr DESC;
 ```
 
 ### Mest søkte termer:
@@ -253,26 +251,27 @@ ORDER BY ctr DESC;
 ```sql
 SELECT
     query,
-    COUNT(*) as search_count,
-    SUM(results_count) as total_results_shown
+    COUNT(*) as search_count
 FROM search_logs
+WHERE timestamp > DATE_SUB(NOW(), INTERVAL 30 DAY)
 GROUP BY query
 ORDER BY search_count DESC
 LIMIT 20;
 ```
 
-### Mest klikkede dokumenter:
+### Position bias analyse:
 
 ```sql
 SELECT
-    c.id,
-    c.tittel,
-    COUNT(cl.id) as click_count
-FROM content c
-INNER JOIN click_logs cl ON c.id = cl.content_id
-GROUP BY c.id, c.tittel
-ORDER BY click_count DESC
-LIMIT 20;
+    srs.position,
+    COUNT(*) as impressions,
+    SUM(CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END) as clicks,
+    SUM(CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*) as ctr
+FROM search_results_shown srs
+LEFT JOIN click_logs cl ON srs.search_id = cl.search_id
+                        AND srs.content_id = cl.content_id
+GROUP BY srs.position
+ORDER BY srs.position;
 ```
 
 ---
@@ -282,25 +281,13 @@ LIMIT 20;
 ### Opprett database:
 
 ```bash
-mysql -u root -p < scripts/setup_database.sql
-```
-
-### Legg til tags kolonne (hvis ikke eksisterer):
-
-```bash
-mysql -u root -p helsedir < scripts/add_tags_column.sql
+mysql -u root -p < scripts/setup/init_database.sql
 ```
 
 ### Importer innhold:
 
 ```bash
 python scripts/import_content.py
-```
-
-### Generer tags:
-
-```bash
-python scripts/generate_tags.py
 ```
 
 ---
@@ -311,22 +298,27 @@ python scripts/generate_tags.py
 
 ```sql
 TRUNCATE TABLE content_stats;
-TRUNCATE TABLE search_logs;
-TRUNCATE TABLE search_results_shown;
 TRUNCATE TABLE click_logs;
+TRUNCATE TABLE search_results_shown;
+TRUNCATE TABLE search_logs;
 ```
 
-### Slett gammelt innhold:
+### Oppdater position propensity fra faktiske data:
 
 ```sql
-DELETE FROM content WHERE id NOT IN (
-    SELECT DISTINCT content_id FROM search_results_shown
-    WHERE timestamp > DATE_SUB(NOW(), INTERVAL 30 DAY)
-);
+REPLACE INTO position_propensity (position, propensity)
+SELECT
+    position,
+    SUM(CASE WHEN cl.id IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*) as propensity
+FROM search_results_shown srs
+LEFT JOIN click_logs cl ON srs.search_id = cl.search_id
+                        AND srs.content_id = cl.content_id
+WHERE srs.position <= 10
+GROUP BY srs.position;
 ```
 
 ### Database backup:
 
 ```bash
-mysqldump -u root -p helsedir > backup_$(date +%Y%m%d).sql
+mysqldump -u root -p helsedir_ai > backup_$(date +%Y%m%d).sql
 ```

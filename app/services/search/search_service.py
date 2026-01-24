@@ -108,16 +108,6 @@ class SearchService:
             score += points
             breakdown['exact_body'] = points
 
-        # Tag matches
-        if item.tags:
-            tag_text = " ".join(item.tags).lower()
-            tag_keywords = set(re.findall(r'\w+', tag_text))
-            tag_matches = query_keywords & tag_keywords
-            if tag_matches:
-                points = len(tag_matches) * settings.search_tag_match_weight
-                score += points
-                breakdown['tag_matches'] = {'count': len(tag_matches), 'matches': list(tag_matches), 'points': points}
-
         return score, breakdown
 
     def _create_snippet(self, body: str, query_keywords: set, max_length: int = 200) -> str:
@@ -173,11 +163,7 @@ class SearchService:
         
         if 'exact_body' in breakdown:
             parts.append(f"Exact in body (+{breakdown['exact_body']:.1f})")
-        
-        if 'tag_matches' in breakdown:
-            tm = breakdown['tag_matches']
-            parts.append(f"Tags: {', '.join(tm['matches'][:3])} (+{tm['points']:.1f})")
-        
+
         if role:
             parts.append(f"Role: {role}")
 
@@ -430,7 +416,7 @@ class SearchService:
             # Get CTR data
             ctr_data = database_service.get_content_ctr()
 
-            # Extract features for each item
+            # Extract RAW features for each item
             features_list = []
             for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items:
                 features = self._extract_ranking_features(
@@ -438,6 +424,15 @@ class SearchService:
                     kw_raw, sem_raw, ctr_data.get(item.id, 0.0)
                 )
                 features_list.append(features)
+
+            # Normalize keyword_score_total based on max in result set
+            max_kw_score = max(
+                (f["keyword_score_total"] for f in features_list),
+                default=1.0
+            )
+            if max_kw_score > 0:
+                for features in features_list:
+                    features["keyword_score_total"] = features["keyword_score_total"] / max_kw_score
 
             # Get ranking scores from model
             ranking_scores = ml_service.get_ranking_scores(features_list)
@@ -465,52 +460,79 @@ class SearchService:
         ctr: float
     ) -> Dict[str, float]:
         """
-        Extract features for ranking model.
+        Extract RAW features for ranking model.
 
-        Features match RANKING_FEATURES in ranking_model.py:
-        1. title_keyword_score (normalized 0-1) - Ratio of query keywords in title
-        2. body_keyword_score (normalized 0-1) - Ratio of query keywords in body
-        3. tag_match_score (normalized 0-1) - Ratio of query keywords in tags
-        4. exact_phrase_title (binary 0/1) - Full query phrase in title
-        5. exact_phrase_body (binary 0/1) - Full query phrase in body
-        6. semantic_similarity (0-1) - Cosine similarity from embedding
-        7. content_type_encoded (0-1) - Authority level of content type
-        8. historical_ctr (0-1) - Click-through rate
+        NOTE: keyword_score_total is returned as RAW score (not normalized).
+        Normalization happens in _apply_ranking_model based on max in result set.
+
+        Features match RERANK_FEATURES in ranking_model.py:
+        1. semantic_similarity (-1 to 1) - Cosine similarity from embedding
+        2. keyword_score_total (raw) - Total keyword score (normalized later)
+        3. exact_title_proportion (0-1) - Proportion of score from exact title match
+        4. full_coverage_proportion (0-1) - Proportion from full title coverage
+        5. title_keyword_proportion (0-1) - Proportion from title keyword matches
+        6. body_keyword_proportion (0-1) - Proportion from body keyword matches
+        7. exact_body_proportion (0-1) - Proportion from exact body match
+        8. type_match (0-1) - Content type authority level
         9. role_match (0-1) - User role match with target groups
-        
-        All features are normalized to [0, 1] range for consistent learning.
         """
         query_lower = query.lower()
         title_lower = item.title.lower()
         body_lower = item.body.lower()
 
-        # Title keyword score (normalized)
+        # Calculate individual keyword score components
+        exact_title_score = 0.0
+        full_coverage_score = 0.0
+        title_keyword_score = 0.0
+        body_keyword_score = 0.0
+        exact_body_score = 0.0
+
+        # Exact phrase match in title
+        if query_lower in title_lower:
+            exact_title_score = settings.search_exact_phrase_title_weight
+
+        # Full title coverage (all title words present in query)
         title_keywords = set(re.findall(r'\w+', title_lower))
-        title_matches = len(query_keywords & title_keywords)
-        # Normalize: assume max 5 keyword matches in title
-        title_kw_score = min(title_matches / 5.0, 1.0)
+        if title_keywords and title_keywords.issubset(query_keywords):
+            full_coverage_score = settings.search_full_title_coverage_weight
 
-        # Body keyword score (normalized)
+        # Title keyword matches
+        title_matches = query_keywords & title_keywords
+        if title_matches:
+            title_keyword_score = len(title_matches) * settings.search_keyword_title_weight
+
+        # Body keyword matches
         body_keywords = set(re.findall(r'\w+', body_lower))
-        body_matches = len(query_keywords & body_keywords)
-        # Normalize: assume max 10 keyword matches in body
-        body_kw_score = min(body_matches / 10.0, 1.0)
+        body_matches = query_keywords & body_keywords
+        if body_matches:
+            body_keyword_score = len(body_matches) * settings.search_keyword_body_weight
 
-        # Tag match score (normalized)
-        tag_score = 0.0
-        if item.tags:
-            tag_text = " ".join(item.tags).lower()
-            tag_keywords = set(re.findall(r'\w+', tag_text))
-            tag_matches = len(query_keywords & tag_keywords)
-            # Normalize: assume max 3 tag matches
-            tag_score = min(tag_matches / 3.0, 1.0)
+        # Exact phrase match in body
+        if query_lower in body_lower:
+            exact_body_score = settings.search_exact_phrase_body_weight
 
-        # Exact phrase matches (binary: 1.0 or 0.0)
-        exact_title = 1.0 if query_lower in title_lower else 0.0
-        exact_body = 1.0 if query_lower in body_lower else 0.0
+        # Total keyword score (RAW - will be normalized in _apply_ranking_model)
+        total_keyword_score = (
+            exact_title_score +
+            full_coverage_score +
+            title_keyword_score +
+            body_keyword_score +
+            exact_body_score
+        )
 
-        # Semantic similarity (already normalized 0-1)
-        semantic = semantic_score
+        # Calculate proportions (avoid division by zero)
+        if total_keyword_score > 0:
+            exact_title_prop = exact_title_score / total_keyword_score
+            full_coverage_prop = full_coverage_score / total_keyword_score
+            title_keyword_prop = title_keyword_score / total_keyword_score
+            body_keyword_prop = body_keyword_score / total_keyword_score
+            exact_body_prop = exact_body_score / total_keyword_score
+        else:
+            exact_title_prop = 0.0
+            full_coverage_prop = 0.0
+            title_keyword_prop = 0.0
+            body_keyword_prop = 0.0
+            exact_body_prop = 0.0
 
         # Content type encoding based on authority level
         content_type_map = {
@@ -520,36 +542,30 @@ class SearchService:
             "faktaark": 0.6,
             "artikkel": 0.5,
         }
-        content_type = content_type_map.get(
+        type_match = content_type_map.get(
             item.info_type.lower() if item.info_type else None,
             0.5  # Default for unknown types
         )
-
-        # Historical CTR (already normalized 0-1)
-        historical_ctr = ctr
 
         # Role match - gradient based on specificity
         role_match = 0.0
         if role and item.target_groups:
             if role in item.target_groups:
-                # Perfect match, but penalize if shared with many groups
                 role_match = 1.0 / len(item.target_groups)
         elif not role and not item.target_groups:
-            # General content for general search
             role_match = 0.5
         elif not item.target_groups:
-            # Content for everyone
             role_match = 0.3
 
         return {
-            "title_keyword_score": title_kw_score,
-            "body_keyword_score": body_kw_score,
-            "tag_match_score": tag_score,
-            "exact_phrase_title": exact_title,
-            "exact_phrase_body": exact_body,
-            "semantic_similarity": semantic,
-            "content_type_encoded": content_type,
-            "historical_ctr": historical_ctr,
+            "semantic_similarity": semantic_score,
+            "keyword_score_total": total_keyword_score,  # RAW score
+            "exact_title_proportion": exact_title_prop,
+            "full_coverage_proportion": full_coverage_prop,
+            "title_keyword_proportion": title_keyword_prop,
+            "body_keyword_proportion": body_keyword_prop,
+            "exact_body_proportion": exact_body_prop,
+            "type_match": type_match,
             "role_match": role_match,
         }
 
