@@ -20,7 +20,7 @@ class HelseDirectorateSearchRequest(BaseModel):
     filter: Optional[str] = Field(None, description="OData filter expression", alias="Filter")
     search_mode: Optional[str] = Field(None, description="Search mode: 'Any' or 'All'", alias="SearchMode")
     query_type: Optional[str] = Field(None, description="Query type: 'Simple' or 'Full'", alias="QueryType")
-    get_full_infobits: bool = Field(False, description="Return full infobit content", alias="getFullInfobits")
+    get_full_infobits: bool = Field(True, description="Return full infobit content (default: True for complete data)", alias="getFullInfobits")
 
 
 class TagRequest(BaseModel):
