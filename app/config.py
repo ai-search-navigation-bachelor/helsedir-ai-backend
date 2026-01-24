@@ -27,8 +27,7 @@ class Settings(BaseSettings):
     search_full_title_coverage_weight: float = 7.0  # All title words in query
     search_keyword_title_weight: float = 3.0
     search_keyword_body_weight: float = 1.0
-    search_exact_phrase_body_weight: float = 2.0
-    search_tag_match_weight: float = 2.0
+    search_exact_phrase_body_weight: float = 3.0
 
     # ML settings
     ml_embedding_enabled: bool = False
