@@ -52,10 +52,8 @@ class ContentService:
         Example:
             >>> content_service.load_from_api(query_text="helse", max_items=50)
         """
-        from app.services.external.helsedir_api_service import (
-            helsedir_api_service,
-            HelseDirectorateAPIError,
-        )
+        from app.services.external.helsedir_api_service import helsedir_api_service
+        from app.exceptions.helsedir import HelseDirectorateAPIError
 
         try:
             print(f"Loading content from Helsedirektoratet API...")

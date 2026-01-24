@@ -1,10 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.dto.request.search import HelseDirectorateSearchRequest
-from app.controllers.helsedir_controller import (
-    helsedir_controller,
-    HelseDirectorateSearchResponse,
-)
-from app.services.external.helsedir_api_service import HelseDirectorateAPIError
+from app.dto.response.helsedir import HelseDirectorateSearchResponse
+from app.controllers.helsedir_controller import helsedir_controller
+from app.exceptions.helsedir import HelseDirectorateAPIError
 
 router = APIRouter(prefix="/helsedir", tags=["helsedirektoratet"])
 

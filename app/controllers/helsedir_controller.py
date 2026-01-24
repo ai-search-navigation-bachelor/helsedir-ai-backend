@@ -4,19 +4,10 @@ Helsedirektoratet controller.
 Handles business logic for Helsedirektoratet API operations.
 """
 
-from typing import Optional, List
-from pydantic import BaseModel
-from app.services.external.helsedir_api_service import (
-    helsedir_api_service,
-    HelseDirectorateAPIError,
-)
-
-
-class HelseDirectorateSearchResponse(BaseModel):
-    """Response from Helsedirektoratet API search."""
-    results: List[dict]
-    total: int
-    query: str
+from typing import Optional
+from app.services.external.helsedir_api_service import helsedir_api_service
+from app.exceptions.helsedir import HelseDirectorateAPIError
+from app.dto.response.helsedir import HelseDirectorateSearchResponse
 
 
 class HelseDirectorateController:
