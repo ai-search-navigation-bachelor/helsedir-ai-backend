@@ -76,19 +76,18 @@ class HelseDirectorateController:
         depth: int = 10,
     ) -> dict:
         """
-        Get complete information for a specific infobit with all nested content.
-
-        Args:
-            infobit_id: The infobit ID
-            include_children: Whether to fetch ALL child content recursively (default: True)
-            depth: How many levels deep to fetch (default: 10 for complete data)
-
+        Return an infobit by ID, optionally populating nested child content up to the specified depth.
+        
+        Parameters:
+            infobit_id (str): Identifier of the infobit to retrieve.
+            include_children (bool): If True, populate the infobit's "children" key with nested content (default True).
+            depth (int): Maximum levels of child recursion to fetch; a value of 0 disables child fetching (default 10).
+        
         Returns:
-            Dictionary with COMPLETE infobit details and all nested children data.
-            Creates a full \"mock\" of the website content - no \"read more\" needed.
-
+            dict: The infobit data; when `include_children` is True and `depth` > 0, includes a "children" list with nested child items.
+        
         Raises:
-            HelseDirectorateAPIError: If API is unavailable or infobit not found
+            HelseDirectorateAPIError: If the external API is unavailable or the infobit cannot be found.
         """
         # Fetch main infobit
         infobit = await self.api_service.get_infobit_by_id_async(infobit_id)
