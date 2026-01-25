@@ -10,9 +10,9 @@ class SearchResult(BaseModel):
     """Single search result."""
     id: str
     title: str
-    snippet: str
-    score: float
-    explanation: str = Field(..., description="Short explanation of why this result matches")
+    info_type: str
+    score: float  # Normalized 0-1
+    explanation: str
 
 
 class SearchResponse(BaseModel):

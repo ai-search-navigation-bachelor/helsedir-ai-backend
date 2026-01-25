@@ -8,6 +8,7 @@ from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.config import settings
+from app.constants import is_allowed_info_type
 import re
 
 
@@ -35,6 +36,10 @@ class SearchService:
 
         results = []
         for item in self.content_service.get_all_content():
+            # Filter by allowed info types
+            if not is_allowed_info_type(item.content_type):
+                continue
+
             # Filter by role if specified
             if role and role not in item.target_groups:
                 continue
@@ -42,23 +47,31 @@ class SearchService:
             score, breakdown = self._calculate_score_with_breakdown(item, query_lower, query_keywords)
 
             if score > 0:
-                snippet = self._create_snippet(item.body, query_keywords)
-                explanation = self._create_explanation_with_breakdown(breakdown, role)
+                results.append((item, score, breakdown))
 
-                results.append(
+        # Sort by score (descending) and ensure consistent ordering
+        results.sort(key=lambda x: (-x[1], x[0].id))
+
+        # Normalize scores (max score = 1.0)
+        if results:
+            max_score = results[0][1]
+            normalized = []
+            for item, raw_score, breakdown in results[:k]:
+                norm_score = raw_score / max_score if max_score > 0 else 0
+                explanation = self._create_explanation_with_breakdown(breakdown, role)
+                explanation += f" | Score: {raw_score:.1f} → {norm_score:.2f}"
+                normalized.append(
                     SearchResult(
                         id=item.id,
                         title=item.title,
-                        snippet=snippet,
-                        score=score,
+                        info_type=item.content_type,
+                        score=round(norm_score, 3),
                         explanation=explanation,
                     )
                 )
+            return normalized
 
-        # Sort by score (descending) and ensure consistent ordering
-        results.sort(key=lambda x: (-x.score, x.id))
-
-        return results[:k]
+        return []
 
     def _calculate_score(self, item: ContentItem, query_lower: str, query_keywords: set) -> float:
         """Calculate relevance score for a content item using configurable weights."""
@@ -238,6 +251,10 @@ class SearchService:
         # Calculate similarities
         similarities = []
         for item in self.content_service.get_all_content():
+            # Filter by allowed info types
+            if not is_allowed_info_type(item.content_type):
+                continue
+
             # Filter by role if specified
             if role and role not in item.target_groups:
                 continue
@@ -251,17 +268,18 @@ class SearchService:
         # Sort by similarity
         similarities.sort(key=lambda x: -x[1])
 
-        # Create results
+        # Normalize scores (semantic scores are already -1 to 1, normalize to 0-1)
         results = []
-        for item, score in similarities[:k]:
-            snippet = self._create_snippet(item.body, set())
+        for item, sem_score in similarities[:k]:
+            # Convert from [-1, 1] to [0, 1]
+            norm_score = (sem_score + 1) / 2
             results.append(
                 SearchResult(
                     id=item.id,
                     title=item.title,
-                    snippet=snippet,
-                    score=score,
-                    explanation=f"Semantic similarity: {score:.3f}",
+                    info_type=item.content_type,
+                    score=round(norm_score, 3),
+                    explanation=f"Semantic: {sem_score:.3f} → {norm_score:.2f}",
                 )
             )
 
@@ -309,6 +327,10 @@ class SearchService:
         scored_items = []
 
         for item in self.content_service.get_all_content():
+            # Filter by allowed info types
+            if not is_allowed_info_type(item.content_type):
+                continue
+
             # Filter by role if specified
             if role and role not in item.target_groups:
                 continue
@@ -367,16 +389,21 @@ class SearchService:
         # Create results
         results = []
         for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in normalized_items[:k]:
-            snippet = self._create_snippet(item.body, query_keywords)
-            explanation = self._create_explanation(item, query_keywords, role)
-            explanation += f" | Scores: kw={kw_raw:.1f}→{kw_norm:.2f}, sem={sem_raw:.2f}→{sem_norm:.2f}, final={combined:.2f}"
+            # Build clear explanation
+            parts = []
+            if kw_norm > 0:
+                parts.append(f"Keyword: {kw_norm:.2f}")
+            if sem_norm > 0:
+                parts.append(f"Semantic: {sem_norm:.2f}")
+            explanation = " + ".join(parts) if parts else "No match"
+            explanation += f" = {combined:.2f}"
 
             results.append(
                 SearchResult(
                     id=item.id,
                     title=item.title,
-                    snippet=snippet,
-                    score=combined,
+                    info_type=item.content_type,
+                    score=round(combined, 3),
                     explanation=explanation,
                 )
             )
