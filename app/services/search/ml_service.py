@@ -125,8 +125,8 @@ class MLService:
             return {}
 
         try:
-            # Encode query
-            query_embedding = self.embedding_model.encode([query])
+            # Encode query (with "query: " prefix for E5)
+            query_embedding = self.embedding_model.encode_query(query)
 
             # Compute similarities
             similarities = self.embedding_model.compute_similarity(

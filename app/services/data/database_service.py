@@ -540,6 +540,35 @@ class DatabaseService:
             cursor.close()
             conn.close()
 
+    def get_search_by_id(self, search_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a search record by search_id.
+
+        Args:
+            search_id: The search ID to look up
+
+        Returns:
+            Dict with query and role, or None if not found
+        """
+        conn = self._get_connection()
+        if not conn:
+            return None
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT query, role FROM search_logs WHERE search_id = %s",
+                (search_id,)
+            )
+            result = cursor.fetchone()
+            return result
+        except mysql.connector.Error as e:
+            print(f"Error getting search: {e}")
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
     def log_search_results(
         self,
         search_id: str,

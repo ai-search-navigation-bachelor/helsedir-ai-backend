@@ -83,6 +83,13 @@ class SearchController:
                 query=query,
                 role=role,
             )
+        else:
+            # Validate that query matches the original search
+            stored_search = database_service.get_search_by_id(search_id)
+            if stored_search is None:
+                raise ValueError(f"Invalid search_id: {search_id}")
+            if stored_search["query"] != query:
+                raise ValueError("Query does not match the original search for this search_id")
 
         # Extract ML features and log results shown
         results_with_features = self._extract_and_log_results(
@@ -140,7 +147,7 @@ class SearchController:
             features = {}
             if content_item:
                 features = self._calculate_features(
-                    content_item, query_lower, query_keywords, role
+                    content_item, query, query_keywords, role
                 )
 
             results_to_log.append({
@@ -168,13 +175,17 @@ class SearchController:
     def _calculate_features(
         self,
         item,
-        query_lower: str,
+        query: str,
         query_keywords: set,
         role: Optional[str],
     ) -> dict:
         """Calculate ML features for a content item."""
+        query_lower = query.lower()
         title_lower = item.title.lower() if item.title else ""
         body_lower = item.body.lower() if item.body else ""
+
+        # Calculate semantic similarity
+        semantic_similarity = self.search_service.get_semantic_similarity(query, item.id)
 
         # Calculate keyword score components
         exact_title_score = 0.0
@@ -255,6 +266,7 @@ class SearchController:
         maalgruppe_match = 1 if role and role in target_groups else 0
 
         return {
+            "semantic_similarity": semantic_similarity,
             "keyword_score_total": total_keyword_score,
             "exact_title_proportion": exact_title_prop,
             "full_coverage_proportion": full_coverage_prop,

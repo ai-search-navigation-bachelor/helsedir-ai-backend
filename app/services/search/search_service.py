@@ -20,6 +20,7 @@ class SearchService:
         self.embedding_model = None
         self.content_embeddings = None  # Cache: {content_id: embedding}
         self._embeddings_loaded = False
+        self._query_embedding_cache = {}  # Cache: {query: embedding}
 
     def search(self, query: str, role: Optional[str] = None, k: int = 10) -> List[SearchResult]:
         """
@@ -121,6 +122,36 @@ class SearchService:
             breakdown['exact_body'] = points
 
         return score, breakdown
+
+    def get_semantic_similarity(self, query: str, content_id: str) -> Optional[float]:
+        """
+        Calculate semantic similarity between a query and a content item.
+
+        Args:
+            query: Search query string
+            content_id: ID of the content item
+
+        Returns:
+            Cosine similarity score, or None if embeddings unavailable
+        """
+        if not self._load_embedding_model():
+            return None
+        if not self._load_content_embeddings():
+            return None
+
+        if content_id not in self.content_embeddings:
+            return None
+
+        # Use cached query embedding if available
+        if query not in self._query_embedding_cache:
+            self._query_embedding_cache = {query: self.embedding_model.encode_query(query)}
+        query_embedding = self._query_embedding_cache[query]
+
+        doc_embedding = self.content_embeddings[content_id]
+
+        # Cosine similarity (embeddings are L2-normalized)
+        similarity = float(np.dot(query_embedding, doc_embedding))
+        return similarity
 
     def _create_snippet(self, body: str, query_keywords: set, max_length: int = 200) -> str:
         """Create a snippet highlighting relevant parts of the body."""
@@ -318,7 +349,7 @@ class SearchService:
         )
 
         if semantic_available:
-            query_embedding = self.embedding_model.encode([query])[0]
+            query_embedding = self.embedding_model.encode_query(query)
         else:
             # Fall back to keyword-only search
             return self.search(query, role, k)
