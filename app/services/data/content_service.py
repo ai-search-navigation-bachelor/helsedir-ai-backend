@@ -27,14 +27,21 @@ class ContentService:
 
         self.content = []
         for item in db_content:
+            # Parse maalgruppe from JSON if available
+            maalgruppe = item.get("maalgruppe") or []
+            if isinstance(maalgruppe, str):
+                import json
+                try:
+                    maalgruppe = json.loads(maalgruppe)
+                except (json.JSONDecodeError, TypeError):
+                    maalgruppe = []
+
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
                 body=item.get("tekst") or "",
-                url=item.get("url") or "",
                 content_type=item.get("info_type") or "unknown",
-                target_groups=[],
-                tags=[],
+                target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
             )
             self.content.append(content_item)
 
@@ -72,14 +79,16 @@ class ContentService:
             # Parse into ContentItem format
             self.content = []
             for item in api_items:
+                maalgruppe = item.get("maalgruppe", [])
+                if not isinstance(maalgruppe, list):
+                    maalgruppe = []
+
                 content_item = ContentItem(
                     id=str(item.get("id", item.get("infoId", ""))),
                     title=item.get("tittel", ""),
                     body=item.get("tekst", ""),
-                    url=item.get("url", ""),
                     content_type=item.get("infoType", "unknown"),
-                    target_groups=item.get("maalgruppe", []),
-                    tags=[],
+                    target_groups=maalgruppe,
                 )
                 self.content.append(content_item)
 

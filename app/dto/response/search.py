@@ -10,7 +10,6 @@ class SearchResult(BaseModel):
     """Single search result."""
     id: str
     title: str
-    url: str
     snippet: str
     score: float
     explanation: str = Field(..., description="Short explanation of why this result matches")
@@ -40,7 +39,6 @@ class ChatSource(BaseModel):
     """Source document for chat response."""
     id: str
     title: str
-    url: str
     snippet: str
 
 

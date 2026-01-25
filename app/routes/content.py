@@ -46,7 +46,6 @@ async def get_content(
         id=content.id,
         title=content.title,
         body=content.body,
-        url=content.url,
         content_type=content.content_type,
         target_groups=content.target_groups,
     )

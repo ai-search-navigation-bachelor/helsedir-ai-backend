@@ -49,7 +49,6 @@ class SearchService:
                     SearchResult(
                         id=item.id,
                         title=item.title,
-                        url=item.url,
                         snippet=snippet,
                         score=score,
                         explanation=explanation,
@@ -260,7 +259,6 @@ class SearchService:
                 SearchResult(
                     id=item.id,
                     title=item.title,
-                    url=item.url,
                     snippet=snippet,
                     score=score,
                     explanation=f"Semantic similarity: {score:.3f}",
@@ -377,7 +375,6 @@ class SearchService:
                 SearchResult(
                     id=item.id,
                     title=item.title,
-                    url=item.url,
                     snippet=snippet,
                     score=combined,
                     explanation=explanation,

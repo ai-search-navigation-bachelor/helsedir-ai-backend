@@ -126,14 +126,12 @@ def fetch_content(search_terms: list, verbose: bool = True) -> dict:
             # Create lookup for basic info by id
             basic_by_id = {item.get("id"): item for item in basic_results}
 
-            # Merge: use full results but add infoType/url from basic
+            # Merge: use full results but add infoType from basic
             results = []
             for item in full_results:
                 item_id = item.get("id")
                 if item_id in basic_by_id:
                     item["infoType"] = basic_by_id[item_id].get("infoType")
-                    if not item.get("url"):
-                        item["url"] = basic_by_id[item_id].get("url")
                 results.append(item)
 
             new_count = 0

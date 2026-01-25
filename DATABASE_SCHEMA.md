@@ -16,7 +16,6 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `tittel`     | TEXT            | Dokumenttittel                                      |
 | `tekst`      | LONGTEXT        | Fulltekst innhold                                   |
 | `info_type`  | VARCHAR(50)     | Dokumenttype (retningslinje, veileder, informasjon) |
-| `url`        | TEXT            | URL til originaldokument                            |
 | `koder`      | JSON            | Fagkoder fra Helsedir (ICD, ICPC, SNOMED, LIS)      |
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |

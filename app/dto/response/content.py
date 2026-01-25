@@ -11,6 +11,5 @@ class ContentResponse(BaseModel):
     id: str
     title: str
     body: str
-    url: str
     content_type: str
     target_groups: List[str] = []

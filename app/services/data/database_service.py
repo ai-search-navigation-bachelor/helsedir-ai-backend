@@ -101,22 +101,14 @@ class DatabaseService:
             # Get info_type - API uses 'infoType' or 'dokumentType' depending on mode
             info_type = content.get("infoType") or content.get("dokumentType")
 
-            # Get url - may be direct or nested in links
-            url = content.get("url")
-            if not url and content.get("links"):
-                links = content.get("links")
-                if isinstance(links, list) and links:
-                    url = links[0].get("url") if isinstance(links[0], dict) else None
-
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, url, koder, maalgruppe)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
-                    url = VALUES(url),
                     koder = VALUES(koder),
                     maalgruppe = VALUES(maalgruppe)
                 """,
@@ -125,7 +117,6 @@ class DatabaseService:
                     content.get("tittel"),
                     content.get("tekst"),
                     info_type,
-                    url,
                     koder_json,
                     maalgruppe_json,
                 ),
@@ -178,22 +169,14 @@ class DatabaseService:
                     # Get info_type - API uses 'infoType' or 'dokumentType' depending on mode
                     info_type = content.get("infoType") or content.get("dokumentType")
 
-                    # Get url - may be direct or nested in links
-                    url = content.get("url")
-                    if not url and content.get("links"):
-                        links = content.get("links")
-                        if isinstance(links, list) and links:
-                            url = links[0].get("url") if isinstance(links[0], dict) else None
-
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, url, koder, maalgruppe)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
                             info_type = VALUES(info_type),
-                            url = VALUES(url),
                             koder = VALUES(koder),
                             maalgruppe = VALUES(maalgruppe)
                         """,
@@ -202,7 +185,6 @@ class DatabaseService:
                             content.get("tittel"),
                             content.get("tekst"),
                             info_type,
-                            url,
                             koder_json,
                             maalgruppe_json,
                         ),

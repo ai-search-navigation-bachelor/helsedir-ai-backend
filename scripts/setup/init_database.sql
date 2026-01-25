@@ -20,7 +20,6 @@ CREATE TABLE IF NOT EXISTS content (
     tittel TEXT NOT NULL,
     tekst LONGTEXT,
     info_type VARCHAR(50),
-    url TEXT,
     koder JSON,
     maalgruppe JSON,
     embedding BLOB,
