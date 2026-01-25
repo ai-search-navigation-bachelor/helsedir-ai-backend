@@ -87,30 +87,34 @@ class DatabaseService:
 
             maalgruppe = content.get("maalgruppe")
             if maalgruppe is None:
-                maalgrupp# The `get_ltr_training_rows()` method is a part of the database service
-                # being tested in the script. This method is used to retrieve training rows
-                # for Learning to Rank (LTR) models. In the context of a ranking model, LTR
-                # is a machine learning technique that is used to improve the ranking of
-                # search results based on relevance feedback.
-                e_json = None
+                maalgruppe_json = None
             elif isinstance(maalgruppe, str):
                 maalgruppe_json = maalgruppe  # Already a JSON string
             else:
                 maalgruppe_json = json.dumps(maalgruppe, ensure_ascii=False)
+
+            links = content.get("links")
+            if links is None:
+                links_json = None
+            elif isinstance(links, str):
+                links_json = links  # Already a JSON string
+            else:
+                links_json = json.dumps(links, ensure_ascii=False)
 
             # Get info_type - API uses 'infoType' or 'dokumentType' depending on mode
             info_type = content.get("infoType") or content.get("dokumentType")
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
                     koder = VALUES(koder),
-                    maalgruppe = VALUES(maalgruppe)
+                    maalgruppe = VALUES(maalgruppe),
+                    links = VALUES(links)
                 """,
                 (
                     content.get("id"),
@@ -119,6 +123,7 @@ class DatabaseService:
                     info_type,
                     koder_json,
                     maalgruppe_json,
+                    links_json,
                 ),
             )
             conn.commit()
@@ -166,19 +171,28 @@ class DatabaseService:
                     else:
                         maalgruppe_json = json.dumps(maalgruppe, ensure_ascii=False)
 
+                    links = content.get("links")
+                    if links is None:
+                        links_json = None
+                    elif isinstance(links, str):
+                        links_json = links  # Already a JSON string
+                    else:
+                        links_json = json.dumps(links, ensure_ascii=False)
+
                     # Get info_type - API uses 'infoType' or 'dokumentType' depending on mode
                     info_type = content.get("infoType") or content.get("dokumentType")
 
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
                             info_type = VALUES(info_type),
                             koder = VALUES(koder),
-                            maalgruppe = VALUES(maalgruppe)
+                            maalgruppe = VALUES(maalgruppe),
+                            links = VALUES(links)
                         """,
                         (
                             content.get("id"),
@@ -187,6 +201,7 @@ class DatabaseService:
                             info_type,
                             koder_json,
                             maalgruppe_json,
+                            links_json,
                         ),
                     )
                     cached += 1

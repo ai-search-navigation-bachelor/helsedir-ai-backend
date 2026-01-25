@@ -4,7 +4,7 @@ Content route for retrieving content and logging clicks.
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
-from app.dto.response.content import ContentResponse
+from app.dto.response.content import ContentResponse, ContentLinkResponse
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 
@@ -42,10 +42,23 @@ async def get_content(
             content_id=content_id,
         )
 
+    # Convert links to response format
+    links_response = [
+        ContentLinkResponse(
+            rel=link.rel,
+            type=link.type,
+            tittel=link.tittel,
+            href=link.href,
+            strukturId=link.strukturId,
+        )
+        for link in content.links
+    ]
+
     return ContentResponse(
         id=content.id,
         title=content.title,
         body=content.body,
         content_type=content.content_type,
         target_groups=content.target_groups,
+        links=links_response,
     )

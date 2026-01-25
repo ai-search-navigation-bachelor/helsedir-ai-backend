@@ -18,7 +18,21 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `info_type`  | VARCHAR(50)     | Dokumenttype (retningslinje, veileder, informasjon) |
 | `koder`      | JSON            | Fagkoder fra Helsedir (ICD, ICPC, SNOMED, LIS)      |
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
+| `links`      | JSON            | Relaterte lenker (forelder, barn, root, etc.)       |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
+
+**Links-struktur:**
+```json
+[
+  {
+    "rel": "forelder|barn|root|publikasjon",
+    "type": "kapittel|pakkeforlop-anbefaling|nasjonalt-forlop|...",
+    "tittel": "Lenketittel",
+    "href": "https://api.helsedirektoratet.no/innhold/...",
+    "strukturId": "0006-xxxx-structure"
+  }
+]
+```
 
 **Indekser:**
 

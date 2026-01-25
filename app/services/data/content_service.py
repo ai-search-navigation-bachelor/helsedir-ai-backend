@@ -4,8 +4,9 @@ Content service for loading and managing health content.
 Loads content from database cache or Helsedirektoratet API.
 """
 
+import json
 from typing import List, Optional
-from app.entities.content import ContentItem
+from app.entities.content import ContentItem, ContentLink
 from app.services.data.database_service import database_service
 
 
@@ -17,6 +18,38 @@ class ContentService:
         self.content_by_id: dict = {}
         self.load_content()
 
+    def _parse_json_field(self, value, default=None):
+        """Parse a JSON field that may be a string or already parsed."""
+        if value is None:
+            return default if default is not None else []
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return default if default is not None else []
+        return value
+
+    def _parse_links(self, links_data) -> List[ContentLink]:
+        """Parse links from database JSON into ContentLink objects."""
+        links = self._parse_json_field(links_data, [])
+        if not isinstance(links, list):
+            return []
+
+        result = []
+        for link in links:
+            if isinstance(link, dict):
+                try:
+                    result.append(ContentLink(
+                        rel=link.get("rel", ""),
+                        type=link.get("type", ""),
+                        tittel=link.get("tittel"),
+                        href=link.get("href", ""),
+                        strukturId=link.get("strukturId"),
+                    ))
+                except Exception:
+                    continue
+        return result
+
     def load_content(self):
         """Load content from database cache."""
         db_content = database_service.get_all_content()
@@ -27,14 +60,9 @@ class ContentService:
 
         self.content = []
         for item in db_content:
-            # Parse maalgruppe from JSON if available
-            maalgruppe = item.get("maalgruppe") or []
-            if isinstance(maalgruppe, str):
-                import json
-                try:
-                    maalgruppe = json.loads(maalgruppe)
-                except (json.JSONDecodeError, TypeError):
-                    maalgruppe = []
+            # Parse JSON fields
+            maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+            links = self._parse_links(item.get("links"))
 
             content_item = ContentItem(
                 id=str(item.get("id", "")),
@@ -42,6 +70,7 @@ class ContentService:
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
                 target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                links=links,
             )
             self.content.append(content_item)
 
@@ -79,16 +108,16 @@ class ContentService:
             # Parse into ContentItem format
             self.content = []
             for item in api_items:
-                maalgruppe = item.get("maalgruppe", [])
-                if not isinstance(maalgruppe, list):
-                    maalgruppe = []
+                maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+                links = self._parse_links(item.get("links"))
 
                 content_item = ContentItem(
                     id=str(item.get("id", item.get("infoId", ""))),
                     title=item.get("tittel", ""),
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
-                    target_groups=maalgruppe,
+                    target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                    links=links,
                 )
                 self.content.append(content_item)
 

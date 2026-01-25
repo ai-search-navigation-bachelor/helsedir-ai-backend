@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS content (
     info_type VARCHAR(50),
     koder JSON,
     maalgruppe JSON,
+    links JSON,
     embedding BLOB,
     INDEX idx_info_type (info_type),
     FULLTEXT INDEX idx_tittel (tittel),
