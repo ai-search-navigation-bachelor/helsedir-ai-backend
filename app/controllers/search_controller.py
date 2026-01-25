@@ -86,10 +86,15 @@ class SearchController:
         else:
             # Validate that query matches the original search
             stored_search = database_service.get_search_by_id(search_id)
-            if stored_search is None:
-                raise ValueError(f"Invalid search_id: {search_id}")
-            if stored_search["query"] != query:
-                raise ValueError("Query does not match the original search for this search_id")
+            # If search_id doesn't exist or query doesn't match, treat as new search
+            if stored_search is None or stored_search["query"].strip().lower() != query.strip().lower():
+                is_new_search = True
+                search_id = str(uuid.uuid4())
+                database_service.log_search(
+                    search_id=search_id,
+                    query=query,
+                    role=role,
+                )
 
         # Extract ML features and log results shown
         results_with_features = self._extract_and_log_results(
