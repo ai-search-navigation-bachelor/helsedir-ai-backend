@@ -833,6 +833,63 @@ class DatabaseService:
             cursor.close()
             conn.close()
 
+    def get_content_ctr_windowed(self, days: int = 30) -> Dict[str, float]:
+        """
+        Get CTR for each content item within a time window.
+
+        Calculates CTR based on search_results_shown (impressions) and
+        click_logs (clicks) within the specified number of days.
+
+        Uses smoothed CTR: (clicks + 1) / (impressions + 21) to avoid
+        extreme values for items with few impressions.
+
+        Args:
+            days: Number of days to look back (default: 30)
+
+        Returns:
+            Dictionary mapping content_id to smoothed CTR value (0.0-1.0)
+        """
+        conn = self._get_connection()
+        if not conn:
+            return {}
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT
+                    srs.content_id,
+                    COUNT(DISTINCT srs.id) as impressions,
+                    COUNT(DISTINCT cl.id) as clicks
+                FROM search_results_shown srs
+                LEFT JOIN click_logs cl
+                    ON srs.content_id = cl.content_id
+                    AND srs.search_id = cl.search_id
+                    AND cl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                WHERE srs.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                GROUP BY srs.content_id
+                """,
+                (days, days),
+            )
+            results = cursor.fetchall()
+
+            # Smoothed CTR: (clicks + alpha) / (impressions + alpha + beta)
+            alpha = 1.0
+            beta = 20.0
+            ctr_dict = {}
+            for row in results:
+                clicks = int(row["clicks"] or 0)
+                impressions = int(row["impressions"] or 0)
+                ctr_dict[row["content_id"]] = (clicks + alpha) / (impressions + alpha + beta)
+
+            return ctr_dict
+        except mysql.connector.Error as e:
+            print(f"Error getting windowed CTR data: {e}")
+            return {}
+        finally:
+            cursor.close()
+            conn.close()
+
     # ==================== Learning-to-Rank Operations ====================
 
     def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:

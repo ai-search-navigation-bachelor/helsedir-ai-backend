@@ -184,6 +184,7 @@ class HealthContentReranker:
         self,
         *,
         days_back: int = 180,
+        ctr_window_days: int = 30,
         min_group_size: int = 5,
         require_any_click: bool = True,
         use_db_propensity: bool = True,
@@ -199,8 +200,13 @@ class HealthContentReranker:
               semantic_similarity, keyword_score_total,
               exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
               type_match, role_match, code_match_count, lis_match, maalgruppe_match
+          - get_content_ctr_windowed(days) -> dict[content_id] = smoothed_ctr
           - get_content_stats_bulk() -> dict[content_id] = {"clicks": int, "impressions": int}
           - (optional) get_position_propensities() -> dict[position] = propensity float
+
+        Args:
+            days_back: Days of training data to use
+            ctr_window_days: Days for windowed CTR calculation (default: 30)
         """
         rows = database_service.get_ltr_training_rows(days_back=days_back)
         if not rows:
@@ -214,7 +220,10 @@ class HealthContentReranker:
                 continue
             groups.setdefault(str(sid), []).append(r)
 
-        # Bulk content stats for priors
+        # Windowed CTR for recent popularity signal
+        ctr_windowed = database_service.get_content_ctr_windowed(days=ctr_window_days)
+
+        # Bulk content stats for impressions count
         stats = database_service.get_content_stats_bulk()
 
         # Optional propensity table from DB
@@ -259,9 +268,9 @@ class HealthContentReranker:
                 if clicked == 1:
                     any_click = True
 
-                # popularity priors
+                # popularity priors (using windowed CTR for recency)
+                ctr = ctr_windowed.get(cid, 0.05)  # Default prior if no data
                 st = stats.get(cid, {"clicks": 0, "impressions": 0})
-                ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
                 log_imp = log1p_int(st.get("impressions", 0))
 
                 # build feature dict from logged row (preferred) + priors
@@ -346,13 +355,23 @@ class HealthContentReranker:
         role: str,
         candidates: Sequence[RerankCandidate],
         *,
+        ctr_window_days: int = 30,
         content_stats: Optional[Dict[str, Dict[str, int]]] = None,
+        ctr_windowed: Optional[Dict[str, float]] = None,
     ) -> List[Tuple[RerankCandidate, float]]:
         """
         Rerank a list of candidates.
 
         Provide candidates with their precomputed features (semantic/keyword/metadata).
         This method adds popularity priors (smoothed_ctr/log_impressions) automatically.
+
+        Args:
+            query: Search query
+            role: User role
+            candidates: List of candidates to rerank
+            ctr_window_days: Days for windowed CTR (default: 30)
+            content_stats: Optional pre-fetched content stats
+            ctr_windowed: Optional pre-fetched windowed CTR
 
         Returns: list of (candidate, score), sorted by score descending.
         """
@@ -365,14 +384,17 @@ class HealthContentReranker:
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
-        # Fetch stats once (bulk)
+        # Fetch windowed CTR (recent popularity)
+        ctr_data = ctr_windowed or database_service.get_content_ctr_windowed(days=ctr_window_days)
+
+        # Fetch stats for impressions count
         stats = content_stats or database_service.get_content_stats_bulk()
 
         # Build feature matrix
         X = []
         for c in candidates:
+            c.smoothed_ctr = ctr_data.get(c.content_id, 0.05)  # Windowed CTR
             st = stats.get(c.content_id, {"clicks": 0, "impressions": 0})
-            c.smoothed_ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
             c.log_impressions = log1p_int(st.get("impressions", 0))
 
             feat_dict = {
