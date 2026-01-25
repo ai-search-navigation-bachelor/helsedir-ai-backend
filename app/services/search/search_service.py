@@ -80,12 +80,11 @@ class SearchService:
         return score
 
     def _calculate_score_with_breakdown(self, item: ContentItem, query_lower: str, query_keywords: set) -> tuple[float, Dict[str, Any]]:
-        """Calculate relevance score with detailed breakdown."""
+        """Calculate relevance score with detailed breakdown (title-only)."""
         score = 0.0
         breakdown = {}
 
         title_lower = item.title.lower()
-        body_lower = item.body.lower()
 
         # Exact phrase match in title (highest weight)
         if query_lower in title_lower:
@@ -106,20 +105,6 @@ class SearchService:
             points = settings.search_full_title_coverage_weight
             score += points
             breakdown['full_title_coverage'] = points
-
-        # Keyword matches in body
-        body_keywords = set(re.findall(r'\w+', body_lower))
-        body_matches = query_keywords & body_keywords
-        if body_matches:
-            points = len(body_matches) * settings.search_keyword_body_weight
-            score += points
-            breakdown['body_keywords'] = {'count': len(body_matches), 'points': points}
-
-        # Exact phrase match in body
-        if query_lower in body_lower:
-            points = settings.search_exact_phrase_body_weight
-            score += points
-            breakdown['exact_body'] = points
 
         return score, breakdown
 
@@ -192,20 +177,13 @@ class SearchService:
 
         if 'exact_title' in breakdown:
             parts.append(f"Exact title match (+{breakdown['exact_title']:.1f})")
-        
+
         if 'full_title_coverage' in breakdown:
             parts.append(f"Full title coverage (+{breakdown['full_title_coverage']:.1f})")
-        
+
         if 'title_keywords' in breakdown:
             kw = breakdown['title_keywords']
             parts.append(f"Title words: {', '.join(kw['matches'][:3])} (+{kw['points']:.1f})")
-        
-        if 'body_keywords' in breakdown:
-            bk = breakdown['body_keywords']
-            parts.append(f"Body matches ({bk['count']}) (+{bk['points']:.1f})")
-        
-        if 'exact_body' in breakdown:
-            parts.append(f"Exact in body (+{breakdown['exact_body']:.1f})")
 
         if role:
             parts.append(f"Role: {role}")
@@ -515,32 +493,27 @@ class SearchService:
         ctr: float
     ) -> Dict[str, float]:
         """
-        Extract RAW features for ranking model.
+        Extract RAW features for ranking model (title-only keyword scoring).
 
         NOTE: keyword_score_total is returned as RAW score (not normalized).
         Normalization happens in _apply_ranking_model based on max in result set.
 
-        Features match RERANK_FEATURES in ranking_model.py:
+        Features:
         1. semantic_similarity (-1 to 1) - Cosine similarity from embedding
         2. keyword_score_total (raw) - Total keyword score (normalized later)
         3. exact_title_proportion (0-1) - Proportion of score from exact title match
         4. full_coverage_proportion (0-1) - Proportion from full title coverage
         5. title_keyword_proportion (0-1) - Proportion from title keyword matches
-        6. body_keyword_proportion (0-1) - Proportion from body keyword matches
-        7. exact_body_proportion (0-1) - Proportion from exact body match
-        8. type_match (0-1) - Content type authority level
-        9. role_match (0-1) - User role match with target groups
+        6. type_match (0-1) - Content type authority level
+        7. role_match (0-1) - User role match with target groups
         """
         query_lower = query.lower()
         title_lower = item.title.lower()
-        body_lower = item.body.lower()
 
-        # Calculate individual keyword score components
+        # Calculate individual keyword score components (title-only)
         exact_title_score = 0.0
         full_coverage_score = 0.0
         title_keyword_score = 0.0
-        body_keyword_score = 0.0
-        exact_body_score = 0.0
 
         # Exact phrase match in title
         if query_lower in title_lower:
@@ -556,38 +529,18 @@ class SearchService:
         if title_matches:
             title_keyword_score = len(title_matches) * settings.search_keyword_title_weight
 
-        # Body keyword matches
-        body_keywords = set(re.findall(r'\w+', body_lower))
-        body_matches = query_keywords & body_keywords
-        if body_matches:
-            body_keyword_score = len(body_matches) * settings.search_keyword_body_weight
-
-        # Exact phrase match in body
-        if query_lower in body_lower:
-            exact_body_score = settings.search_exact_phrase_body_weight
-
         # Total keyword score (RAW - will be normalized in _apply_ranking_model)
-        total_keyword_score = (
-            exact_title_score +
-            full_coverage_score +
-            title_keyword_score +
-            body_keyword_score +
-            exact_body_score
-        )
+        total_keyword_score = exact_title_score + full_coverage_score + title_keyword_score
 
         # Calculate proportions (avoid division by zero)
         if total_keyword_score > 0:
             exact_title_prop = exact_title_score / total_keyword_score
             full_coverage_prop = full_coverage_score / total_keyword_score
             title_keyword_prop = title_keyword_score / total_keyword_score
-            body_keyword_prop = body_keyword_score / total_keyword_score
-            exact_body_prop = exact_body_score / total_keyword_score
         else:
             exact_title_prop = 0.0
             full_coverage_prop = 0.0
             title_keyword_prop = 0.0
-            body_keyword_prop = 0.0
-            exact_body_prop = 0.0
 
         # Content type encoding based on authority level
         content_type_map = {
@@ -618,8 +571,6 @@ class SearchService:
             "exact_title_proportion": exact_title_prop,
             "full_coverage_proportion": full_coverage_prop,
             "title_keyword_proportion": title_keyword_prop,
-            "body_keyword_proportion": body_keyword_prop,
-            "exact_body_proportion": exact_body_prop,
             "type_match": type_match,
             "role_match": role_match,
         }

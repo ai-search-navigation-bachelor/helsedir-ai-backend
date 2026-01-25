@@ -580,10 +580,9 @@ class DatabaseService:
         Args:
             search_id: The search ID
             results: List of results with features:
-                - content_id, position
+                - content_id, position, score
                 - semantic_similarity, keyword_score_total
-                - exact_title_proportion, full_coverage_proportion
-                - title_keyword_proportion, body_keyword_proportion, exact_body_proportion
+                - exact_title_proportion, full_coverage_proportion, title_keyword_proportion
                 - type_match, role_match, code_match_count, lis_match, maalgruppe_match
 
         Returns:
@@ -600,25 +599,23 @@ class DatabaseService:
                 cursor.execute(
                     """
                     INSERT INTO search_results_shown (
-                        search_id, content_id, position,
+                        search_id, content_id, position, score,
                         semantic_similarity, keyword_score_total,
-                        exact_title_proportion, full_coverage_proportion,
-                        title_keyword_proportion, body_keyword_proportion, exact_body_proportion,
+                        exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
                         type_match, role_match, code_match_count, lis_match, maalgruppe_match
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         search_id,
                         result.get("content_id"),
                         result.get("position"),
+                        result.get("score"),
                         result.get("semantic_similarity"),
                         result.get("keyword_score_total"),
                         result.get("exact_title_proportion"),
                         result.get("full_coverage_proportion"),
                         result.get("title_keyword_proportion"),
-                        result.get("body_keyword_proportion"),
-                        result.get("exact_body_proportion"),
                         result.get("type_match"),
                         result.get("role_match"),
                         result.get("code_match_count", 0),
@@ -868,8 +865,6 @@ class DatabaseService:
                     srs.exact_title_proportion,
                     srs.full_coverage_proportion,
                     srs.title_keyword_proportion,
-                    srs.body_keyword_proportion,
-                    srs.exact_body_proportion,
                     srs.type_match,
                     srs.role_match,
                     srs.code_match_count,

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS search_results_shown (
     search_id VARCHAR(36) NOT NULL,
     content_id VARCHAR(100) NOT NULL,
     position INT NOT NULL,
+    score FLOAT,
 
     -- Semantic signal
     semantic_similarity FLOAT,
@@ -63,8 +64,6 @@ CREATE TABLE IF NOT EXISTS search_results_shown (
     exact_title_proportion FLOAT,
     full_coverage_proportion FLOAT,
     title_keyword_proportion FLOAT,
-    body_keyword_proportion FLOAT,
-    exact_body_proportion FLOAT,
 
     -- Metadata signals
     type_match FLOAT,

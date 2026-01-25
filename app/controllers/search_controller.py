@@ -153,13 +153,12 @@ class SearchController:
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
+                "score": result.score,
                 "semantic_similarity": features.get("semantic_similarity"),
                 "keyword_score_total": features.get("keyword_score_total"),
                 "exact_title_proportion": features.get("exact_title_proportion"),
                 "full_coverage_proportion": features.get("full_coverage_proportion"),
                 "title_keyword_proportion": features.get("title_keyword_proportion"),
-                "body_keyword_proportion": features.get("body_keyword_proportion"),
-                "exact_body_proportion": features.get("exact_body_proportion"),
                 "type_match": features.get("type_match"),
                 "role_match": features.get("role_match"),
                 "code_match_count": features.get("code_match_count", 0),
@@ -182,17 +181,14 @@ class SearchController:
         """Calculate ML features for a content item."""
         query_lower = query.lower()
         title_lower = item.title.lower() if item.title else ""
-        body_lower = item.body.lower() if item.body else ""
 
         # Calculate semantic similarity
         semantic_similarity = self.search_service.get_semantic_similarity(query, item.id)
 
-        # Calculate keyword score components
+        # Calculate keyword score components (title-only)
         exact_title_score = 0.0
         full_coverage_score = 0.0
         title_keyword_score = 0.0
-        body_keyword_score = 0.0
-        exact_body_score = 0.0
 
         # Exact phrase in title
         if query_lower in title_lower:
@@ -208,35 +204,18 @@ class SearchController:
         if title_matches:
             title_keyword_score = len(title_matches) * settings.search_keyword_title_weight
 
-        # Body keyword matches
-        body_keywords = set(re.findall(r'\w+', body_lower))
-        body_matches = query_keywords & body_keywords
-        if body_matches:
-            body_keyword_score = len(body_matches) * settings.search_keyword_body_weight
-
-        # Exact phrase in body
-        if query_lower in body_lower:
-            exact_body_score = settings.search_exact_phrase_body_weight
-
         # Total keyword score
-        total_keyword_score = (
-            exact_title_score + full_coverage_score +
-            title_keyword_score + body_keyword_score + exact_body_score
-        )
+        total_keyword_score = exact_title_score + full_coverage_score + title_keyword_score
 
         # Calculate proportions
         if total_keyword_score > 0:
             exact_title_prop = exact_title_score / total_keyword_score
             full_coverage_prop = full_coverage_score / total_keyword_score
             title_keyword_prop = title_keyword_score / total_keyword_score
-            body_keyword_prop = body_keyword_score / total_keyword_score
-            exact_body_prop = exact_body_score / total_keyword_score
         else:
             exact_title_prop = 0.0
             full_coverage_prop = 0.0
             title_keyword_prop = 0.0
-            body_keyword_prop = 0.0
-            exact_body_prop = 0.0
 
         # Type match (content authority)
         content_type_map = {
@@ -271,8 +250,6 @@ class SearchController:
             "exact_title_proportion": exact_title_prop,
             "full_coverage_proportion": full_coverage_prop,
             "title_keyword_proportion": title_keyword_prop,
-            "body_keyword_proportion": body_keyword_prop,
-            "exact_body_proportion": exact_body_prop,
             "type_match": type_match,
             "role_match": role_match,
             "code_match_count": 0,  # TODO: implement code matching
