@@ -147,7 +147,8 @@ class HybridSearch:
                 if not ml_service.is_ranking_available():
                     return items
 
-            ctr_data = database_service.get_content_ctr()
+            # Use windowed CTR (30 days) to match training data
+            ctr_data = database_service.get_content_ctr_windowed(days=30)
 
             # Extract RAW features for each item
             features_list = []
@@ -196,7 +197,7 @@ class HybridSearch:
         query_lower = query.lower()
         title_lower = item.title.lower()
 
-        # Calculate individual keyword score components
+        # Calculate individual keyword score components for proportions
         exact_title_score = 0.0
         full_coverage_score = 0.0
         title_keyword_score = 0.0
@@ -247,14 +248,23 @@ class HybridSearch:
         elif not item.target_groups:
             role_match = 0.3
 
+        # Maalgruppe match
+        target_groups = item.target_groups or []
+        maalgruppe_match = 1.0 if role and role in target_groups else 0.0
+
         return {
             "semantic_similarity": semantic_score,
-            "keyword_score_total": total_keyword_score,
+            "keyword_score_total": keyword_score,
             "exact_title_proportion": exact_title_prop,
             "full_coverage_proportion": full_coverage_prop,
             "title_keyword_proportion": title_keyword_prop,
             "type_match": type_match,
             "role_match": role_match,
+            "code_match_count": 0.0,  # TODO: implement code matching
+            "lis_match": 0.0,  # TODO: implement LIS matching
+            "maalgruppe_match": maalgruppe_match,
+            "smoothed_ctr": ctr,
+            "position": 0.0,  # Position unknown during re-ranking
         }
 
 

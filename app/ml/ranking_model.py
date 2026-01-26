@@ -409,11 +409,43 @@ class HealthContentReranker:
             raise ValueError("No reranker model loaded/trained. Cannot save.")
         self.model.save_model(path)
 
-    def load(self, path: str) -> None:
-        """Load model from disk."""
+    @classmethod
+    def load(cls, path: str) -> "HealthContentReranker":
+        """Load model from disk and return a new instance."""
+        instance = cls()
         m = xgb.XGBRanker()
         m.load_model(path)
-        self.model = m
+        instance.model = m
+        return instance
+
+    def predict(self, features: List[Dict[str, float]]) -> List[float]:
+        """
+        Predict ranking scores from feature dictionaries.
+
+        This method provides a simpler interface for ml_service.py,
+        accepting feature dicts directly instead of RerankCandidate objects.
+
+        Args:
+            features: List of feature dictionaries
+
+        Returns:
+            List of ranking scores
+        """
+        if self.model is None:
+            return [0.0] * len(features)
+
+        if not features:
+            return []
+
+        # Build feature matrix from dicts
+        X = []
+        for feat_dict in features:
+            row = [_f(feat_dict.get(name, 0.0)) for name in self.feature_names]
+            X.append(row)
+
+        X_np = np.asarray(X, dtype=np.float32)
+        scores = self.model.predict(X_np)
+        return [float(s) for s in scores]
 
 
 # ---------------------------------------------------------------------
@@ -449,3 +481,7 @@ def extract_features_for_candidate(
         "lis_match": float(bool(lis_match)),
         "maalgruppe_match": float(bool(maalgruppe_match)),
     }
+
+
+# Alias for backward compatibility with ml_service.py
+HealthContentRanker = HealthContentReranker
