@@ -7,11 +7,12 @@ Handles business logic for search operations with pagination and ML feature logg
 import uuid
 import re
 from typing import Optional, List
+
 from app.dto.response.search import SearchResult, SearchResponse
 from app.services.search.search_service import search_service
+from app.services.search.feature_extractor import feature_extractor
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
-from app.config import settings
 
 
 class SearchController:
@@ -42,68 +43,25 @@ class SearchController:
 
         Returns:
             SearchResponse with paginated results
-
-        Raises:
-            ValueError: If invalid search method
         """
         # Validate method
         valid_methods = {"keyword", "semantic", "hybrid"}
         if method not in valid_methods:
             raise ValueError(f"Invalid search method: {method}. Must be one of {valid_methods}")
 
-        # Get all results up to offset + limit for this page
-        # We fetch more to know the total count
-        max_results = 100  # Max results to consider
-
-        if method == "semantic":
-            all_results = self.search_service.search_semantic(
-                query=query, role=role, k=max_results
-            )
-        elif method == "keyword":
-            all_results = self.search_service.search(
-                query=query, role=role, k=max_results
-            )
-        else:  # hybrid
-            all_results = self.search_service.search_hybrid(
-                query=query, role=role, k=max_results
-            )
-
+        # Execute search
+        max_results = 100
+        all_results = self._execute_search(query, role, method, max_results)
         total = len(all_results)
 
         # Apply pagination
         page_results = all_results[offset:offset + limit]
 
-        # Generate or reuse search_id
-        is_new_search = search_id is None
-        if is_new_search:
-            search_id = str(uuid.uuid4())
-            # Log new search to search_logs
-            database_service.log_search(
-                search_id=search_id,
-                query=query,
-                role=role,
-            )
-        else:
-            # Validate that query matches the original search
-            stored_search = database_service.get_search_by_id(search_id)
-            # If search_id doesn't exist or query doesn't match, treat as new search
-            if stored_search is None or stored_search["query"].strip().lower() != query.strip().lower():
-                is_new_search = True
-                search_id = str(uuid.uuid4())
-                database_service.log_search(
-                    search_id=search_id,
-                    query=query,
-                    role=role,
-                )
+        # Handle search_id (new search vs pagination)
+        search_id = self._handle_search_id(search_id, query, role)
 
-        # Extract ML features and log results shown
-        results_with_features = self._extract_and_log_results(
-            search_id=search_id,
-            query=query,
-            role=role,
-            results=page_results,
-            offset=offset,
-        )
+        # Extract ML features and log results
+        self._log_results(search_id, query, role, page_results, offset)
 
         return SearchResponse(
             results=page_results,
@@ -116,42 +74,63 @@ class SearchController:
             has_prev=offset > 0,
         )
 
-    def _extract_and_log_results(
+    def _execute_search(
+        self,
+        query: str,
+        role: Optional[str],
+        method: str,
+        max_results: int
+    ) -> List[SearchResult]:
+        """Execute the appropriate search method."""
+        if method == "semantic":
+            return self.search_service.search_semantic(query=query, role=role, k=max_results)
+        elif method == "keyword":
+            return self.search_service.search(query=query, role=role, k=max_results)
+        else:  # hybrid
+            return self.search_service.search_hybrid(query=query, role=role, k=max_results)
+
+    def _handle_search_id(
+        self,
+        search_id: Optional[str],
+        query: str,
+        role: Optional[str]
+    ) -> str:
+        """Generate new search_id or validate existing one."""
+        if not search_id:
+            # New search
+            search_id = str(uuid.uuid4())
+            database_service.log_search(search_id=search_id, query=query, role=role)
+        else:
+            # Validate existing search_id
+            stored_search = database_service.get_search_by_id(search_id)
+            if stored_search is None:
+                raise ValueError(f"Invalid search_id: {search_id}")
+            if stored_search["query"].strip().lower() != query.strip().lower():
+                raise ValueError(
+                    f"Query mismatch: expected '{stored_search['query']}', got '{query}'"
+                )
+
+        return search_id
+
+    def _log_results(
         self,
         search_id: str,
         query: str,
         role: Optional[str],
         results: List[SearchResult],
         offset: int,
-    ) -> List[dict]:
-        """
-        Extract ML features for each result and log to database.
-
-        Args:
-            search_id: The search ID
-            query: Search query
-            role: User role
-            results: List of SearchResult objects
-            offset: Current offset for calculating actual position
-
-        Returns:
-            List of result dicts with features
-        """
-        query_lower = query.lower()
-        query_keywords = set(re.findall(r'\w+', query_lower))
+    ) -> None:
+        """Extract ML features and log results to database."""
+        query_keywords = set(re.findall(r'\w+', query.lower()))
 
         results_to_log = []
-
         for local_index, result in enumerate(results):
-            # Actual position in full result set (1-indexed)
             position = offset + local_index + 1
-
-            # Get content item for feature extraction
             content_item = content_service.get_content_by_id(result.id)
 
             features = {}
             if content_item:
-                features = self._calculate_features(
+                features = feature_extractor.extract_features(
                     content_item, query, query_keywords, role
                 )
 
@@ -171,96 +150,7 @@ class SearchController:
                 "maalgruppe_match": features.get("maalgruppe_match", 0),
             })
 
-        # Log results to database
         database_service.log_search_results(search_id, results_to_log)
-
-        return results_to_log
-
-    def _calculate_features(
-        self,
-        item,
-        query: str,
-        query_keywords: set,
-        role: Optional[str],
-    ) -> dict:
-        """Calculate ML features for a content item."""
-        query_lower = query.lower()
-        title_lower = item.title.lower() if item.title else ""
-
-        # Calculate semantic similarity
-        semantic_similarity = self.search_service.get_semantic_similarity(query, item.id)
-
-        # Calculate keyword score components (title-only)
-        exact_title_score = 0.0
-        full_coverage_score = 0.0
-        title_keyword_score = 0.0
-
-        # Exact phrase in title
-        if query_lower in title_lower:
-            exact_title_score = settings.search_exact_phrase_title_weight
-
-        # Full title coverage
-        title_keywords = set(re.findall(r'\w+', title_lower))
-        if title_keywords and title_keywords.issubset(query_keywords):
-            full_coverage_score = settings.search_full_title_coverage_weight
-
-        # Title keyword matches
-        title_matches = query_keywords & title_keywords
-        if title_matches:
-            title_keyword_score = len(title_matches) * settings.search_keyword_title_weight
-
-        # Total keyword score
-        total_keyword_score = exact_title_score + full_coverage_score + title_keyword_score
-
-        # Calculate proportions
-        if total_keyword_score > 0:
-            exact_title_prop = exact_title_score / total_keyword_score
-            full_coverage_prop = full_coverage_score / total_keyword_score
-            title_keyword_prop = title_keyword_score / total_keyword_score
-        else:
-            exact_title_prop = 0.0
-            full_coverage_prop = 0.0
-            title_keyword_prop = 0.0
-
-        # Type match (content authority)
-        content_type_map = {
-            "retningslinje": 0.9,
-            "veileder": 0.8,
-            "fagprosedyre": 0.75,
-            "faktaark": 0.6,
-            "artikkel": 0.5,
-        }
-        type_match = content_type_map.get(
-            item.info_type.lower() if item.info_type else None,
-            0.5
-        )
-
-        # Role match
-        role_match = 0.0
-        target_groups = item.target_groups or []
-        if role and target_groups:
-            if role in target_groups:
-                role_match = 1.0 / len(target_groups)
-        elif not role and not target_groups:
-            role_match = 0.5
-        elif not target_groups:
-            role_match = 0.3
-
-        # Maalgruppe match
-        maalgruppe_match = 1 if role and role in target_groups else 0
-
-        return {
-            "semantic_similarity": semantic_similarity,
-            "keyword_score_total": total_keyword_score,
-            "exact_title_proportion": exact_title_prop,
-            "full_coverage_proportion": full_coverage_prop,
-            "title_keyword_proportion": title_keyword_prop,
-            "type_match": type_match,
-            "role_match": role_match,
-            "code_match_count": 0,  # TODO: implement code matching
-            "lis_match": 0,  # TODO: implement LIS matching
-            "maalgruppe_match": maalgruppe_match,
-        }
 
 
 # Global instance
