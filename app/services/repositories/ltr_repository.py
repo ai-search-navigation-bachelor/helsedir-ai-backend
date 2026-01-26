@@ -116,11 +116,12 @@ class LtrRepository:
                     srs.code_match_count,
                     srs.lis_match,
                     srs.maalgruppe_match,
-                    CASE WHEN cl.content_id IS NOT NULL THEN 1 ELSE 0 END as clicked
+                    CASE WHEN EXISTS(
+                        SELECT 1 FROM click_logs cl
+                        WHERE cl.search_id = srs.search_id AND cl.content_id = srs.content_id
+                    ) THEN 1 ELSE 0 END as clicked
                 FROM search_results_shown srs
                 INNER JOIN search_logs sl ON srs.search_id = sl.search_id
-                LEFT JOIN click_logs cl ON srs.search_id = cl.search_id
-                    AND srs.content_id = cl.content_id
                 WHERE sl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
                 ORDER BY srs.search_id, srs.position
                 """,

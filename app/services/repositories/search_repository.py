@@ -104,6 +104,11 @@ class SearchRepository:
             cursor = conn.cursor()
 
             for result in results:
+                # Skip results missing content_id to avoid DB errors
+                content_id = result.get("content_id")
+                if not content_id:
+                    continue
+
                 cursor.execute(
                     """
                     INSERT INTO search_results_shown (
@@ -116,7 +121,7 @@ class SearchRepository:
                     """,
                     (
                         search_id,
-                        result.get("content_id"),
+                        content_id,
                         result.get("position"),
                         result.get("score"),
                         result.get("semantic_similarity"),

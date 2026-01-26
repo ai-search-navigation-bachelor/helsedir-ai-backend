@@ -25,7 +25,7 @@ pytest
 
 ### Layered Structure
 
-```
+```text
 app/
 ├── routes/           # HTTP endpoints (thin layer)
 ├── controllers/      # Business logic orchestration
@@ -63,7 +63,7 @@ Keyword scoring uses title matches only:
 - Keyword matches in title: +3.0 per keyword
 
 Configured via environment variables:
-```
+```bash
 SEARCH_EXACT_PHRASE_TITLE_WEIGHT=10.0
 SEARCH_FULL_TITLE_COVERAGE_WEIGHT=7.0
 SEARCH_KEYWORD_TITLE_WEIGHT=3.0
@@ -97,7 +97,7 @@ Enable with `ML_RANKING_ENABLED=true`.
 
 ## File Organization
 
-```
+```text
 helsedir-ai-backend/
 ├── app/
 │   ├── main.py                    # FastAPI app entry point
@@ -189,7 +189,7 @@ Search with pagination.
 ### GET /content/{id}
 Get content by ID. Include `search_id` query param to log click.
 
-```
+```http
 GET /content/abc123?search_id=uuid
 ```
 

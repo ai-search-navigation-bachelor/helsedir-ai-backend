@@ -160,13 +160,17 @@ class StatsRepository:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
                 """
-                SELECT content_id, ctr
+                SELECT content_id, clicks, impressions
                 FROM content_stats
                 WHERE impressions > 0
                 """
             )
             results = cursor.fetchall()
-            return {row["content_id"]: float(row["ctr"] or 0.0) for row in results}
+            return {
+                row["content_id"]: float(row["clicks"]) / float(row["impressions"])
+                for row in results
+                if row["impressions"] > 0
+            }
         except mysql.connector.Error as e:
             print(f"Error getting CTR data: {e}")
             return {}

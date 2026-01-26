@@ -82,8 +82,8 @@ class HybridSearch:
             else:
                 kw_norm = 1.0 if kw_raw > 0 else 0.0
 
-            # Semantic score: use as-is (absolute quality)
-            sem_norm = sem_raw
+            # Semantic score: normalize from [-1,1] to [0,1]
+            sem_norm = max(0.0, min(1.0, (sem_raw + 1.0) / 2.0))
 
             # Combined score
             combined_score = keyword_weight * kw_norm + semantic_weight * sem_norm

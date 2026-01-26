@@ -46,6 +46,7 @@ class SemanticSearch:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT id, embedding FROM content WHERE embedding IS NOT NULL")
@@ -57,16 +58,23 @@ class SemanticSearch:
                     embedding = np.frombuffer(embedding_bytes, dtype=np.float32)
                     self.content_embeddings[content_id] = embedding
 
-            self._embeddings_loaded = True
-            print(f"Loaded {len(self.content_embeddings)} embeddings into cache")
-            return len(self.content_embeddings) > 0
+            # Only mark as loaded if at least one embedding was found
+            if len(self.content_embeddings) > 0:
+                self._embeddings_loaded = True
+                print(f"Loaded {len(self.content_embeddings)} embeddings into cache")
+                return True
+            else:
+                print("No embeddings found in database")
+                return False
 
         except Exception as e:
             print(f"Error loading embeddings: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def is_available(self) -> bool:
         """Check if semantic search is available."""

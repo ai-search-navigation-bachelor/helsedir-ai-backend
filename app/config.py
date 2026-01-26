@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Ensure ML models directory exists
-Path(settings.ml_models_dir).mkdir(exist_ok=True)
+Path(settings.ml_models_dir).mkdir(parents=True, exist_ok=True)
 
 # Print loaded configuration (useful for debugging)
 if settings.debug:

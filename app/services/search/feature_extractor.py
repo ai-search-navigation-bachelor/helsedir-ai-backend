@@ -37,8 +37,10 @@ class FeatureExtractor:
         query_lower = query.lower()
         title_lower = item.title.lower() if item.title else ""
 
-        # Calculate semantic similarity
+        # Calculate semantic similarity (normalize None to 0.0)
         semantic_similarity = search_service.get_semantic_similarity(query, item.id)
+        if semantic_similarity is None:
+            semantic_similarity = 0.0
 
         # Calculate keyword score components (title-only)
         exact_title_score = 0.0

@@ -4,6 +4,7 @@ Content route for retrieving content and logging clicks.
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+from starlette.concurrency import run_in_threadpool
 from app.dto.response.content import ContentResponse, ContentLinkResponse
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
@@ -35,9 +36,10 @@ async def get_content(
     if not content:
         raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-    # Log click if search_id is provided
+    # Log click if search_id is provided (run blocking DB call in threadpool)
     if search_id:
-        database_service.log_click(
+        await run_in_threadpool(
+            database_service.log_click,
             search_id=search_id,
             content_id=content_id,
         )

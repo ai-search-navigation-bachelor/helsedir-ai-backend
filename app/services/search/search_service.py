@@ -33,7 +33,8 @@ class SearchService:
         k: int = 10
     ) -> List[SearchResult]:
         """Perform keyword-based search."""
-        return self._keyword.search(query, role, k)
+        result = self._keyword.search(query, role, k)
+        return result if result is not None else []
 
     def search_semantic(
         self,

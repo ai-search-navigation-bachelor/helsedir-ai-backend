@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS content (
 -- Tracks all search queries made by users
 CREATE TABLE IF NOT EXISTS search_logs (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    search_id VARCHAR(36) UNIQUE,
+    search_id VARCHAR(36) UNIQUE NOT NULL,
     query TEXT NOT NULL,
     role VARCHAR(100),
     session_id VARCHAR(36),

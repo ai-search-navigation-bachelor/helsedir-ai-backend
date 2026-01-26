@@ -42,8 +42,18 @@ class DatabasePool:
 
     def get_connection(self):
         """Get a connection from the pool."""
+        # Attempt lazy re-initialization if pool is None
+        if self._pool is None:
+            try:
+                self._initialize_pool()
+            except mysql.connector.Error as e:
+                print(f"Error re-initializing pool: {e}")
+                return None
+
+        # Still None after re-init attempt
         if self._pool is None:
             return None
+
         try:
             return self._pool.get_connection()
         except mysql.connector.Error as e:

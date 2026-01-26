@@ -49,10 +49,22 @@ class SearchController:
         if method not in valid_methods:
             raise ValueError(f"Invalid search method: {method}. Must be one of {valid_methods}")
 
+        # Validate and clamp offset and limit
+        offset = max(0, offset) if isinstance(offset, int) else 0
+        limit = max(1, limit) if isinstance(limit, int) else 10
+
         # Execute search
         max_results = 100
         all_results = self._execute_search(query, role, method, max_results)
+
+        # Coerce None to empty list
+        if all_results is None:
+            all_results = []
+
         total = len(all_results)
+
+        # Clamp offset to not exceed result length
+        offset = min(offset, max(0, total))
 
         # Apply pagination
         page_results = all_results[offset:offset + limit]
@@ -109,6 +121,13 @@ class SearchController:
                 raise ValueError(
                     f"Query mismatch: expected '{stored_search['query']}', got '{query}'"
                 )
+            # Validate role matches
+            stored_role = stored_search.get("role") or None
+            incoming_role = role or None
+            if stored_role != incoming_role:
+                raise ValueError(
+                    f"Role mismatch: expected '{stored_role}', got '{incoming_role}'"
+                )
 
         return search_id
 
@@ -123,31 +142,54 @@ class SearchController:
         """Extract ML features and log results to database."""
         query_keywords = set(re.findall(r'\w+', query.lower()))
 
+        # Default feature values to avoid NULLs
+        default_features = {
+            "semantic_similarity": 0.0,
+            "keyword_score_total": 0.0,
+            "exact_title_proportion": 0.0,
+            "full_coverage_proportion": 0.0,
+            "title_keyword_proportion": 0.0,
+            "type_match": 0.5,
+            "role_match": 0.0,
+            "code_match_count": 0,
+            "lis_match": 0,
+            "maalgruppe_match": 0,
+        }
+
         results_to_log = []
         for local_index, result in enumerate(results):
             position = offset + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
-            features = {}
+            features = default_features.copy()
             if content_item:
-                features = feature_extractor.extract_features(
-                    content_item, query, query_keywords, role
-                )
+                try:
+                    extracted = feature_extractor.extract_features(
+                        content_item, query, query_keywords, role
+                    )
+                    if extracted:
+                        # Merge extracted features with defaults
+                        for key in default_features:
+                            if key in extracted and extracted[key] is not None:
+                                features[key] = extracted[key]
+                except Exception:
+                    # Keep default features on extraction failure
+                    pass
 
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
                 "score": result.score,
-                "semantic_similarity": features.get("semantic_similarity"),
-                "keyword_score_total": features.get("keyword_score_total"),
-                "exact_title_proportion": features.get("exact_title_proportion"),
-                "full_coverage_proportion": features.get("full_coverage_proportion"),
-                "title_keyword_proportion": features.get("title_keyword_proportion"),
-                "type_match": features.get("type_match"),
-                "role_match": features.get("role_match"),
-                "code_match_count": features.get("code_match_count", 0),
-                "lis_match": features.get("lis_match", 0),
-                "maalgruppe_match": features.get("maalgruppe_match", 0),
+                "semantic_similarity": features["semantic_similarity"],
+                "keyword_score_total": features["keyword_score_total"],
+                "exact_title_proportion": features["exact_title_proportion"],
+                "full_coverage_proportion": features["full_coverage_proportion"],
+                "title_keyword_proportion": features["title_keyword_proportion"],
+                "type_match": features["type_match"],
+                "role_match": features["role_match"],
+                "code_match_count": features["code_match_count"],
+                "lis_match": features["lis_match"],
+                "maalgruppe_match": features["maalgruppe_match"],
             })
 
         database_service.log_search_results(search_id, results_to_log)

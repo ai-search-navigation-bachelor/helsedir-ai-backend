@@ -5,9 +5,13 @@ Loads content from database cache or Helsedirektoratet API.
 """
 
 import json
+import logging
 from typing import List, Optional
+from pydantic import ValidationError
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.database_service import database_service
+
+logger = logging.getLogger(__name__)
 
 
 class ContentService:
@@ -46,7 +50,8 @@ class ContentService:
                         href=link.get("href", ""),
                         strukturId=link.get("strukturId"),
                     ))
-                except Exception:
+                except ValidationError as e:
+                    logger.warning(f"Malformed link data skipped: {link}, error: {e}")
                     continue
         return result
 
