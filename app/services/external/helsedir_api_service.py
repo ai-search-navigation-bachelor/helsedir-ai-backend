@@ -4,14 +4,13 @@ Service for interacting with Helsedirektoratet API.
 API Documentation: https://utvikler.helsedirektoratet.no
 """
 import httpx
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 from app.config import settings
+from app.exceptions.helsedir import HelseDirectorateAPIError
 
-
-class HelseDirectorateAPIError(Exception):
-    """Custom exception for Helsedirektoratet API errors."""
-    pass
+# Re-export for backwards compatibility
+__all__ = ["HelseDirectorateAPIService", "HelseDirectorateAPIError", "helsedir_api_service"]
 
 
 class HelseDirectorateAPIService:

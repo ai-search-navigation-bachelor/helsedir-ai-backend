@@ -44,26 +44,29 @@ from app.services.data.database_service import database_service
 # ---------------------------------------------------------------------
 
 RERANK_FEATURES: List[str] = [
-    # Main relevance signals
-    "semantic_similarity",      # cosine similarity (0..1-ish)
-    "title_keyword_score",      # BM25/keyword score for title
-    "body_keyword_score",       # BM25/keyword score for body
-    "exact_phrase_title",       # 0/1
-    "exact_phrase_body",        # 0/1
+    # Semantic signal
+    "semantic_similarity",          # cosine similarity (-1 to 1, typically 0-1)
+
+    # Keyword signals - absolute magnitude
+    "keyword_score_total",          # total keyword score normalized (0-1)
+
+    # Keyword signals - proportions (title-only)
+    "exact_title_proportion",       # exact phrase in title / total
+    "full_coverage_proportion",     # full title coverage / total
+    "title_keyword_proportion",     # title keyword matches / total
 
     # Metadata / intent alignment
-    "type_match",               # 0/1  (info_type matches query intent)
-    "role_match",               # 0/1  (role matches allowed roles)
-    "code_match_count",         # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
-    "lis_match",                # 0/1
-    "maalgruppe_match",         # 0/1
+    "type_match",                   # 0/1  (info_type matches query intent)
+    "role_match",                   # 0/1  (role matches allowed roles)
+    "code_match_count",             # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
+    "lis_match",                    # 0/1
+    "maalgruppe_match",             # 0/1
 
-    # Popularity priors (weak)
-    "smoothed_ctr",             # smoothed CTR in [0..1]
-    "log_impressions",          # log(1 + impressions)
+    # Popularity prior (windowed CTR - last 30 days)
+    "smoothed_ctr",                 # smoothed CTR in [0..1]
 
     # Bias/context
-    "position",                 # shown position (1..N)
+    "position",                     # shown position (1..N)
 ]
 
 
@@ -85,10 +88,6 @@ def smoothed_ctr(clicks: int, impressions: int, alpha: float = 1.0, beta: float 
     clicks = max(0, int(clicks))
     impressions = max(0, int(impressions))
     return float((clicks + alpha) / (impressions + alpha + beta))
-
-
-def log1p_int(x: int) -> float:
-    return float(np.log1p(max(0, int(x))))
 
 
 def propensity_for_position(pos: int) -> float:
@@ -128,23 +127,26 @@ class RerankCandidate:
     content_id: str
     position: int
 
-    # main signals
+    # Semantic signal
     semantic_similarity: float = 0.0
-    title_keyword_score: float = 0.0
-    body_keyword_score: float = 0.0
-    exact_phrase_title: float = 0.0
-    exact_phrase_body: float = 0.0
 
-    # metadata alignment
+    # Keyword signals - absolute magnitude
+    keyword_score_total: float = 0.0
+
+    # Keyword signals - proportions (title-only)
+    exact_title_proportion: float = 0.0
+    full_coverage_proportion: float = 0.0
+    title_keyword_proportion: float = 0.0
+
+    # Metadata alignment
     type_match: float = 0.0
     role_match: float = 0.0
     code_match_count: float = 0.0
     lis_match: float = 0.0
     maalgruppe_match: float = 0.0
 
-    # popularity (filled from content_stats)
+    # Popularity (windowed CTR)
     smoothed_ctr: float = 0.0
-    log_impressions: float = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -160,8 +162,8 @@ class HealthContentReranker:
     - save()/load(): persists model.
 
     Notes:
-    - This model is trained on clicks as weak labels. Use dwell time if available.
-    - Make sure search_results_shown logs per-result features (semantic_similarity, title/body scores, etc.).
+    - This model is trained on clicks as weak labels.
+    - Make sure search_results_shown logs per-result features.
     """
 
     def __init__(self) -> None:
@@ -176,10 +178,9 @@ class HealthContentReranker:
         self,
         *,
         days_back: int = 180,
+        ctr_window_days: int = 30,
         min_group_size: int = 5,
         require_any_click: bool = True,
-        use_dwell: bool = True,
-        dwell_positive_ms: int = 8000,
         use_db_propensity: bool = True,
         verbose: bool = True,
     ) -> Dict[str, float]:
@@ -189,12 +190,16 @@ class HealthContentReranker:
         Expected database_service methods:
           - get_ltr_training_rows(days_back) -> list[dict]
             Each row should include:
-              search_id, content_id, position, clicked, dwell_ms,
-              semantic_similarity, title_keyword_score, body_keyword_score,
-              exact_phrase_title, exact_phrase_body,
+              search_id, content_id, position, clicked,
+              semantic_similarity, keyword_score_total,
+              exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
               type_match, role_match, code_match_count, lis_match, maalgruppe_match
-          - get_content_stats_bulk() -> dict[content_id] = {"clicks": int, "impressions": int}
+          - get_content_ctr_windowed(days) -> dict[content_id] = smoothed_ctr
           - (optional) get_position_propensities() -> dict[position] = propensity float
+
+        Args:
+            days_back: Days of training data to use
+            ctr_window_days: Days for windowed CTR calculation (default: 30)
         """
         rows = database_service.get_ltr_training_rows(days_back=days_back)
         if not rows:
@@ -208,8 +213,8 @@ class HealthContentReranker:
                 continue
             groups.setdefault(str(sid), []).append(r)
 
-        # Bulk content stats for priors
-        stats = database_service.get_content_stats_bulk()
+        # Windowed CTR for recent popularity signal
+        ctr_windowed = database_service.get_content_ctr_windowed(days=ctr_window_days)
 
         # Optional propensity table from DB
         pos_prop: Dict[int, float] = {}
@@ -234,9 +239,9 @@ class HealthContentReranker:
             # Sort by position (stable)
             items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
 
-            # Build labels and detect click presence
+            # First pass: build feature dicts and find max keyword_score_total
+            feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
-            feats: List[List[float]] = []
             weights: List[float] = []
 
             any_pos = False
@@ -250,42 +255,29 @@ class HealthContentReranker:
                 any_pos = True
 
                 clicked = int(rr.get("clicked") or 0)
-                dwell = rr.get("dwell_ms")
-
-                # Optional: clean positives with dwell threshold
-                if use_dwell and clicked == 1:
-                    try:
-                        if dwell is None or int(dwell) < dwell_positive_ms:
-                            clicked = 0
-                    except Exception:
-                        clicked = 0
-
                 if clicked == 1:
                     any_click = True
 
-                # popularity priors
-                st = stats.get(cid, {"clicks": 0, "impressions": 0})
-                ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
-                log_imp = log1p_int(st.get("impressions", 0))
+                # popularity prior (using windowed CTR for recency)
+                ctr = ctr_windowed.get(cid, 0.05)  # Default prior if no data
 
                 # build feature dict from logged row (preferred) + priors
                 feat_dict = {
                     "semantic_similarity": _f(rr.get("semantic_similarity"), _f(rr.get("candidate_score"), 0.0)),
-                    "title_keyword_score": _f(rr.get("title_keyword_score"), 0.0),
-                    "body_keyword_score": _f(rr.get("body_keyword_score"), 0.0),
-                    "exact_phrase_title": _f(rr.get("exact_phrase_title"), 0.0),
-                    "exact_phrase_body": _f(rr.get("exact_phrase_body"), 0.0),
+                    "keyword_score_total": _f(rr.get("keyword_score_total"), 0.0),  # RAW - normalized below
+                    "exact_title_proportion": _f(rr.get("exact_title_proportion"), 0.0),
+                    "full_coverage_proportion": _f(rr.get("full_coverage_proportion"), 0.0),
+                    "title_keyword_proportion": _f(rr.get("title_keyword_proportion"), 0.0),
                     "type_match": _f(rr.get("type_match"), 0.0),
                     "role_match": _f(rr.get("role_match"), 0.0),
                     "code_match_count": _f(rr.get("code_match_count"), 0.0),
                     "lis_match": _f(rr.get("lis_match"), 0.0),
                     "maalgruppe_match": _f(rr.get("maalgruppe_match"), 0.0),
                     "smoothed_ctr": ctr,
-                    "log_impressions": log_imp,
                     "position": float(pos),
                 }
 
-                feats.append([feat_dict[n] for n in self.feature_names])
+                feat_dicts.append(feat_dict)
                 labels.append(float(clicked))
 
                 # IPS weight to reduce position bias
@@ -298,6 +290,17 @@ class HealthContentReranker:
                 continue
             if require_any_click and not any_click:
                 continue
+
+            # Normalize keyword_score_total by max in this search group
+            max_kw = max((fd["keyword_score_total"] for fd in feat_dicts), default=1.0)
+            if max_kw > 0:
+                for fd in feat_dicts:
+                    fd["keyword_score_total"] = fd["keyword_score_total"] / max_kw
+
+            # Second pass: build feature vectors
+            feats: List[List[float]] = []
+            for fd in feat_dicts:
+                feats.append([fd[n] for n in self.feature_names])
 
             X_all.extend(feats)
             y_all.extend(labels)
@@ -339,13 +342,21 @@ class HealthContentReranker:
         role: str,
         candidates: Sequence[RerankCandidate],
         *,
-        content_stats: Optional[Dict[str, Dict[str, int]]] = None,
+        ctr_window_days: int = 30,
+        ctr_windowed: Optional[Dict[str, float]] = None,
     ) -> List[Tuple[RerankCandidate, float]]:
         """
         Rerank a list of candidates.
 
         Provide candidates with their precomputed features (semantic/keyword/metadata).
-        This method adds popularity priors (smoothed_ctr/log_impressions) automatically.
+        This method adds popularity prior (windowed CTR) automatically.
+
+        Args:
+            query: Search query
+            role: User role
+            candidates: List of candidates to rerank
+            ctr_window_days: Days for windowed CTR (default: 30)
+            ctr_windowed: Optional pre-fetched windowed CTR
 
         Returns: list of (candidate, score), sorted by score descending.
         """
@@ -358,29 +369,26 @@ class HealthContentReranker:
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
-        # Fetch stats once (bulk)
-        stats = content_stats or database_service.get_content_stats_bulk()
+        # Fetch windowed CTR (recent popularity)
+        ctr_data = ctr_windowed or database_service.get_content_ctr_windowed(days=ctr_window_days)
 
         # Build feature matrix
         X = []
         for c in candidates:
-            st = stats.get(c.content_id, {"clicks": 0, "impressions": 0})
-            c.smoothed_ctr = smoothed_ctr(st.get("clicks", 0), st.get("impressions", 0))
-            c.log_impressions = log1p_int(st.get("impressions", 0))
+            c.smoothed_ctr = ctr_data.get(c.content_id, 0.05)  # Windowed CTR
 
             feat_dict = {
                 "semantic_similarity": _f(c.semantic_similarity),
-                "title_keyword_score": _f(c.title_keyword_score),
-                "body_keyword_score": _f(c.body_keyword_score),
-                "exact_phrase_title": _f(c.exact_phrase_title),
-                "exact_phrase_body": _f(c.exact_phrase_body),
+                "keyword_score_total": _f(c.keyword_score_total),
+                "exact_title_proportion": _f(c.exact_title_proportion),
+                "full_coverage_proportion": _f(c.full_coverage_proportion),
+                "title_keyword_proportion": _f(c.title_keyword_proportion),
                 "type_match": _f(c.type_match),
                 "role_match": _f(c.role_match),
                 "code_match_count": _f(c.code_match_count),
                 "lis_match": _f(c.lis_match),
                 "maalgruppe_match": _f(c.maalgruppe_match),
                 "smoothed_ctr": _f(c.smoothed_ctr),
-                "log_impressions": _f(c.log_impressions),
                 "position": float(int(c.position) if c.position else 0),
             }
             X.append([feat_dict[n] for n in self.feature_names])
@@ -401,11 +409,43 @@ class HealthContentReranker:
             raise ValueError("No reranker model loaded/trained. Cannot save.")
         self.model.save_model(path)
 
-    def load(self, path: str) -> None:
-        """Load model from disk."""
+    @classmethod
+    def load(cls, path: str) -> "HealthContentReranker":
+        """Load model from disk and return a new instance."""
+        instance = cls()
         m = xgb.XGBRanker()
         m.load_model(path)
-        self.model = m
+        instance.model = m
+        return instance
+
+    def predict(self, features: List[Dict[str, float]]) -> List[float]:
+        """
+        Predict ranking scores from feature dictionaries.
+
+        This method provides a simpler interface for ml_service.py,
+        accepting feature dicts directly instead of RerankCandidate objects.
+
+        Args:
+            features: List of feature dictionaries
+
+        Returns:
+            List of ranking scores
+        """
+        if self.model is None:
+            return [0.0] * len(features)
+
+        if not features:
+            return []
+
+        # Build feature matrix from dicts
+        X = []
+        for feat_dict in features:
+            row = [_f(feat_dict.get(name, 0.0)) for name in self.feature_names]
+            X.append(row)
+
+        X_np = np.asarray(X, dtype=np.float32)
+        scores = self.model.predict(X_np)
+        return [float(s) for s in scores]
 
 
 # ---------------------------------------------------------------------
@@ -415,10 +455,10 @@ class HealthContentReranker:
 def extract_features_for_candidate(
     *,
     semantic_similarity: float,
-    title_keyword_score: float = 0.0,
-    body_keyword_score: float = 0.0,
-    exact_phrase_title: bool = False,
-    exact_phrase_body: bool = False,
+    keyword_score_total: float = 0.0,
+    exact_title_proportion: float = 0.0,
+    full_coverage_proportion: float = 0.0,
+    title_keyword_proportion: float = 0.0,
     type_match: bool = False,
     role_match: bool = False,
     code_match_count: int = 0,
@@ -431,13 +471,17 @@ def extract_features_for_candidate(
     """
     return {
         "semantic_similarity": float(semantic_similarity),
-        "title_keyword_score": float(title_keyword_score),
-        "body_keyword_score": float(body_keyword_score),
-        "exact_phrase_title": float(bool(exact_phrase_title)),
-        "exact_phrase_body": float(bool(exact_phrase_body)),
+        "keyword_score_total": float(keyword_score_total),
+        "exact_title_proportion": float(exact_title_proportion),
+        "full_coverage_proportion": float(full_coverage_proportion),
+        "title_keyword_proportion": float(title_keyword_proportion),
         "type_match": float(bool(type_match)),
         "role_match": float(bool(role_match)),
         "code_match_count": float(int(code_match_count)),
         "lis_match": float(bool(lis_match)),
         "maalgruppe_match": float(bool(maalgruppe_match)),
     }
+
+
+# Alias for backward compatibility with ml_service.py
+HealthContentRanker = HealthContentReranker

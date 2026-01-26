@@ -10,18 +10,23 @@ class SearchResult(BaseModel):
     """Single search result."""
     id: str
     title: str
-    url: str
-    snippet: str
-    score: float
-    explanation: str = Field(..., description="Short explanation of why this result matches")
+    info_type: str
+    score: float  # Normalized 0-1
+    explanation: str
 
 
 class SearchResponse(BaseModel):
-    """Response model for search endpoint."""
+    """Response model for search endpoint with pagination."""
     results: List[SearchResult]
     query: str
     total: int
-    search_id: Optional[str] = None  # For linking clicks to searches
+    search_id: str  # For linking clicks to searches
+
+    # Pagination info
+    offset: int
+    limit: int
+    has_next: bool
+    has_prev: bool
 
 
 class TagResponse(BaseModel):
@@ -34,7 +39,6 @@ class ChatSource(BaseModel):
     """Source document for chat response."""
     id: str
     title: str
-    url: str
     snippet: str
 
 

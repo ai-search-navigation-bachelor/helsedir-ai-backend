@@ -1,418 +1,248 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a FastAPI-based backend for an AI-powered content search system for Helsedirektoratet (Norwegian Directorate of Health). The system provides search, logging, and optional AI-enhanced features for health-related content.
+FastAPI backend for AI-powered content search for Helsedirektoratet (Norwegian Directorate of Health). Features hybrid search (keyword + semantic), learning-to-rank, and click tracking.
 
 ## Development Commands
 
-### Setup
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file from template
-cp .env.example .env
-
-# Or use the setup scripts
-./scripts/setup_venv.sh    # Linux/Mac
-scripts\setup_venv.bat     # Windows
-```
-
-### Running the Application
-```bash
-# Development mode (with auto-reload)
-python scripts/run.py
-
-# Or run directly with uvicorn
+# Run development server
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-# With custom settings
-HOST=127.0.0.1 PORT=8080 python scripts/run.py
-```
-
-### Docker
-```bash
-# Build and run with Docker Compose
-docker-compose up --build
-
-# Or build and run manually
-docker build -t helsedir-backend .
-docker run -p 8000:8000 helsedir-backend
-```
-
-### Testing
-```bash
-# Run all tests
+# Run tests
 pytest
 
-# Run with coverage
-pytest --cov=app --cov-report=html
-
-# Run specific test file
-pytest tests/test_search.py
-
-# Run specific test
-pytest tests/test_search.py::test_search_endpoint
-
-# Manual API testing
-python scripts/test_api.py
+# API docs at http://localhost:8000/docs
 ```
-
-### API Documentation
-Once running, access interactive API docs at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
 
 ## Architecture
 
 ### Layered Structure
-The codebase follows a clean layered architecture. All application code is under the `app/` directory:
 
-1. **Routes Layer** (`app/routes/`): HTTP endpoint definitions
-   - Handles request/response validation via Pydantic models
-   - Thin layer that delegates to services
-   - Each route file corresponds to a feature domain
-
-2. **Services Layer** (`app/services/`): Business logic
-   - `content_service.py`: Manages content loading and caching
-   - `search_service.py`: Implements search algorithms (baseline → semantic)
-   - `logging_service.py`: Handles event logging to JSONL
-   - `helsedir_api_service.py`: Integration with Helsedirektoratet's external API
-
-3. **Models Layer** (`app/models/`): Data validation
-   - `schemas.py`: Pydantic models for all request/response types
-   - Ensures type safety and automatic validation
-
-4. **Configuration** (`app/config.py`): Centralized settings management
-   - Uses `pydantic-settings` for environment-based configuration
-   - Validates settings on startup
-
-### Key Design Patterns
-
-**Singleton Services**: Services are instantiated once as global instances:
-```python
-# In app/services/search_service.py
-search_service = SearchService()
-
-# In app/routes/search.py
-from app.services.search_service import search_service
+```text
+app/
+├── routes/           # HTTP endpoints (thin layer)
+├── controllers/      # Business logic orchestration
+├── services/         # Core algorithms and data access
+├── dto/              # Request/Response models
+├── entities/         # Domain models
+├── ml/               # Machine learning models
+└── config.py         # Settings
 ```
 
-**Dependency Injection**: Services depend on each other via imports rather than FastAPI's DI system for simplicity in this MVP.
+### Services Layer (Repository Pattern)
 
-**JSONL Logging**: Events are appended to `logs/logs.jsonl` for easy streaming and analysis. Each line is a complete JSON object.
+**Repositories** (`app/services/repositories/`):
+- `base.py` - MySQL connection pool
+- `content_repository.py` - Content CRUD operations
+- `stats_repository.py` - CTR, impressions, clicks statistics
+- `search_repository.py` - Search and click logging
+- `ltr_repository.py` - Learning-to-rank training data
 
-### Data Flow
+**Data Services** (`app/services/data/`):
+- `database_service.py` - Facade for all database operations
+- `content_service.py` - Content loading and caching
 
-1. **Search Request Flow**:
-   - Client → POST `/search` (app/routes/search.py)
-   - Route validates request with `SearchRequest` model
-   - Route calls `search_service.search()`
-   - Service loads content from `content_service`
-   - Service scores and ranks results
-   - Route logs search event via `logging_service`
-   - Response validated with `SearchResponse` model
-   - Client receives JSON results
+**Search Services** (`app/services/search/`):
+- `search_service.py` - Facade for all search methods
+- `keyword_search.py` - Title-based keyword scoring
+- `semantic_search.py` - E5 embedding-based search
+- `hybrid_search.py` - Combined keyword + semantic search
+- `feature_extractor.py` - ML feature extraction for logging
+- `ml_service.py` - Ranking model inference
 
-2. **Content Loading**:
-   - On startup, `content_service` loads `data/content.json`
-   - Content cached in memory for fast access
-   - Call `content_service.reload_content()` to refresh
-   - Alternative: `content_service.load_from_api()` to fetch from Helsedirektoratet API
+### Search Scoring (Title-Only)
 
-### Search Implementation
-
-**Current (Baseline)**: Keyword-based scoring in `app/services/search_service.py`:
+Keyword scoring uses title matches only:
 - Exact phrase in title: +10.0
+- Full title coverage (all title words in query): +7.0
 - Keyword matches in title: +3.0 per keyword
-- Keyword matches in body: +1.0 per keyword
-- Exact phrase in body: +2.0
-- Tag matches: +2.0 per keyword
-- Role-based filtering
-- Deterministic ordering (score DESC, id ASC)
 
-**Future (Semantic)**: To upgrade to embeddings-based search:
-1. Uncomment `sentence-transformers` and `faiss-cpu` in requirements.txt
-2. Create `app/services/embedding_service.py` to generate embeddings
-3. Modify `search_service.py` to use vector similarity
-4. Store embeddings in `data/embeddings/` directory
+Configured via environment variables:
+```bash
+SEARCH_EXACT_PHRASE_TITLE_WEIGHT=10.0
+SEARCH_FULL_TITLE_COVERAGE_WEIGHT=7.0
+SEARCH_KEYWORD_TITLE_WEIGHT=3.0
+```
+
+### Learning-to-Rank Model
+
+XGBoost LambdaMART model trained on click data.
+
+**Features (12):**
+1. `semantic_similarity` - Cosine similarity from E5 embeddings
+2. `keyword_score_total` - Normalized keyword score (0-1)
+3. `exact_title_proportion` - Proportion from exact title match
+4. `full_coverage_proportion` - Proportion from full title coverage
+5. `title_keyword_proportion` - Proportion from title keyword matches
+6. `type_match` - Content type authority (retningslinje=0.9, veileder=0.8, etc.)
+7. `role_match` - User role match with target groups
+8. `code_match_count` - Number of matched codes (ICD/ICPC/SNOMED/LIS)
+9. `lis_match` - LIS code match
+10. `maalgruppe_match` - Target group match
+11. `smoothed_ctr` - Windowed CTR (last 30 days)
+12. `position` - Shown position (for IPS weighting)
+
+**Training:**
+- Groups by `search_id` (LTR requires grouping)
+- Uses IPS (Inverse Propensity Scoring) for position bias correction
+- Windowed CTR (30 days) for popularity signal
+- Smoothed CTR: `(clicks + 1) / (impressions + 21)`
+
+Enable with `ML_RANKING_ENABLED=true`.
 
 ## File Organization
 
-```
+```text
 helsedir-ai-backend/
-├── app/                          # Application code
-│   ├── __init__.py
-│   ├── main.py                   # FastAPI app entry point, CORS, router registration
-│   ├── config.py                 # Settings management (env vars, paths)
+├── app/
+│   ├── main.py                    # FastAPI app entry point
+│   ├── config.py                  # Settings (pydantic-settings)
+│   ├── constants.py               # Allowed info types, etc.
 │   │
-│   ├── routes/                   # HTTP endpoints (thin layer)
-│   │   ├── __init__.py
-│   │   ├── health.py             # GET /health
-│   │   ├── search.py             # POST /search
-│   │   ├── logging.py            # POST /log
-│   │   └── helsedir.py           # GET /helsedir/search (external API)
+│   ├── routes/                    # HTTP endpoints
+│   │   ├── search.py              # GET /search
+│   │   ├── content.py             # GET /content/{id}
+│   │   ├── health.py              # GET /health
+│   │   └── helsedir.py            # GET /helsedir/search
 │   │
-│   ├── services/                 # Business logic (core algorithms)
-│   │   ├── __init__.py
-│   │   ├── content_service.py    # Content loading and caching
-│   │   ├── search_service.py     # Search algorithm implementation
-│   │   ├── logging_service.py    # Event logging to JSONL
-│   │   └── helsedir_api_service.py  # Helsedirektoratet API client
+│   ├── controllers/               # Business logic
+│   │   ├── search_controller.py   # Search orchestration
+│   │   └── ...
 │   │
-│   └── models/                   # Data validation
-│       ├── __init__.py
-│       └── schemas.py            # All Pydantic models
+│   ├── services/
+│   │   ├── repositories/          # Data access layer
+│   │   │   ├── base.py            # Connection pool
+│   │   │   ├── content_repository.py
+│   │   │   ├── stats_repository.py
+│   │   │   ├── search_repository.py
+│   │   │   └── ltr_repository.py
+│   │   │
+│   │   ├── data/                  # Data services
+│   │   │   ├── database_service.py # Facade
+│   │   │   └── content_service.py
+│   │   │
+│   │   ├── search/                # Search algorithms
+│   │   │   ├── search_service.py  # Facade
+│   │   │   ├── keyword_search.py
+│   │   │   ├── semantic_search.py
+│   │   │   ├── hybrid_search.py
+│   │   │   ├── feature_extractor.py
+│   │   │   └── ml_service.py
+│   │   │
+│   │   ├── analytics/             # Logging
+│   │   │   └── logging_service.py
+│   │   │
+│   │   └── external/              # External APIs
+│   │       └── helsedir_api_service.py
+│   │
+│   ├── dto/                       # Data transfer objects
+│   │   ├── request/
+│   │   └── response/
+│   │
+│   ├── entities/                  # Domain models
+│   │   └── content.py
+│   │
+│   └── ml/                        # ML models
+│       ├── embedding_model.py     # E5 embeddings
+│       └── ranking_model.py       # XGBoost LTR
 │
-├── data/                         # Application data
-│   └── content.json              # Content dataset (can be updated)
+├── scripts/
+│   ├── setup/
+│   │   └── init_database.sql      # Database schema
+│   └── ...
 │
-├── logs/                         # Runtime logs (gitignored)
-│   └── logs.jsonl                # Event logs
-│
-├── scripts/                      # Utility scripts
-│   ├── run.py                    # Alternative entry point
-│   ├── test_api.py               # Manual API testing
-│   ├── test_setup.py             # Setup verification
-│   ├── setup_venv.sh             # Linux/Mac venv setup
-│   └── setup_venv.bat            # Windows venv setup
-│
-├── requirements.txt              # Python dependencies
-├── Dockerfile                    # Docker image definition
-├── docker-compose.yml            # Docker Compose configuration
-├── .env.example                  # Environment variable template
-├── .gitignore                    # Git exclusions
-├── README.md                     # Project readme
-├── CLAUDE.md                     # This file
-├── TEAM_GUIDE.md                 # Team collaboration guide
-└── API_INTEGRATION.md            # Helsedirektoratet API documentation
+├── models/                        # Trained model files
+├── .env.example                   # Environment template
+└── requirements.txt
 ```
 
 ## API Endpoints
 
-### POST /search
-Search content with query and optional role filtering.
+### GET /search
+Search with pagination.
 
-**Request**:
+**Query params:**
+- `query` (required): Search text
+- `role`: User role for filtering
+- `method`: 'keyword', 'semantic', or 'hybrid' (default)
+- `offset`: Results to skip (default: 0)
+- `limit`: Results per page (default: 10, max: 50)
+- `search_id`: Existing search_id for pagination
+
+**Response:**
 ```json
 {
-  "query": "diabetes behandling",
-  "role": "fastlege",
-  "k": 10
+  "results": [{"id": "...", "title": "...", "score": 0.85, ...}],
+  "query": "diabetes",
+  "total": 42,
+  "search_id": "uuid",
+  "offset": 0,
+  "limit": 10,
+  "has_next": true,
+  "has_prev": false
 }
 ```
 
-**Response**:
-```json
-{
-  "results": [
-    {
-      "id": "2",
-      "title": "Retningslinjer for behandling av diabetes type 2",
-      "url": "https://...",
-      "snippet": "...diabetes type 2 hos voksne...",
-      "score": 12.5,
-      "explanation": "Relevant: matches in title; relevant for fastlege"
-    }
-  ],
-  "query": "diabetes behandling",
-  "total": 1
-}
+### GET /content/{id}
+Get content by ID. Include `search_id` query param to log click.
+
+```http
+GET /content/abc123?search_id=uuid
 ```
 
-### GET /helsedir/search
-Direct search against the Helsedirektoratet external API.
+## Database Tables
 
-**Query Parameters**:
-- `QueryText` (required): Search query string
-- `Filter`: OData filter expression (e.g., `infoType eq 'Retningslinje'`)
-- `SearchMode`: `any` (default) or `all`
-- `QueryType`: `simple` (default) or `full`
-- `getFullInfobits`: `true` or `false` (default)
-
-**Example**:
-```
-GET /helsedir/search?QueryText=diabetes&Filter=infoType eq 'Retningslinje'
-```
-
-**Response**:
-```json
-{
-  "results": [
-    {
-      "id": "abc123",
-      "title": "Diabetes - nasjonal faglig retningslinje",
-      "body": "...",
-      "url": "https://...",
-      "content_type": "Retningslinje",
-      "target_groups": ["Fastlege", "Sykepleier"]
-    }
-  ],
-  "total": 15
-}
-```
-
-### POST /log
-Log user interactions for analytics.
-
-**Request**:
-```json
-{
-  "event_type": "click",
-  "content_id": "2",
-  "role": "fastlege"
-}
-```
-
-**Response**:
-```json
-{
-  "success": true
-}
-```
-
-Event types: `search`, `click`, `role_change`
-
-### GET /health
-Health check endpoint.
-
-**Response**:
-```json
-{
-  "status": "ok",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+- `content` - Cached content from Helsedir API
+- `content_stats` - All-time clicks/impressions per content
+- `search_logs` - Search events (search_id, query, role)
+- `search_results_shown` - Results shown with ML features
+- `click_logs` - Click events with position
 
 ## Configuration
 
-Environment variables (create `.env` from `.env.example`):
+Key environment variables:
 
 ```bash
 # Server
 HOST=0.0.0.0
 PORT=8000
-ENVIRONMENT=development
-DEBUG=false
 
-# Data paths
-CONTENT_FILE=data/content.json
-LOGS_FILE=logs/logs.jsonl
+# Database
+MYSQL_HOST=localhost
+MYSQL_DATABASE=helsedir_ai
 
-# Helsedirektoratet API
-HELSEDIR_API_KEY=your_key_here
-HELSEDIR_API_URL=https://api.helsedirektoratet.no
+# ML
+ML_EMBEDDING_ENABLED=false
+ML_RANKING_ENABLED=false
 
-# Optional: OpenAI for chat/RAG features
-# OPENAI_API_KEY=sk-...
+# Search weights
+SEARCH_EXACT_PHRASE_TITLE_WEIGHT=10.0
+SEARCH_FULL_TITLE_COVERAGE_WEIGHT=7.0
+SEARCH_KEYWORD_TITLE_WEIGHT=3.0
 ```
 
-## Content Data Format
+## Design Patterns
 
-The `data/content.json` file should contain an array of content items:
-
-```json
-[
-  {
-    "id": "unique-id",
-    "title": "Content title",
-    "body": "Full content text...",
-    "url": "https://link-to-content",
-    "content_type": "veileder|retningslinje|informasjon",
-    "published_at": "2024-01-15T10:00:00Z",
-    "target_groups": ["fastlege", "sykepleier"],
-    "tags": ["diabetes", "behandling"]
-  }
-]
-```
-
-## Future Features
-
-Models for these features are already defined in `app/models/schemas.py`:
-
-### AI Tagging (POST /tag)
-Add `app/routes/tagging.py` and implement rule-based or ML-based tag extraction.
-Uses: `TagRequest`, `TagResponse`
-
-### Chat/RAG (POST /chat)
-Add `app/routes/chat.py` with LLM integration:
-1. Use search to retrieve relevant content
-2. Pass content + question to LLM
-3. Return grounded answer with sources
-Uses: `ChatRequest`, `ChatSource`, `ChatResponse`
-
-## Upgrading to Semantic Search
-
-To implement embeddings-based search:
-
-1. **Install dependencies**:
-   ```bash
-   pip install sentence-transformers faiss-cpu
-   ```
-
-2. **Create embedding service** (`app/services/embedding_service.py`):
-   - Load model: `SentenceTransformer('intfloat/multilingual-e5-base')`
-   - Generate embeddings for all content
-   - Save to disk for persistence
-
-3. **Modify search service**:
-   - Create FAISS index from embeddings
-   - Convert query to embedding
-   - Find K nearest neighbors
-   - Return results with cosine similarity scores
-
-4. **Precompute embeddings**:
-   - Run embedding generation on startup or as separate script
-   - Cache embeddings to avoid recomputation
-
-## Norwegian Language Considerations
-
-The content is in Norwegian (Bokmål). When implementing semantic search:
-- Use multilingual models: `intfloat/multilingual-e5-base` or `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`
-- Consider Norwegian-specific models from NB (Nasjonalbiblioteket) if available
-
-## Helsedirektoratet API Integration
-
-The API integration is implemented in `app/services/helsedir_api_service.py`.
-
-**Setup**:
-1. Register at https://utvikler.helsedirektoratet.no
-2. Subscribe to relevant API products
-3. Get API key and add to `.env` as `HELSEDIR_API_KEY`
-
-**Authentication**: Uses `Ocp-Apim-Subscription-Key` header.
-
-**Available methods**:
-- `search_infobits()` / `search_infobits_async()`: Search content
-- `get_infobit_by_id()`: Get single item
-
-See `API_INTEGRATION.md` for detailed documentation.
-
-## Error Handling
-
-All endpoints use FastAPI's HTTPException for errors:
-- 400: Validation errors (automatic via Pydantic)
-- 401/403: Authentication errors (Helsedir API)
-- 404: Resource not found
-- 500: Internal server errors
-- 503: External service unavailable (Helsedir API)
-
-Exceptions are logged to console in development mode.
-
-## CORS Configuration
-
-CORS is configured in `app/main.py` to allow all origins (`*`) for development.
-
-**Important**: Update `allow_origins` to specific domains in production:
+**Singleton Services**: Global instances for stateful services:
 ```python
-allow_origins=["https://your-frontend-domain.no"]
+# In app/services/search/search_service.py
+search_service = SearchService()
+
+# Usage
+from app.services.search.search_service import search_service
 ```
 
-## Related Documentation
+**Facade Pattern**: Main service classes delegate to specialized modules:
+```python
+# database_service delegates to repositories
+# search_service delegates to keyword/semantic/hybrid search
+```
 
-- `README.md`: Project overview and quick start
-- `TEAM_GUIDE.md`: Team collaboration, git workflow, code standards
-- `API_INTEGRATION.md`: Detailed Helsedirektoratet API documentation
+**Repository Pattern**: Data access separated into focused repositories.
