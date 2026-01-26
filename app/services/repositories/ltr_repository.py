@@ -22,6 +22,7 @@ class LtrRepository:
         if not conn:
             return []
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
 
@@ -79,8 +80,10 @@ class LtrRepository:
             print(f"Error getting training data: {e}")
             return []
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:
         """
@@ -98,6 +101,7 @@ class LtrRepository:
         if not conn:
             return []
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -132,8 +136,10 @@ class LtrRepository:
             print(f"Error getting LTR training rows: {e}")
             return []
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_position_propensities(self) -> Dict[int, float]:
         """Get position propensities from database."""
@@ -141,6 +147,7 @@ class LtrRepository:
         if not conn:
             return {}
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -156,8 +163,10 @@ class LtrRepository:
             print(f"Error getting position propensities: {e}")
             return {}
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
 
 # Global instance

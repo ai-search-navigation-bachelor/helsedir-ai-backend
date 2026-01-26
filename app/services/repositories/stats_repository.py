@@ -17,6 +17,7 @@ class StatsRepository:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute(
@@ -33,8 +34,10 @@ class StatsRepository:
             print(f"Error recording impression: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def record_impressions_batch(self, content_ids: List[str]) -> int:
         """Record impressions for multiple content items."""
@@ -42,6 +45,7 @@ class StatsRepository:
         if not conn:
             return 0
 
+        cursor = None
         try:
             cursor = conn.cursor()
             recorded = 0
@@ -66,8 +70,10 @@ class StatsRepository:
             print(f"Error recording impressions batch: {e}")
             return 0
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def record_click(self, content_id: str) -> bool:
         """Record a click on a content item."""
@@ -75,6 +81,7 @@ class StatsRepository:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute(
@@ -91,8 +98,10 @@ class StatsRepository:
             print(f"Error recording click: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_content_stats(self, content_id: str) -> Optional[Dict[str, Any]]:
         """Get statistics for a content item."""
@@ -100,6 +109,7 @@ class StatsRepository:
         if not conn:
             return None
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -116,8 +126,10 @@ class StatsRepository:
             print(f"Error getting content stats: {e}")
             return None
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_all_stats(self) -> List[Dict[str, Any]]:
         """Get statistics for all content items."""
@@ -125,6 +137,7 @@ class StatsRepository:
         if not conn:
             return []
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -140,8 +153,10 @@ class StatsRepository:
             print(f"Error getting all stats: {e}")
             return []
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_ctr(self, content_id: str) -> float:
         """Get click-through rate for a content item."""
@@ -156,6 +171,7 @@ class StatsRepository:
         if not conn:
             return {}
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -175,8 +191,10 @@ class StatsRepository:
             print(f"Error getting CTR data: {e}")
             return {}
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_content_ctr_windowed(self, days: int = 30) -> Dict[str, float]:
         """
@@ -194,6 +212,7 @@ class StatsRepository:
         if not conn:
             return {}
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -228,8 +247,10 @@ class StatsRepository:
             print(f"Error getting windowed CTR data: {e}")
             return {}
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_content_stats_bulk(self) -> Dict[str, Dict[str, int]]:
         """Get content statistics for all content items in bulk."""
@@ -237,6 +258,7 @@ class StatsRepository:
         if not conn:
             return {}
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT content_id, clicks, impressions FROM content_stats")
@@ -252,8 +274,10 @@ class StatsRepository:
             print(f"Error getting content stats bulk: {e}")
             return {}
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
 
 # Global instance

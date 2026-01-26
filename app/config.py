@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
 
@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     2. .env file values
     3. Default values defined below
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
     # Server
     host: str = "0.0.0.0"
@@ -38,11 +44,6 @@ class Settings(BaseSettings):
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
 
 
 # Create settings instance

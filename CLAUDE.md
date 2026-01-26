@@ -38,13 +38,15 @@ app/
 
 ### Services Layer (Repository Pattern)
 
-**Data Services** (`app/services/data/`):
+**Repositories** (`app/services/repositories/`):
 - `base.py` - MySQL connection pool
-- `database_service.py` - Facade for all database operations
 - `content_repository.py` - Content CRUD operations
 - `stats_repository.py` - CTR, impressions, clicks statistics
 - `search_repository.py` - Search and click logging
 - `ltr_repository.py` - Learning-to-rank training data
+
+**Data Services** (`app/services/data/`):
+- `database_service.py` - Facade for all database operations
 - `content_service.py` - Content loading and caching
 
 **Search Services** (`app/services/search/`):
@@ -115,13 +117,15 @@ helsedir-ai-backend/
 │   │   └── ...
 │   │
 │   ├── services/
-│   │   ├── data/                  # Data access layer
+│   │   ├── repositories/          # Data access layer
 │   │   │   ├── base.py            # Connection pool
-│   │   │   ├── database_service.py # Facade
 │   │   │   ├── content_repository.py
 │   │   │   ├── stats_repository.py
 │   │   │   ├── search_repository.py
-│   │   │   ├── ltr_repository.py
+│   │   │   └── ltr_repository.py
+│   │   │
+│   │   ├── data/                  # Data services
+│   │   │   ├── database_service.py # Facade
 │   │   │   └── content_service.py
 │   │   │
 │   │   ├── search/                # Search algorithms

@@ -25,8 +25,8 @@ class HybridSearch:
         query: str,
         role: Optional[str] = None,
         k: int = 10,
-        keyword_weight: float = 0.2,
-        semantic_weight: float = 0.8,
+        keyword_weight: float = 0.3,
+        semantic_weight: float = 0.7,
     ) -> List[SearchResult]:
         """
         Perform hybrid search combining keyword and semantic scores.
@@ -70,6 +70,15 @@ class HybridSearch:
         if not scored_items:
             return []
 
+        # Normalize weights to ensure they sum to 1 and stay in [0,1]
+        total_weight = keyword_weight + semantic_weight
+        if total_weight > 0:
+            norm_keyword_weight = max(0.0, min(1.0, keyword_weight / total_weight))
+            norm_semantic_weight = max(0.0, min(1.0, semantic_weight / total_weight))
+        else:
+            norm_keyword_weight = 0.3
+            norm_semantic_weight = 0.7
+
         # Min-max normalization for keyword scores
         keyword_scores = [kw for _, kw, _ in scored_items]
         kw_min, kw_max = min(keyword_scores), max(keyword_scores)
@@ -85,8 +94,8 @@ class HybridSearch:
             # Semantic score: normalize from [-1,1] to [0,1]
             sem_norm = max(0.0, min(1.0, (sem_raw + 1.0) / 2.0))
 
-            # Combined score
-            combined_score = keyword_weight * kw_norm + semantic_weight * sem_norm
+            # Combined score (using normalized weights)
+            combined_score = norm_keyword_weight * kw_norm + norm_semantic_weight * sem_norm
 
             normalized_items.append((item, combined_score, kw_raw, sem_raw, kw_norm, sem_norm))
 

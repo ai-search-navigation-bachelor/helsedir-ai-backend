@@ -37,6 +37,7 @@ class SearchRepository:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute(
@@ -53,8 +54,10 @@ class SearchRepository:
             print(f"Error logging search: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_search_by_id(self, search_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -67,6 +70,7 @@ class SearchRepository:
         if not conn:
             return None
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -78,8 +82,10 @@ class SearchRepository:
             print(f"Error getting search: {e}")
             return None
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def log_search_results(
         self,
@@ -100,6 +106,7 @@ class SearchRepository:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
 
@@ -147,8 +154,10 @@ class SearchRepository:
             print(f"Error logging search results: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def log_click(self, search_id: str, content_id: str) -> bool:
         """
@@ -165,6 +174,7 @@ class SearchRepository:
         if not conn:
             return False
 
+        cursor = None
         try:
             cursor = conn.cursor()
 
@@ -198,8 +208,10 @@ class SearchRepository:
             print(f"Error logging click: {e}")
             return False
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_search_count(self) -> int:
         """Get total number of logged searches."""
@@ -207,6 +219,7 @@ class SearchRepository:
         if not conn:
             return 0
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM search_logs")
@@ -216,8 +229,10 @@ class SearchRepository:
             print(f"Error getting search count: {e}")
             return 0
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
     def get_click_count(self) -> int:
         """Get total number of logged clicks."""
@@ -225,6 +240,7 @@ class SearchRepository:
         if not conn:
             return 0
 
+        cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM click_logs")
@@ -234,8 +250,10 @@ class SearchRepository:
             print(f"Error getting click count: {e}")
             return 0
         finally:
-            cursor.close()
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
 
 
 # Global instance

@@ -6,6 +6,7 @@ Handles business logic for search operations with pagination and ML feature logg
 
 import uuid
 import re
+import logging
 from typing import Optional, List
 
 from app.dto.response.search import SearchResult, SearchResponse
@@ -13,6 +14,8 @@ from app.services.search.search_service import search_service
 from app.services.search.feature_extractor import feature_extractor
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
+
+logger = logging.getLogger(__name__)
 
 
 class SearchController:
@@ -172,9 +175,12 @@ class SearchController:
                         for key in default_features:
                             if key in extracted and extracted[key] is not None:
                                 features[key] = extracted[key]
-                except Exception:
-                    # Keep default features on extraction failure
-                    pass
+                except Exception as e:
+                    # Log failure with context but keep default features
+                    logger.exception(
+                        "Feature extraction failed for content_id=%s, query=%s, role=%s: %s",
+                        result.id, query, role, e
+                    )
 
             results_to_log.append({
                 "content_id": result.id,
