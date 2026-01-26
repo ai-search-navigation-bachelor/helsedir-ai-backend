@@ -1,0 +1,66 @@
+"""
+Content route for retrieving content and logging clicks.
+"""
+
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
+from starlette.concurrency import run_in_threadpool
+from app.dto.response.content import ContentResponse, ContentLinkResponse
+from app.services.data.content_service import content_service
+from app.services.data.database_service import database_service
+
+router = APIRouter(prefix="/content", tags=["content"])
+
+
+@router.get("/{content_id}", response_model=ContentResponse)
+async def get_content(
+    content_id: str,
+    search_id: Optional[str] = Query(None, description="Search ID for click tracking"),
+):
+    """
+    Get content by ID and optionally log click.
+
+    If search_id is provided, logs the click for LTR training.
+    The position is automatically looked up from search_results_shown.
+
+    Args:
+        content_id: The content ID to retrieve
+        search_id: Optional search_id to link this click to a search
+
+    Returns:
+        ContentResponse with full content details
+    """
+    # Get content
+    content = content_service.get_content_by_id(content_id)
+
+    if not content:
+        raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+    # Log click if search_id is provided (run blocking DB call in threadpool)
+    if search_id:
+        await run_in_threadpool(
+            database_service.log_click,
+            search_id=search_id,
+            content_id=content_id,
+        )
+
+    # Convert links to response format
+    links_response = [
+        ContentLinkResponse(
+            rel=link.rel,
+            type=link.type,
+            tittel=link.tittel,
+            href=link.href,
+            strukturId=link.strukturId,
+        )
+        for link in content.links
+    ]
+
+    return ContentResponse(
+        id=content.id,
+        title=content.title,
+        body=content.body,
+        content_type=content.content_type,
+        target_groups=content.target_groups,
+        links=links_response,
+    )

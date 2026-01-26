@@ -4,9 +4,14 @@ Content service for loading and managing health content.
 Loads content from database cache or Helsedirektoratet API.
 """
 
+import json
+import logging
 from typing import List, Optional
-from app.entities.content import ContentItem
+from pydantic import ValidationError
+from app.entities.content import ContentItem, ContentLink
 from app.services.data.database_service import database_service
+
+logger = logging.getLogger(__name__)
 
 
 class ContentService:
@@ -16,6 +21,39 @@ class ContentService:
         self.content: List[ContentItem] = []
         self.content_by_id: dict = {}
         self.load_content()
+
+    def _parse_json_field(self, value, default=None):
+        """Parse a JSON field that may be a string or already parsed."""
+        if value is None:
+            return default if default is not None else []
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return default if default is not None else []
+        return value
+
+    def _parse_links(self, links_data) -> List[ContentLink]:
+        """Parse links from database JSON into ContentLink objects."""
+        links = self._parse_json_field(links_data, [])
+        if not isinstance(links, list):
+            return []
+
+        result = []
+        for link in links:
+            if isinstance(link, dict):
+                try:
+                    result.append(ContentLink(
+                        rel=link.get("rel", ""),
+                        type=link.get("type", ""),
+                        tittel=link.get("tittel"),
+                        href=link.get("href", ""),
+                        strukturId=link.get("strukturId"),
+                    ))
+                except ValidationError as e:
+                    logger.warning(f"Malformed link data skipped: {link}, error: {e}")
+                    continue
+        return result
 
     def load_content(self):
         """Load content from database cache."""
@@ -27,14 +65,17 @@ class ContentService:
 
         self.content = []
         for item in db_content:
+            # Parse JSON fields
+            maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+            links = self._parse_links(item.get("links"))
+
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
                 body=item.get("tekst") or "",
-                url=item.get("url") or "",
                 content_type=item.get("info_type") or "unknown",
-                target_groups=[],
-                tags=[],
+                target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                links=links,
             )
             self.content.append(content_item)
 
@@ -52,10 +93,8 @@ class ContentService:
         Example:
             >>> content_service.load_from_api(query_text="helse", max_items=50)
         """
-        from app.services.external.helsedir_api_service import (
-            helsedir_api_service,
-            HelseDirectorateAPIError,
-        )
+        from app.services.external.helsedir_api_service import helsedir_api_service
+        from app.exceptions.helsedir import HelseDirectorateAPIError
 
         try:
             print(f"Loading content from Helsedirektoratet API...")
@@ -74,14 +113,16 @@ class ContentService:
             # Parse into ContentItem format
             self.content = []
             for item in api_items:
+                maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+                links = self._parse_links(item.get("links"))
+
                 content_item = ContentItem(
                     id=str(item.get("id", item.get("infoId", ""))),
                     title=item.get("tittel", ""),
                     body=item.get("tekst", ""),
-                    url=item.get("url", ""),
                     content_type=item.get("infoType", "unknown"),
-                    target_groups=item.get("maalgruppe", []),
-                    tags=[],
+                    target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                    links=links,
                 )
                 self.content.append(content_item)
 
