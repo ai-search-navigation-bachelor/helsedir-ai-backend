@@ -258,7 +258,7 @@ class SearchController:
         category_lower = category.lower()
         filtered_results = [
             r for r in all_results
-            if r.score >= min_score and r.info_type.lower() == category_lower
+            if r.score >= min_score and r.info_type and r.info_type.lower() == category_lower
         ]
 
         # Log results (in background)

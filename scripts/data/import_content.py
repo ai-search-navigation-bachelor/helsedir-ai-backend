@@ -3,12 +3,12 @@
 Import content from Helsedirektoratet API to database.
 
 Usage:
-    python scripts/data/import_content.py                 # Default: 1000 items, balanced by type
+    python scripts/data/import_content.py                 # Default: 1000 items using search terms
+    python scripts/data/import_content.py --by-type       # Fetch by info type (ensures coverage)
     python scripts/data/import_content.py --extended      # Use extended search terms (~120 terms)
     python scripts/data/import_content.py --target 2000   # Fetch up to 2000 items
     python scripts/data/import_content.py --no-links      # Skip fetching links (much faster)
     python scripts/data/import_content.py --alphabet      # Search using alphabet (a-z, æøå)
-    python scripts/data/import_content.py --by-type       # Fetch by info type (ensures coverage)
 """
 
 import argparse
@@ -149,7 +149,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
             # Get basic info first (for correct infoType)
             # Use empty query with filter - API requires either query or filter
             if verbose:
-                print(f"    basic...", end=" ", flush=True)
+                print("    basic...", end=" ", flush=True)
             basic_results = helsedir_api_service.search_infobits(
                 query_text=None,
                 filter_query=filter_query,
@@ -159,7 +159,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
 
             # Get full info
             if verbose:
-                print(f"full...", end=" ", flush=True)
+                print("full...", end=" ", flush=True)
             full_results = helsedir_api_service.search_infobits(
                 query_text=None,
                 filter_query=filter_query,
@@ -193,6 +193,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
                 if verbose:
                     print(f"    Fetching details for {len(new_items)} items...", end=" ", flush=True)
 
+                failed_count = 0
                 for content_id, item in new_items:
                     try:
                         detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
@@ -202,11 +203,15 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
                         if detailed.get("maalgruppe") is not None:
                             item["maalgruppe"] = detailed.get("maalgruppe")
                         time.sleep(0.1)
-                    except Exception:
-                        pass
+                    except Exception as err:
+                        failed_count += 1
+                        if verbose:
+                            print(f"\n      WARN: Failed to fetch details for {content_id}: {err}", flush=True)
+                        continue
 
                 if verbose:
-                    print("done", flush=True)
+                    status = "done" if failed_count == 0 else f"done ({failed_count} failed)"
+                    print(status, flush=True)
 
             time.sleep(0.2)
 

@@ -69,6 +69,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Handle conflicting flags
+    if args.with_koder and args.no_details:
+        print("WARNING: --with-koder requires details to be fetched. Ignoring --no-details.")
+        args.no_details = False
+
     print("="*60)
     print("TEST IMPORT (no database save)")
     print("="*60)
@@ -76,6 +81,7 @@ def main():
     print(f"Type filter: {args.type or 'None'}")
     print(f"Count: {args.count}")
     print(f"Fetch details: {not args.no_details}")
+    print(f"Filter for koder: {args.with_koder}")
 
     try:
         # Build filter
