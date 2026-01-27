@@ -181,11 +181,10 @@ class SearchController:
                 results=results[:preview_count],  # Only top N for preview
             ))
 
-        # Log results for ML (flatten all shown results)
+        # Log results for ML (only priority categories - others are just previews)
+        # When user expands a category via /search/category, those get logged there
         all_shown_results = []
         for cat in priority_categories:
-            all_shown_results.extend(cat.results)
-        for cat in other_categories:
             all_shown_results.extend(cat.results)
 
         if all_shown_results:
@@ -206,7 +205,7 @@ class SearchController:
         category: str,
         role: Optional[str] = None,
         method: str = "hybrid",
-        search_id: Optional[str] = None,
+        search_id: str = "",
     ) -> SearchResponse:
         """
         Get all results for a specific category.
@@ -218,7 +217,7 @@ class SearchController:
             category: The info_type category to filter by
             role: Optional user role for filtering
             method: Search method
-            search_id: Existing search_id (reuse from categorized search)
+            search_id: search_id from categorized search (required)
 
         Returns:
             SearchResponse with all results in the category
@@ -227,6 +226,11 @@ class SearchController:
         valid_methods = {"keyword", "semantic", "hybrid"}
         if method not in valid_methods:
             raise ValueError(f"Invalid search method: {method}. Must be one of {valid_methods}")
+
+        # Validate search_id exists
+        stored_search = database_service.get_search_by_id(search_id)
+        if stored_search is None:
+            raise ValueError(f"Invalid search_id: {search_id}")
 
         # Execute search
         max_results = 500
@@ -242,18 +246,6 @@ class SearchController:
             r for r in all_results
             if r.score >= min_score and r.info_type.lower() == category_lower
         ]
-
-        # Handle search_id
-        if search_id:
-            # Validate existing search_id
-            stored_search = database_service.get_search_by_id(search_id)
-            if stored_search is None:
-                # Create new search_id if invalid
-                search_id = str(uuid.uuid4())
-                database_service.log_search(search_id=search_id, query=query, role=role)
-        else:
-            search_id = str(uuid.uuid4())
-            database_service.log_search(search_id=search_id, query=query, role=role)
 
         # Log results
         if filtered_results:

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.dto.request.search import SearchRequest, CategorizedSearchRequest, CategorySearchRequest
 from app.dto.response.search import SearchResponse, CategorizedSearchResponse
 from app.controllers.search_controller import search_controller
+from app.config import settings
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -12,7 +13,7 @@ async def search(request: SearchRequest = Depends()):
     Search for content with pagination.
 
     Args:
-        request: SearchRequest with query, role, method, offset, limit, search_id
+        request: SearchRequest with query, role, offset, limit, search_id
 
     Returns:
         SearchResponse with paginated results and search_id for click tracking
@@ -20,7 +21,6 @@ async def search(request: SearchRequest = Depends()):
     Query params:
         - query: Search text (required)
         - role: User role for filtering (optional)
-        - method: 'keyword', 'semantic', or 'hybrid' (default: hybrid)
         - offset: Results to skip (default: 0)
         - limit: Results per page (default: 10, max: 50)
         - search_id: Existing search_id for pagination (optional)
@@ -29,7 +29,7 @@ async def search(request: SearchRequest = Depends()):
         return await search_controller.search(
             query=request.query,
             role=request.role,
-            method=request.method,
+            method=settings.search_method,
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
@@ -51,7 +51,6 @@ async def search_categorized(request: CategorizedSearchRequest = Depends()):
     Query params:
         - query: Search text (required)
         - role: User role for filtering (optional)
-        - method: 'keyword', 'semantic', or 'hybrid' (default: hybrid)
 
     Returns:
         CategorizedSearchResponse with:
@@ -62,7 +61,7 @@ async def search_categorized(request: CategorizedSearchRequest = Depends()):
         return await search_controller.search_categorized(
             query=request.query,
             role=request.role,
-            method=request.method,
+            method=settings.search_method,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -81,8 +80,7 @@ async def search_category(request: CategorySearchRequest = Depends()):
         - query: Search text (required)
         - category: Category (info_type) to filter by (required)
         - role: User role for filtering (optional)
-        - method: 'keyword', 'semantic', or 'hybrid' (default: hybrid)
-        - search_id: Existing search_id from categorized search (optional)
+        - search_id: search_id from categorized search (required)
 
     Returns:
         SearchResponse with all results in the specified category
@@ -92,7 +90,7 @@ async def search_category(request: CategorySearchRequest = Depends()):
             query=request.query,
             category=request.category,
             role=request.role,
-            method=request.method,
+            method=settings.search_method,
             search_id=request.search_id,
         )
     except ValueError as e:

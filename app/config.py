@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     helsedir_api_key: str = ""
     helsedir_api_url: str = "https://api.helsedirektoratet.no"
 
+    # Search method: 'keyword', 'semantic', or 'hybrid'
+    search_method: str = "hybrid"
+
     # Search scoring weights (title-only)
     search_exact_phrase_title_weight: float = 10.0
     search_full_title_coverage_weight: float = 7.0  # All title words in query

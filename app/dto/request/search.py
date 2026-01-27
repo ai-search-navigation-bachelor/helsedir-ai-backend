@@ -10,7 +10,6 @@ class SearchRequest(BaseModel):
     """Request model for search endpoint with pagination."""
     query: str = Field(..., min_length=1, description="Search query")
     role: Optional[str] = Field(None, description="User role for filtering")
-    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
 
     # Pagination
     offset: int = Field(0, ge=0, description="Number of results to skip")
@@ -22,7 +21,6 @@ class CategorizedSearchRequest(BaseModel):
     """Request model for categorized search endpoint."""
     query: str = Field(..., min_length=1, description="Search query")
     role: Optional[str] = Field(None, description="User role for filtering")
-    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
 
 
 class CategorySearchRequest(BaseModel):
@@ -30,8 +28,7 @@ class CategorySearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Search query")
     category: str = Field(..., min_length=1, description="Category (info_type) to filter by")
     role: Optional[str] = Field(None, description="User role for filtering")
-    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
-    search_id: Optional[str] = Field(None, description="Existing search_id from categorized search")
+    search_id: str = Field(..., description="search_id from categorized search (required)")
 
 
 class HelseDirectorateSearchRequest(BaseModel):
