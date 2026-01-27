@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.dto.request.search import SearchRequest, CategorizedSearchRequest, CategorySearchRequest
 from app.dto.response.search import SearchResponse, CategorizedSearchResponse
 from app.controllers.search_controller import search_controller
@@ -8,7 +8,7 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 
 @router.get("", response_model=SearchResponse)
-async def search(request: SearchRequest = Depends()):
+async def search(background_tasks: BackgroundTasks, request: SearchRequest = Depends()):
     """
     Search for content with pagination.
 
@@ -33,6 +33,7 @@ async def search(request: SearchRequest = Depends()):
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
+            background_tasks=background_tasks,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -41,7 +42,7 @@ async def search(request: SearchRequest = Depends()):
 
 
 @router.get("/categorized", response_model=CategorizedSearchResponse)
-async def search_categorized(request: CategorizedSearchRequest = Depends()):
+async def search_categorized(background_tasks: BackgroundTasks, request: CategorizedSearchRequest = Depends()):
     """
     Search for content and return results grouped by category.
 
@@ -62,6 +63,7 @@ async def search_categorized(request: CategorizedSearchRequest = Depends()):
             query=request.query,
             role=request.role,
             method=settings.search_method,
+            background_tasks=background_tasks,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -70,7 +72,7 @@ async def search_categorized(request: CategorizedSearchRequest = Depends()):
 
 
 @router.get("/category", response_model=SearchResponse)
-async def search_category(request: CategorySearchRequest = Depends()):
+async def search_category(background_tasks: BackgroundTasks, request: CategorySearchRequest = Depends()):
     """
     Get all results for a specific category.
 
@@ -92,6 +94,7 @@ async def search_category(request: CategorySearchRequest = Depends()):
             role=request.role,
             method=settings.search_method,
             search_id=request.search_id,
+            background_tasks=background_tasks,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

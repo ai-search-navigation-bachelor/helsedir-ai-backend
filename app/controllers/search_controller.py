@@ -9,6 +9,7 @@ import re
 import logging
 from typing import Optional, List, Dict
 from collections import defaultdict
+from fastapi import BackgroundTasks
 
 from app.dto.response.search import (
     SearchResult,
@@ -44,6 +45,7 @@ class SearchController:
         offset: int = 0,
         limit: int = 10,
         search_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -55,6 +57,7 @@ class SearchController:
             offset: Number of results to skip
             limit: Number of results per page
             search_id: Existing search_id for pagination (None = new search)
+            background_tasks: FastAPI background tasks for async logging
 
         Returns:
             SearchResponse with paginated results
@@ -87,8 +90,11 @@ class SearchController:
         # Handle search_id (new search vs pagination)
         search_id = self._handle_search_id(search_id, query, role)
 
-        # Extract ML features and log results
-        self._log_results(search_id, query, role, page_results, offset)
+        # Extract ML features and log results (in background)
+        if background_tasks:
+            background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
+        else:
+            self._log_results(search_id, query, role, page_results, offset)
 
         return SearchResponse(
             results=page_results,
@@ -106,6 +112,7 @@ class SearchController:
         query: str,
         role: Optional[str] = None,
         method: str = "hybrid",
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> CategorizedSearchResponse:
         """
         Execute search and return results grouped by category.
@@ -117,6 +124,7 @@ class SearchController:
             query: Search query string
             role: Optional user role for filtering
             method: Search method ('keyword', 'semantic', or 'hybrid')
+            background_tasks: FastAPI background tasks for async logging
 
         Returns:
             CategorizedSearchResponse with grouped results
@@ -188,7 +196,10 @@ class SearchController:
             all_shown_results.extend(cat.results)
 
         if all_shown_results:
-            self._log_results(search_id, query, role, all_shown_results, offset=0)
+            if background_tasks:
+                background_tasks.add_task(self._log_results, search_id, query, role, all_shown_results, 0)
+            else:
+                self._log_results(search_id, query, role, all_shown_results, offset=0)
 
         return CategorizedSearchResponse(
             query=query,
@@ -206,6 +217,7 @@ class SearchController:
         role: Optional[str] = None,
         method: str = "hybrid",
         search_id: str = "",
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> SearchResponse:
         """
         Get all results for a specific category.
@@ -218,6 +230,7 @@ class SearchController:
             role: Optional user role for filtering
             method: Search method
             search_id: search_id from categorized search (required)
+            background_tasks: FastAPI background tasks for async logging
 
         Returns:
             SearchResponse with all results in the category
@@ -247,9 +260,12 @@ class SearchController:
             if r.score >= min_score and r.info_type.lower() == category_lower
         ]
 
-        # Log results
+        # Log results (in background)
         if filtered_results:
-            self._log_results(search_id, query, role, filtered_results, offset=0)
+            if background_tasks:
+                background_tasks.add_task(self._log_results, search_id, query, role, filtered_results, 0)
+            else:
+                self._log_results(search_id, query, role, filtered_results, offset=0)
 
         return SearchResponse(
             results=filtered_results,
