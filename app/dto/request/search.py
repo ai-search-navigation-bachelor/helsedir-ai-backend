@@ -18,6 +18,22 @@ class SearchRequest(BaseModel):
     search_id: Optional[str] = Field(None, description="Existing search_id for pagination")
 
 
+class CategorizedSearchRequest(BaseModel):
+    """Request model for categorized search endpoint."""
+    query: str = Field(..., min_length=1, description="Search query")
+    role: Optional[str] = Field(None, description="User role for filtering")
+    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
+
+
+class CategorySearchRequest(BaseModel):
+    """Request model for searching within a specific category."""
+    query: str = Field(..., min_length=1, description="Search query")
+    category: str = Field(..., min_length=1, description="Category (info_type) to filter by")
+    role: Optional[str] = Field(None, description="User role for filtering")
+    method: str = Field("hybrid", description="Search method: 'keyword', 'semantic', or 'hybrid'")
+    search_id: Optional[str] = Field(None, description="Existing search_id from categorized search")
+
+
 class HelseDirectorateSearchRequest(BaseModel):
     """Request model for Helsedirektoratet API search endpoint."""
     query: str = Field(..., min_length=1, description="Search query text", alias="QueryText")
