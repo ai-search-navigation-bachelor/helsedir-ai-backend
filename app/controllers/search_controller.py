@@ -189,17 +189,18 @@ class SearchController:
                 results=results[:preview_count],  # Only top N for preview
             ))
 
-        # Log results for ML (only priority categories - others are just previews)
-        # When user expands a category via /search/category, those get logged there
-        all_shown_results = []
+        # Log only the FIRST result from each priority category (what user initially sees)
+        # When user clicks "Vis flere", /search/category logs the rest
+        initially_shown = []
         for cat in priority_categories:
-            all_shown_results.extend(cat.results)
+            if cat.results:
+                initially_shown.append(cat.results[0])  # Only first result
 
-        if all_shown_results:
+        if initially_shown:
             if background_tasks:
-                background_tasks.add_task(self._log_results, search_id, query, role, all_shown_results, 0)
+                background_tasks.add_task(self._log_results, search_id, query, role, initially_shown, 0)
             else:
-                self._log_results(search_id, query, role, all_shown_results, offset=0)
+                self._log_results(search_id, query, role, initially_shown, offset=0)
 
         return CategorizedSearchResponse(
             query=query,
