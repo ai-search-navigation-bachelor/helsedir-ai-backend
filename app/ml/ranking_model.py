@@ -90,11 +90,30 @@ def smoothed_ctr(clicks: int, impressions: int, alpha: float = 1.0, beta: float 
     return float((clicks + alpha) / (impressions + alpha + beta))
 
 
-def propensity_for_position(pos: int) -> float:
+def propensity_for_position(pos: int, db_propensities: Optional[Dict[int, float]] = None) -> float:
     """
-    Approximate propensity (P(click | position)) used for IPS weighting.
-    Replace with DB-driven propensities if you created `position_propensity`.
+    Get propensity (P(click | position)) used for IPS weighting.
+
+    Uses DB propensities if available, with fallback to last known value
+    for positions beyond what's stored. Falls back to hardcoded values
+    if no DB propensities exist.
+
+    Args:
+        pos: Position (1-indexed)
+        db_propensities: Optional dict of position -> propensity from DB
+
+    Returns:
+        Propensity value for the position
     """
+    # If we have DB propensities, use them with fallback for high positions
+    if db_propensities:
+        if pos in db_propensities:
+            return db_propensities[pos]
+        # Use last known propensity for positions beyond max
+        max_pos = max(db_propensities.keys())
+        return db_propensities[max_pos]
+
+    # Hardcoded fallback if no DB propensities
     if pos <= 1:
         return 1.00
     if pos == 2:
@@ -281,9 +300,7 @@ class HealthContentReranker:
                 labels.append(float(clicked))
 
                 # IPS weight to reduce position bias
-                prop = pos_prop.get(pos) if pos_prop else None
-                if prop is None:
-                    prop = propensity_for_position(pos)
+                prop = propensity_for_position(pos, pos_prop if pos_prop else None)
                 weights.append(1.0 / max(float(prop), 1e-6))
 
             if not any_pos:

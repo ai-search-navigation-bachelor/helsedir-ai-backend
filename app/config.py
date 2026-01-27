@@ -28,10 +28,17 @@ class Settings(BaseSettings):
     helsedir_api_key: str = ""
     helsedir_api_url: str = "https://api.helsedirektoratet.no"
 
+    # Search method: 'keyword', 'semantic', or 'hybrid'
+    search_method: str = "hybrid"
+
     # Search scoring weights (title-only)
     search_exact_phrase_title_weight: float = 10.0
     search_full_title_coverage_weight: float = 7.0  # All title words in query
     search_keyword_title_weight: float = 3.0
+
+    # Categorized search settings
+    search_min_score: float = 0.4  # Minimum score threshold for results
+    search_category_preview_count: int = 5  # Number of results in category preview
 
     # ML settings
     ml_embedding_enabled: bool = False

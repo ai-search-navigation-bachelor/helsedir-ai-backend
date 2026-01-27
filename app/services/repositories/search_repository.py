@@ -255,6 +255,63 @@ class SearchRepository:
             if conn is not None:
                 conn.close()
 
+    def get_max_position_for_search(self, search_id: str) -> int:
+        """
+        Get the maximum position already logged for a search_id.
+
+        Returns:
+            Max position, or 0 if no results logged yet
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return 0
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COALESCE(MAX(position), 0) FROM search_results_shown WHERE search_id = %s",
+                (search_id,)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else 0
+        except mysql.connector.Error as e:
+            print(f"Error getting max position: {e}")
+            return 0
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
+
+    def get_logged_content_ids_for_search(self, search_id: str) -> set:
+        """
+        Get content_ids already logged for a search_id.
+
+        Returns:
+            Set of content_ids already logged
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return set()
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_id FROM search_results_shown WHERE search_id = %s",
+                (search_id,)
+            )
+            return {row[0] for row in cursor.fetchall()}
+        except mysql.connector.Error as e:
+            print(f"Error getting logged content_ids: {e}")
+            return set()
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
+
 
 # Global instance
 search_repository = SearchRepository()

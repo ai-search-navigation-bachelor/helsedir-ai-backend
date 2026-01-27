@@ -3,9 +3,10 @@
 Import content from Helsedirektoratet API to database.
 
 Usage:
-    python scripts/data/import_content.py                 # Default: 500 items, 10 search terms
+    python scripts/data/import_content.py                 # Default: 1000 items using search terms
+    python scripts/data/import_content.py --by-type       # Fetch by info type (ensures coverage)
     python scripts/data/import_content.py --extended      # Use extended search terms (~120 terms)
-    python scripts/data/import_content.py --target 1000   # Fetch up to 1000 items
+    python scripts/data/import_content.py --target 2000   # Fetch up to 2000 items
     python scripts/data/import_content.py --no-links      # Skip fetching links (much faster)
     python scripts/data/import_content.py --alphabet      # Search using alphabet (a-z, æøå)
 """
@@ -14,6 +15,7 @@ import argparse
 import sys
 import os
 import time
+from collections import defaultdict
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -23,6 +25,7 @@ from app.services.external.helsedir_api_service import (
     HelseDirectorateAPIError,
 )
 from app.services.data.database_service import database_service
+from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
 
 
 # Default search terms (quick import)
@@ -114,6 +117,120 @@ EXTENDED_SEARCH_TERMS = [
 
 # Alphabet for broader coverage
 ALPHABET_SEARCH_TERMS = list("abcdefghijklmnopqrstuvwxyzæøå")
+
+
+def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50) -> dict:
+    """
+    Fetch content from Helsedir API by filtering on each info type.
+
+    This ensures balanced coverage across all allowed content types.
+
+    Args:
+        verbose: Whether to print progress
+        fetch_links: Whether to fetch detailed info including links
+        target_per_type: Target number of items per info type
+
+    Returns:
+        Dictionary of content items keyed by ID (deduped)
+    """
+    all_content = {}
+    type_counts = defaultdict(int)
+
+    for i, info_type in enumerate(ALLOWED_INFO_TYPES, 1):
+        display_name = CATEGORY_INFO.get(info_type, info_type)
+
+        if verbose:
+            print(f"\n[{i}/{len(ALLOWED_INFO_TYPES)}] Fetching: {display_name} ({info_type})...", flush=True)
+
+        try:
+            # Filter by info type
+            filter_query = f"infoType eq '{info_type}'"
+
+            # Get basic info first (for correct infoType)
+            # Use empty query with filter - API requires either query or filter
+            if verbose:
+                print("    basic...", end=" ", flush=True)
+            basic_results = helsedir_api_service.search_infobits(
+                query_text=None,
+                filter_query=filter_query,
+                get_full_infobits=False,
+                timeout=30.0,
+            )
+
+            # Get full info
+            if verbose:
+                print("full...", end=" ", flush=True)
+            full_results = helsedir_api_service.search_infobits(
+                query_text=None,
+                filter_query=filter_query,
+                get_full_infobits=True,
+                timeout=30.0,
+            )
+
+            # Create lookup for basic info
+            basic_by_id = {item.get("id"): item for item in basic_results}
+
+            # Merge and limit to target
+            new_count = 0
+            new_items = []
+
+            for item in full_results[:target_per_type]:
+                item_id = item.get("id")
+                if item_id and item_id not in all_content:
+                    # Add infoType from basic
+                    if item_id in basic_by_id:
+                        item["infoType"] = basic_by_id[item_id].get("infoType")
+                    all_content[item_id] = item
+                    new_items.append((item_id, item))
+                    new_count += 1
+                    type_counts[info_type] += 1
+
+            if verbose:
+                print(f"found {len(full_results)}, added {new_count} | Total: {len(all_content)}", flush=True)
+
+            # Fetch details for new items
+            if fetch_links and new_items:
+                if verbose:
+                    print(f"    Fetching details for {len(new_items)} items...", end=" ", flush=True)
+
+                failed_count = 0
+                for content_id, item in new_items:
+                    try:
+                        detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
+                        item["links"] = detailed.get("links")
+                        if detailed.get("koder") is not None:
+                            item["koder"] = detailed.get("koder")
+                        if detailed.get("maalgruppe") is not None:
+                            item["maalgruppe"] = detailed.get("maalgruppe")
+                        time.sleep(0.1)
+                    except Exception as err:
+                        failed_count += 1
+                        if verbose:
+                            print(f"\n      WARN: Failed to fetch details for {content_id}: {err}", flush=True)
+                        continue
+
+                if verbose:
+                    status = "done" if failed_count == 0 else f"done ({failed_count} failed)"
+                    print(status, flush=True)
+
+            time.sleep(0.2)
+
+        except HelseDirectorateAPIError as e:
+            if verbose:
+                print(f"ERROR: {e}")
+            continue
+
+    if verbose:
+        print(f"\n\n{'='*50}")
+        print("CONTENT BY TYPE:")
+        print("="*50)
+        for info_type in ALLOWED_INFO_TYPES:
+            count = type_counts.get(info_type, 0)
+            display = CATEGORY_INFO.get(info_type, info_type)
+            print(f"  {display}: {count}")
+        print(f"\nTotal: {len(all_content)}")
+
+    return all_content
 
 
 def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0) -> dict:
@@ -308,8 +425,19 @@ def main():
     parser.add_argument(
         "--target",
         type=int,
-        default=500,
-        help="Target number of items to fetch (default: 500, 0 = no limit)",
+        default=1000,
+        help="Target number of items to fetch (default: 1000, 0 = no limit)",
+    )
+    parser.add_argument(
+        "--by-type",
+        action="store_true",
+        help="Fetch by info type to ensure balanced coverage across all content types",
+    )
+    parser.add_argument(
+        "--per-type",
+        type=int,
+        default=50,
+        help="Target items per type when using --by-type (default: 50)",
     )
     parser.add_argument(
         "--quiet", "-q",
@@ -337,8 +465,13 @@ def main():
         print("=" * 50)
         print("HELSEDIR CONTENT IMPORT")
         print("=" * 50)
-        print(f"\nSearch terms: {len(search_terms)}")
-        print(f"Target items: {target if target > 0 else 'No limit'}")
+        if args.by_type:
+            print(f"\nMode: By info type (balanced coverage)")
+            print(f"Target per type: {args.per_type}")
+            print(f"Info types: {len(ALLOWED_INFO_TYPES)}")
+        else:
+            print(f"\nSearch terms: {len(search_terms)}")
+            print(f"Target items: {target if target > 0 else 'No limit'}")
         print(f"Fetch links: {'Yes' if fetch_links else 'No (fast mode)'}")
 
     # Check database connection
@@ -353,7 +486,14 @@ def main():
         print(f"Existing items in database: {existing}")
 
     # Fetch content
-    content_items = fetch_content(search_terms, verbose=verbose, fetch_links=fetch_links, target=target)
+    if args.by_type:
+        content_items = fetch_content_by_type(
+            verbose=verbose,
+            fetch_links=fetch_links,
+            target_per_type=args.per_type
+        )
+    else:
+        content_items = fetch_content(search_terms, verbose=verbose, fetch_links=fetch_links, target=target)
 
     # Save to database
     if content_items:

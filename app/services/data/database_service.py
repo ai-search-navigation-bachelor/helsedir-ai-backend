@@ -112,6 +112,12 @@ class DatabaseService:
     def get_click_count(self) -> int:
         return self._search.get_click_count()
 
+    def get_max_position_for_search(self, search_id: str) -> int:
+        return self._search.get_max_position_for_search(search_id)
+
+    def get_logged_content_ids_for_search(self, search_id: str) -> set:
+        return self._search.get_logged_content_ids_for_search(search_id)
+
     # ==================== Learning-to-Rank Operations ====================
 
     def get_training_data(self) -> List[Dict[str, Any]]:

@@ -50,9 +50,9 @@ class ContentRepository:
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
-                    koder = VALUES(koder),
-                    maalgruppe = VALUES(maalgruppe),
-                    links = VALUES(links)
+                    koder = COALESCE(VALUES(koder), koder),
+                    maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
+                    links = COALESCE(VALUES(links), links)
                 """,
                 (
                     content.get("id"),
@@ -106,9 +106,9 @@ class ContentRepository:
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
                             info_type = VALUES(info_type),
-                            koder = VALUES(koder),
-                            maalgruppe = VALUES(maalgruppe),
-                            links = VALUES(links)
+                            koder = COALESCE(VALUES(koder), koder),
+                            maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
+                            links = COALESCE(VALUES(links), links)
                         """,
                         (
                             content.get("id"),
