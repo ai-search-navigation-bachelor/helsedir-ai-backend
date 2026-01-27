@@ -332,6 +332,18 @@ class SearchController:
         offset: int,
     ) -> None:
         """Extract ML features and log results to database."""
+        # Get already logged content_ids to avoid duplicates
+        already_logged = database_service.get_logged_content_ids_for_search(search_id)
+
+        # Filter out already logged results
+        new_results = [r for r in results if r.id not in already_logged]
+
+        if not new_results:
+            return  # Nothing new to log
+
+        # Get max position to continue from
+        max_position = database_service.get_max_position_for_search(search_id)
+
         query_keywords = set(re.findall(r'\w+', query.lower()))
 
         # Default feature values to avoid NULLs
@@ -349,8 +361,8 @@ class SearchController:
         }
 
         results_to_log = []
-        for local_index, result in enumerate(results):
-            position = offset + local_index + 1
+        for local_index, result in enumerate(new_results):
+            position = max_position + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
             features = default_features.copy()
