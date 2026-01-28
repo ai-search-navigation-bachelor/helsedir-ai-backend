@@ -166,14 +166,16 @@ class HealthContentEmbedding:
             for linked in linked_content:
                 linked_title = linked.get("tittel", "")
                 linked_text = linked.get("tekst", "")
+                linked_type = linked.get("type", "")
                 if linked_title:
                     clean_text = HealthContentEmbedding.strip_html_tags(linked_text) if linked_text else ""
+                    # Build: "Title (type): text" or "Title (type)" or "Title: text" or "Title"
+                    type_part = f" ({linked_type})" if linked_type else ""
                     if clean_text:
-                        # Remove trailing punctuation to avoid doubles
                         clean_text = clean_text.rstrip('.').rstrip()
-                        related_parts.append(f"{linked_title}: {clean_text}")
+                        related_parts.append(f"{linked_title}{type_part}: {clean_text}")
                     else:
-                        related_parts.append(linked_title)
+                        related_parts.append(f"{linked_title}{type_part}")
 
             if related_parts:
                 sentences.append("Se også: " + "; ".join(related_parts) + ".")
