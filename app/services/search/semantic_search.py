@@ -29,7 +29,8 @@ class SemanticSearch:
         try:
             from app.ml.embedding_model import HealthContentEmbedding
 
-            self.embedding_model = HealthContentEmbedding()
+            from app.config import settings
+            self.embedding_model = HealthContentEmbedding(model_name=settings.ml_embedding_model)
             return True
         except Exception as e:
             print(f"Error initializing embedding model: {e}")

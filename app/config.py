@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # ML settings
     ml_embedding_enabled: bool = False
+    ml_embedding_model: str = "intfloat/multilingual-e5-base"
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
