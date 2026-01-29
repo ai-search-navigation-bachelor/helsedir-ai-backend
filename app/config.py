@@ -45,12 +45,16 @@ class Settings(BaseSettings):
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
+    # LLM API (for GPL training)
+    groq_api_key: str = ""
+
     # MySQL Database
     mysql_host: str = "localhost"
     mysql_port: int = 3306
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
+    mysql_root_password: str = ""
 
 
 # Create settings instance

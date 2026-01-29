@@ -234,7 +234,7 @@ def main():
         "--model-name",
         type=str,
         default="intfloat/multilingual-e5-base",
-        help="HuggingFace model name",
+        help="Model name (HuggingFace) or local path (e.g., models/finetuned-e5-tsdae)",
     )
     parser.add_argument(
         "--no-fetch-links",
