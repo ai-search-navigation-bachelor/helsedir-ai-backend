@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # Categorized search settings
     search_min_score: float = 0.4  # Minimum score threshold for results
-    search_category_preview_count: int = 5  # Number of results in category preview
+    search_category_preview_count: int = 3  # Number of results in category preview
 
     # ML settings
     ml_embedding_enabled: bool = False
