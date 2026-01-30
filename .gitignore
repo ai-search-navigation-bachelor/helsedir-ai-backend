@@ -39,15 +39,13 @@ logs/*.jsonl
 logs/*.log
 
 # Data
-data/embeddings/
+data/
 *.pkl
 *.npy
 
 # ML Models (large binary files)
-models/**/*.keras
-models/**/*.h5
-models/**/*.pb
-!models/**/.gitkeep
+models/
+checkpoints/
 
 # Testing
 .pytest_cache/

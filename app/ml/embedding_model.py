@@ -87,69 +87,100 @@ class HealthContentEmbedding:
     @staticmethod
     def format_passage(content_item: Dict[str, Any]) -> str:
         """
-        Format a content item as a structured passage.
+        Format a content item as a natural language passage for embedding.
 
-        Creates a text representation with all relevant metadata fields:
-        - tittel (title)
-        - type (content type)
-        - icd-10 (diagnose kode)
-        - icpc-2 (primærhelsetjeneste kode)
-        - snomed-ct (medisinsk terminologi)
-        - lis-spesialitet (spesialist område)
-        - lis-læringsmål (læringsmål)
-        - innhold (clean body text without HTML)
+        Uses natural language format optimized for embedding models:
+        - No special separators or structured formatting
+        - Important information (title, content) comes first
+        - Metadata woven in naturally
+        - Related content appended as natural text
 
         Args:
-            content_item: Dict with content fields
+            content_item: Dict with content fields. Can include 'linked_content'
+                         which is a list of dicts with 'tittel' and 'tekst' from
+                         fetched linked documents.
 
         Returns:
-            Formatted passage string
+            Natural language passage string
         """
-        parts = []
+        sentences = []
 
-        # Title
-        title = content_item.get("title") or content_item.get("tittel")
-        if title:
-            parts.append(f"Tittel: {title}")
+        # Title - the most important part, comes first
+        title = content_item.get("title") or content_item.get("tittel") or ""
 
         # Content type
-        content_type = content_item.get("content_type") or content_item.get("type")
-        if content_type:
-            parts.append(f"Type: {content_type}")
+        content_type = content_item.get("content_type") or content_item.get("info_type") or content_item.get("type") or ""
 
-        # ICD-10 code
-        icd10 = content_item.get("icd10") or content_item.get("icd_10")
-        if icd10:
-            parts.append(f"ICD-10: {icd10}")
+        # Build opening sentence with title and type
+        if title:
+            if content_type:
+                sentences.append(f"{title}. Dette er en {content_type}.")
+            else:
+                sentences.append(f"{title}.")
 
-        # ICPC-2 code
-        icpc2 = content_item.get("icpc2") or content_item.get("icpc_2")
-        if icpc2:
-            parts.append(f"ICPC-2: {icpc2}")
+        # Target groups (maalgruppe) - who is this for?
+        maalgruppe = content_item.get("maalgruppe") or content_item.get("target_groups")
+        if maalgruppe:
+            if isinstance(maalgruppe, str):
+                try:
+                    import json
+                    maalgruppe = json.loads(maalgruppe)
+                except (json.JSONDecodeError, TypeError):
+                    maalgruppe = []
+            if isinstance(maalgruppe, list) and maalgruppe:
+                sentences.append(f"Målgruppe: {', '.join(maalgruppe)}.")
 
-        # SNOMED CT
-        snomed = content_item.get("snomed_ct") or content_item.get("snomed")
-        if snomed:
-            parts.append(f"SNOMED-CT: {snomed}")
+        # Medical codes - include naturally
+        koder = content_item.get("koder")
+        if koder:
+            if isinstance(koder, str):
+                try:
+                    import json
+                    koder = json.loads(koder)
+                except (json.JSONDecodeError, TypeError):
+                    koder = {}
 
-        # LIS spesialitet
-        lis_spec = content_item.get("lis_spesialitet") or content_item.get("lis_specialty")
-        if lis_spec:
-            parts.append(f"LIS-spesialitet: {lis_spec}")
+            if isinstance(koder, dict):
+                kode_parts = []
+                for key in ["ICD10", "icd10", "ICPC2", "icpc2", "SNOMED", "snomed", "LIS"]:
+                    val = koder.get(key)
+                    if val:
+                        if isinstance(val, list):
+                            kode_parts.extend(val)
+                        else:
+                            kode_parts.append(str(val))
+                if kode_parts:
+                    sentences.append(f"Relevante koder: {', '.join(kode_parts)}.")
 
-        # LIS læringsmål
-        lis_goal = content_item.get("lis_læringsmål") or content_item.get("lis_learning_goal")
-        if lis_goal:
-            parts.append(f"LIS-læringsmål: {lis_goal}")
-
-        # Body content (strip HTML)
+        # Main body content - the core of the passage
         body = content_item.get("body") or content_item.get("tekst") or content_item.get("innhold")
         if body:
             clean_body = HealthContentEmbedding.strip_html_tags(body)
             if clean_body:
-                parts.append(f"Innhold: {clean_body}")
+                sentences.append(clean_body)
 
-        return " ".join(parts)
+        # Linked/related content - append as additional context
+        linked_content = content_item.get("linked_content", [])
+        if linked_content:
+            related_parts = []
+            for linked in linked_content:
+                linked_title = linked.get("tittel", "")
+                linked_text = linked.get("tekst", "")
+                linked_type = linked.get("type", "")
+                if linked_title:
+                    clean_text = HealthContentEmbedding.strip_html_tags(linked_text) if linked_text else ""
+                    # Build: "Title (type): text" or "Title (type)" or "Title: text" or "Title"
+                    type_part = f" ({linked_type})" if linked_type else ""
+                    if clean_text:
+                        clean_text = clean_text.rstrip('.').rstrip()
+                        related_parts.append(f"{linked_title}{type_part}: {clean_text}")
+                    else:
+                        related_parts.append(f"{linked_title}{type_part}")
+
+            if related_parts:
+                sentences.append("Se også: " + "; ".join(related_parts) + ".")
+
+        return " ".join(sentences)
 
     def encode(
         self, 

@@ -37,13 +37,17 @@ class Settings(BaseSettings):
     search_keyword_title_weight: float = 3.0
 
     # Categorized search settings
-    search_min_score: float = 0.4  # Minimum score threshold for results
-    search_category_preview_count: int = 5  # Number of results in category preview
+    search_min_score: float = 0.45  # Minimum score threshold for results
+    search_category_preview_count: int = 3  # Number of results in category preview
 
     # ML settings
     ml_embedding_enabled: bool = False
+    ml_embedding_model: str = "intfloat/multilingual-e5-base"
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
+
+    # LLM API (for GPL training)
+    groq_api_key: str = ""
 
     # MySQL Database
     mysql_host: str = "localhost"
@@ -51,6 +55,7 @@ class Settings(BaseSettings):
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
+    mysql_root_password: str = ""
 
 
 # Create settings instance
