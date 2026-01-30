@@ -226,33 +226,36 @@ def load_embeddings_from_db() -> Dict[str, "np.ndarray"]:
             conn.close()
 
 
-def find_hard_negative(
+def find_hard_negatives(
     positive_id: str,
     candidate_ids: List[str],
     embeddings: Dict[str, "np.ndarray"],
-) -> str:
+    top_k: int = 5,
+) -> List[str]:
     """
-    Find the hardest negative: most similar to positive but not the positive itself.
-    Returns the content_id of the hardest negative.
+    Find the top-K hardest negatives: most similar to positive but not the positive itself.
+    Returns a list of content_ids of the hardest negatives.
     """
     import numpy as np
 
     pos_emb = embeddings.get(positive_id)
     if pos_emb is None:
-        return random.choice(candidate_ids)
+        return random.sample(candidate_ids, min(top_k, len(candidate_ids)))
 
-    best_id = None
-    best_sim = -2.0
+    similarities = []
     for cid in candidate_ids:
         emb = embeddings.get(cid)
         if emb is None:
             continue
         sim = float(np.dot(pos_emb, emb))
-        if sim > best_sim:
-            best_sim = sim
-            best_id = cid
+        similarities.append((cid, sim))
 
-    return best_id or random.choice(candidate_ids)
+    if not similarities:
+        return random.sample(candidate_ids, min(top_k, len(candidate_ids)))
+
+    # Sort by similarity descending, take top-K
+    similarities.sort(key=lambda x: -x[1])
+    return [cid for cid, _ in similarities[:top_k]]
 
 
 def create_training_triplets(
@@ -272,7 +275,7 @@ def create_training_triplets(
     use_hard_negatives = len(embeddings) > 0
 
     if use_hard_negatives:
-        print("  Using hard negative mining (most similar non-positive document)")
+        print("  Using hard negative mining (top-5 most similar non-positive documents)")
     else:
         print("  Falling back to random negatives (no embeddings found)")
 
@@ -293,15 +296,17 @@ def create_training_triplets(
         positive_passage = id_to_passage[content_id]
         candidate_ids = [cid for cid in all_ids if cid != content_id]
 
-        # Find hard negative once per document (same negative for all queries of this doc)
+        # Find top-5 hard negatives per document
         if use_hard_negatives:
-            neg_id = find_hard_negative(content_id, candidate_ids, embeddings)
+            hard_neg_ids = find_hard_negatives(content_id, candidate_ids, embeddings, top_k=5)
         else:
-            neg_id = random.choice(candidate_ids)
-
-        negative_passage = id_to_passage[neg_id]
+            hard_neg_ids = random.sample(candidate_ids, min(5, len(candidate_ids)))
 
         for query in query_list:
+            # Pick a random negative from top-5 for each query (adds variation)
+            neg_id = random.choice(hard_neg_ids)
+            negative_passage = id_to_passage[neg_id]
+
             triplets.append({
                 "query": query,
                 "positive": positive_passage,
@@ -330,14 +335,14 @@ def main():
     parser.add_argument(
         "--queries-per-doc",
         type=int,
-        default=3,
+        default=10,
         help="Number of queries to generate per document",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=3,
-        help="Number of training epochs",
+        default=5,
+        help="Number of training epochs (early stopping will prevent overfitting)",
     )
     parser.add_argument(
         "--learning-rate",
@@ -451,9 +456,10 @@ def main():
 
     print(f"  Train: {len(train_triplets)}, Validation: {len(val_triplets)}, Test: {len(test_triplets)}")
 
-    # Create training data
+    # Create training pairs (query, positive) for MultipleNegativesRankingLoss
+    # MNRL uses in-batch negatives: all other positives in the batch become negatives
     train_examples = [
-        InputExample(texts=[t["query"], t["positive"], t["negative"]])
+        InputExample(texts=[t["query"], t["positive"]])
         for t in train_triplets
     ]
 
@@ -480,20 +486,26 @@ def main():
         name="helsedir-test",
     )
 
-    # Use TripletLoss for (query, positive, negative) training
-    train_loss = losses.TripletLoss(model=model)
+    # Use MultipleNegativesRankingLoss - uses all other examples in the
+    # batch as negatives, much more effective than TripletLoss with limited data
+    train_loss = losses.MultipleNegativesRankingLoss(model=model)
 
     # Calculate training steps
     steps_per_epoch = len(train_dataloader)
     total_steps = steps_per_epoch * args.epochs
     warmup_steps = int(total_steps * 0.1)
 
+    # Evaluate twice per epoch for better early stopping granularity
+    eval_steps = max(1, steps_per_epoch // 2)
+
     print(f"\nTraining configuration:")
     print(f"  Triplets: {len(triplets)}")
+    print(f"  Loss: MultipleNegativesRankingLoss (in-batch negatives)")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.learning_rate}")
-    print(f"  Epochs: {args.epochs}")
+    print(f"  Epochs: {args.epochs} (with early stopping)")
     print(f"  Steps per epoch: {steps_per_epoch}")
+    print(f"  Eval every: {eval_steps} steps")
     print(f"  Total steps: {total_steps}")
     print(f"  Warmup steps: {warmup_steps}")
 
@@ -524,7 +536,7 @@ def main():
         output_path=args.output_dir,
         save_best_model=True,
         evaluator=evaluator_val,
-        evaluation_steps=steps_per_epoch,
+        evaluation_steps=eval_steps,
     )
 
     print("=" * 50)
