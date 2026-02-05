@@ -1,0 +1,31 @@
+name: Deploy backend (prod)
+
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: deploy-prod-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, prod]
+    steps:
+      - name: Deploy on VM
+        run: |
+          set -e
+          cd /home/ubuntu/helsedir-ai-backend
+
+          git fetch origin
+          git reset --hard origin/main
+
+          echo "Deployed commit: $(git rev-parse --short HEAD)"
+
+          docker compose build backend
+          docker compose up -d --no-deps backend
+
+          docker compose ps
+
+          # Fail workflow if health check fails
+          curl -fsS http://localhost:${PORT:-8000}/health

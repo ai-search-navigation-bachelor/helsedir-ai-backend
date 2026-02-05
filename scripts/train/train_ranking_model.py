@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""
+Train the learning-to-rank reranker model.
+
+This script trains a XGBoost LambdaMART model from database logs.
+"""
+
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from app.ml.ranking_model import HealthContentReranker
+
+
+def main():
+    print("=" * 50)
+    print("Training Learning-to-Rank Reranker")
+    print("=" * 50)
+
+    # Create reranker
+    reranker = HealthContentReranker()
+
+    # Train from database
+    print("\nTraining from database logs...")
+    print("This may take a few minutes depending on the amount of data.\n")
+
+    results = reranker.train_from_database(
+        days_back=180,           # Use last 6 months of data
+        min_group_size=5,        # Only use searches with at least 5 results
+        require_any_click=True,  # Only use searches where user clicked something
+        use_dwell=True,          # Use dwell time to filter out accidental clicks
+        dwell_positive_ms=8000,  # Click is positive if dwell >= 8 seconds
+        use_db_propensity=True,  # Use position propensities from database
+        verbose=True,            # Show training progress
+    )
+
+    print("\n" + "=" * 50)
+    print("Training Results")
+    print("=" * 50)
+    print(f"Trained: {'Yes' if results['trained'] else 'No'}")
+    print(f"Training groups (searches): {int(results['groups'])}")
+    print(f"Training rows (results): {int(results['rows'])}")
+
+    if results["trained"]:
+        # Save model
+        model_path = project_root / "models" / "ranking" / "reranker.json"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        reranker.save(str(model_path))
+        print(f"\n✓ Model saved to: {model_path}")
+    else:
+        print("\n✗ Training failed - not enough data")
+        print("  Make sure you have:")
+        print("  - Search logs with results shown (search_results_shown table)")
+        print("  - Click logs (click_logs table)")
+        print("  - At least a few searches with clicks")
+
+    print("\n" + "=" * 50)
+    print("Training Complete!")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    main()
+
+
+    # Verify saved model
+    print("Verifying saved model...")
+    loaded_model = HealthContentRanker.load(str(model_path))
+
+    # Test prediction
+    test_features = [{name: 0.5 for name in RANKING_FEATURES}]
+    test_pred = loaded_model.predict(test_features)
+    print(f"Test prediction: {test_pred[0]:.4f}")
+
+    print("\nTraining complete!")
+    print(f"Model saved to: {model_path}.keras")
+    print("\nTo enable learning-to-rank, set in .env:")
+    print("  ML_RANKING_ENABLED=true")
+
+
+if __name__ == "__main__":
+    main()

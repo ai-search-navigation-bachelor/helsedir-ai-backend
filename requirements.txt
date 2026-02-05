@@ -1,0 +1,28 @@
+# Core dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.0
+
+# Development
+pytest>=8.3.0
+httpx>=0.28.0
+requests>=2.32.0
+
+# Machine Learning & Embeddings
+sentence-transformers>=3.3.0
+numpy>=1.26.0
+torch>=2.0.0
+xgboost>=2.0.0
+datasets>=2.14.0
+accelerate>=0.26.0
+
+# Optional: Vector search optimization
+# faiss-cpu>=1.9.0
+
+# LLM integration (for GPL training)
+# langchain>=0.3.0
+
+# Database
+mysql-connector-python>=8.0.0

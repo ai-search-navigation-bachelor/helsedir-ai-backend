@@ -1,0 +1,91 @@
+"""
+Search service facade.
+
+Provides unified interface for all search methods.
+"""
+
+from typing import List, Optional
+
+from app.dto.response.search import SearchResult
+from app.services.search.keyword_search import keyword_search
+from app.services.search.semantic_search import semantic_search
+from app.services.search.hybrid_search import hybrid_search
+
+
+class SearchService:
+    """
+    Unified search service facade.
+
+    Delegates to specialized search implementations.
+    """
+
+    def __init__(self):
+        self._keyword = keyword_search
+        self._semantic = semantic_search
+        self._hybrid = hybrid_search
+
+    # ==================== Search Methods ====================
+
+    def search(
+        self,
+        query: str,
+        role: Optional[str] = None,
+        k: int = 10
+    ) -> List[SearchResult]:
+        """Perform keyword-based search."""
+        result = self._keyword.search(query, role, k)
+        return result if result is not None else []
+
+    def search_semantic(
+        self,
+        query: str,
+        role: Optional[str] = None,
+        k: int = 10
+    ) -> List[SearchResult]:
+        """Perform semantic search using embeddings."""
+        return self._semantic.search(query, role, k)
+
+    def search_hybrid(
+        self,
+        query: str,
+        role: Optional[str] = None,
+        k: int = 10,
+        keyword_weight: float = 0.2,
+        semantic_weight: float = 0.8,
+    ) -> List[SearchResult]:
+        """Perform hybrid search combining keyword and semantic."""
+        return self._hybrid.search(query, role, k, keyword_weight, semantic_weight)
+
+    # ==================== Utility Methods ====================
+
+    def get_semantic_similarity(self, query: str, content_id: str) -> Optional[float]:
+        """Calculate semantic similarity between a query and content item."""
+        return self._semantic.get_similarity(query, content_id)
+
+    # ==================== Internal Access (for backward compatibility) ====================
+
+    def _load_embedding_model(self) -> bool:
+        """Load the embedding model."""
+        return self._semantic.load_embedding_model()
+
+    def _load_content_embeddings(self) -> bool:
+        """Load content embeddings from database."""
+        return self._semantic.load_content_embeddings()
+
+    @property
+    def embedding_model(self):
+        """Access to embedding model (for backward compatibility)."""
+        return self._semantic.embedding_model
+
+    @property
+    def content_embeddings(self):
+        """Access to content embeddings cache (for backward compatibility)."""
+        return self._semantic.content_embeddings
+
+    def _calculate_score(self, item, query_lower: str, query_keywords: set) -> float:
+        """Calculate keyword score (for backward compatibility)."""
+        return self._keyword.calculate_score(item, query_lower, query_keywords)
+
+
+# Global instance
+search_service = SearchService()

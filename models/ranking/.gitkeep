@@ -1,0 +1,2 @@
+# This directory stores trained ranking models
+# Models are created by: python scripts/train_ranking_model.py
