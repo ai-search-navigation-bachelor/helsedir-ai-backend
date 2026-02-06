@@ -37,6 +37,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     restart: unless-stopped
 
 volumes:
