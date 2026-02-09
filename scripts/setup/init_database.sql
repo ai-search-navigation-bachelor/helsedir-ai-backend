@@ -15,6 +15,7 @@ USE helsedir_ai;
 -- Content Table
 -- ============================================================
 -- Stores health content from Helsedirektoratet with embeddings
+-- Also stores theme pages (info_type='temaside') for navigation hierarchy
 CREATE TABLE IF NOT EXISTS content (
     id VARCHAR(100) PRIMARY KEY,
     tittel TEXT NOT NULL,
@@ -24,9 +25,33 @@ CREATE TABLE IF NOT EXISTS content (
     maalgruppe JSON,
     links JSON,
     embedding BLOB,
+
+    -- Theme page fields (only used when info_type='temaside')
+    path VARCHAR(500),
+
     INDEX idx_info_type (info_type),
+    INDEX idx_path (path(255)),
     FULLTEXT INDEX idx_tittel (tittel),
     FULLTEXT INDEX idx_tekst (tekst)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- Theme Page Content Junction Table
+-- ============================================================
+-- Links theme pages to their associated content items
+-- Allows many-to-many relationship (one content can appear on multiple theme pages)
+CREATE TABLE IF NOT EXISTS theme_page_content (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    theme_page_id VARCHAR(100) NOT NULL,
+    content_id VARCHAR(100) NOT NULL,
+    display_order INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (theme_page_id) REFERENCES content(id) ON DELETE CASCADE,
+    FOREIGN KEY (content_id) REFERENCES content(id) ON DELETE CASCADE,
+    INDEX idx_theme_page (theme_page_id),
+    INDEX idx_content (content_id),
+    UNIQUE KEY unique_theme_content (theme_page_id, content_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
