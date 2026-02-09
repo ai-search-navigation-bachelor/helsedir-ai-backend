@@ -215,6 +215,39 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_theme_page_content(self, theme_page_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all content linked to a theme page via the junction table.
+
+        Args:
+            theme_page_id: ID of the theme page
+
+        Returns:
+            List of content items with their metadata
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT c.* FROM content c
+                INNER JOIN theme_page_content tpc ON c.id = tpc.content_id
+                WHERE tpc.theme_page_id = %s
+                ORDER BY tpc.display_order, c.tittel
+                """,
+                (theme_page_id,)
+            )
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            print(f"Error getting theme page content: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
 
 # Global instance
 content_repository = ContentRepository()

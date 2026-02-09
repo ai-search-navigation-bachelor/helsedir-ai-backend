@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
 
+class GroupedContent(BaseModel):
+    """Content grouped by info_type under a theme page."""
+    info_type: str
+    display_name: str
+    items: List['SearchResult']
+
+
 class SearchResult(BaseModel):
     """Single search result."""
     id: str
@@ -13,6 +20,7 @@ class SearchResult(BaseModel):
     info_type: str
     score: float  # Normalized 0-1
     explanation: str
+    children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
 
 
 class SearchResponse(BaseModel):
