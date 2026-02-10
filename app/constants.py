@@ -11,27 +11,43 @@ Centralized location for configuration values used across the application.
 # Content with other types is filtered out from search results.
 
 CATEGORY_INFO = {
-    "anbefaling": "Anbefalinger",
-    "arrangement": "Arrangementer",
-    "artikkel": "Artikler",
-    "fil": "Filer",
-    "generisk-normerende-enhet": "Generiske normerende enheter",
-    "generisk-produkt": "Generiske produkter",
-    "horing": "Høringer",
-    "informasjon": "Informasjon",
-    "lov-eller-forskriftstekst-med-kommentar": "Lov/forskrift med kommentar",
-    "nasjonalt-forlop": "Nasjonale forløp",
-    "nyhet": "Nyheter",
-    "pakkeforlop-anbefaling": "Pakkeforløp-anbefalinger",
+    # Retningslinjer
+    "retningslinje": "Retningslinje",
+    "nasjonalt-forlop": "Nasjonalt forløp",
+    "pakkeforlop-anbefaling": "Pakkeforløp-anbefaling",
+    "normen-dokument": "Normen-dokument",
+    "nasjonal-veileder": "Nasjonal veileder",
+    "prioriteringsveileder": "Prioriteringsveileder",
+
+    # Faglige råd
+    "anbefaling": "Anbefaling",
     "rad": "Råd",
-    "rapport": "Rapporter",
-    "regelverk-lov-eller-forskrift": "Regelverk",
-    "retningslinje": "Retningslinjer",
+    "faglig-rad": "Faglig råd",
+    "pico": "PICO",
+
+    # Veiledere
+    "takst-med-merknad": "Takst med merknad",
+    "ehelsestandard": "E-helsestandard",
+    "tilskudd": "Tilskudd",
+    "veileder": "Veileder",
+    "veiledning": "Veiledning",
+
+    # Rundskriv
     "rundskriv": "Rundskriv",
+
+    # Lovfortolkning
+    "lov-eller-forskriftstekst-med-kommentar": "Lov/forskrift med kommentar",
+    "regelverk-lov-eller-forskrift": "Regelverk",
+    "veileder-lov-forskrift": "Veileder til lov og forskrift",
+    "paragraf-med-kommentar": "Paragraf med kommentar",
+
+    # Statistikk og rapporter
+    "rapport": "Rapport",
+    "statistikkelement": "Statistikkelement",
     "statistikk": "Statistikk",
-    "takst-med-merknad": "Takster med merknad",
-    "temaside": "Temasider",
-    "veileder-lov-forskrift": "Veiledere",
+
+    # Temasider (spesiell type)
+    "temaside": "Temaside",
 }
 
 # Derived from CATEGORY_INFO
