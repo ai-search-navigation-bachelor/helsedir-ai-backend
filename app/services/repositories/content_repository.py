@@ -22,10 +22,11 @@ class ContentRepository:
 
     def cache_content(self, content: Dict[str, Any]) -> bool:
         """
-        Cache a content item from Helsedir API.
+        Cache a content item from Helsedir API or theme page.
 
         Args:
             content: Content dict with id, tittel, tekst, koder, maalgruppe, etc.
+                     For theme pages: also includes path, info_type='temaside'
 
         Returns:
             True if cached successfully
@@ -40,19 +41,20 @@ class ContentRepository:
             koder_json = self._serialize_json_field(content.get("koder"))
             maalgruppe_json = self._serialize_json_field(content.get("maalgruppe"))
             links_json = self._serialize_json_field(content.get("links"))
-            info_type = content.get("infoType") or content.get("dokumentType")
+            info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links, path)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
                     koder = COALESCE(VALUES(koder), koder),
                     maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
-                    links = COALESCE(VALUES(links), links)
+                    links = COALESCE(VALUES(links), links),
+                    path = VALUES(path)
                 """,
                 (
                     content.get("id"),
@@ -62,6 +64,7 @@ class ContentRepository:
                     koder_json,
                     maalgruppe_json,
                     links_json,
+                    content.get("path"),
                 ),
             )
             conn.commit()
@@ -96,19 +99,20 @@ class ContentRepository:
                     koder_json = self._serialize_json_field(content.get("koder"))
                     maalgruppe_json = self._serialize_json_field(content.get("maalgruppe"))
                     links_json = self._serialize_json_field(content.get("links"))
-                    info_type = content.get("infoType") or content.get("dokumentType")
+                    info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
 
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links, path)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
                             info_type = VALUES(info_type),
                             koder = COALESCE(VALUES(koder), koder),
                             maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
-                            links = COALESCE(VALUES(links), links)
+                            links = COALESCE(VALUES(links), links),
+                            path = VALUES(path)
                         """,
                         (
                             content.get("id"),
@@ -118,6 +122,7 @@ class ContentRepository:
                             koder_json,
                             maalgruppe_json,
                             links_json,
+                            content.get("path"),
                         ),
                     )
                     cached += 1
@@ -205,6 +210,39 @@ class ContentRepository:
             return cursor.fetchall()
         except mysql.connector.Error as e:
             print(f"Error getting content stats by type: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_theme_page_content(self, theme_page_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all content linked to a theme page via the junction table.
+
+        Args:
+            theme_page_id: ID of the theme page
+
+        Returns:
+            List of content items with their metadata
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT c.* FROM content c
+                INNER JOIN theme_page_content tpc ON c.id = tpc.content_id
+                WHERE tpc.theme_page_id = %s
+                ORDER BY tpc.display_order, c.tittel
+                """,
+                (theme_page_id,)
+            )
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            print(f"Error getting theme page content: {e}")
             return []
         finally:
             cursor.close()
