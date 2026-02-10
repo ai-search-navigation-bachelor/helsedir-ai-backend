@@ -7,6 +7,7 @@ Handles business logic for search operations with pagination and ML feature logg
 import uuid
 import re
 import logging
+import difflib
 from typing import Optional, List, Dict
 from collections import defaultdict
 from fastapi import BackgroundTasks
@@ -16,11 +17,13 @@ from app.dto.response.search import (
     SearchResponse,
     CategoryResults,
     CategorizedSearchResponse,
+    GroupedContent,
 )
 from app.services.search.search_service import search_service
 from app.services.search.feature_extractor import feature_extractor
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
+from app.services.repositories.content_repository import content_repository
 from app.config import settings
 from app.constants import (
     is_priority_category,
@@ -78,6 +81,9 @@ class SearchController:
         # Coerce None to empty list
         if all_results is None:
             all_results = []
+
+        # Populate theme page children
+        all_results = self._populate_theme_page_children(all_results)
 
         total = len(all_results)
 
@@ -140,6 +146,9 @@ class SearchController:
 
         if all_results is None:
             all_results = []
+
+        # Populate theme page children
+        all_results = self._populate_theme_page_children(all_results)
 
         # Filter by minimum score
         min_score = settings.search_min_score
@@ -253,6 +262,9 @@ class SearchController:
         if all_results is None:
             all_results = []
 
+        # Populate theme page children
+        all_results = self._populate_theme_page_children(all_results)
+
         # Filter by minimum score and category
         min_score = settings.search_min_score
         category_lower = category.lower()
@@ -279,6 +291,151 @@ class SearchController:
             has_prev=False,
         )
 
+    def _search_theme_pages_fuzzy(self, query: str, fuzzy_threshold: float = 0.6) -> List[SearchResult]:
+        """
+        Search theme pages using fuzzy keyword matching.
+
+        Uses difflib for fuzzy string matching to handle typos.
+
+        Args:
+            query: Search query
+            fuzzy_threshold: Minimum similarity score (0-1)
+
+        Returns:
+            List of matching theme pages
+        """
+        query_lower = query.lower()
+        query_words = set(re.findall(r'\w+', query_lower))
+
+        results = []
+
+        # Get all theme pages
+        all_content = content_service.get_all_content()
+        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+
+        for theme_page in theme_pages:
+            title = theme_page.title.lower()
+            title_words = set(re.findall(r'\w+', title))
+
+            # Calculate fuzzy match score
+            max_score = 0.0
+
+            # Method 1: Word-by-word fuzzy matching
+            for query_word in query_words:
+                for title_word in title_words:
+                    # Use difflib's SequenceMatcher for fuzzy matching
+                    similarity = difflib.SequenceMatcher(None, query_word, title_word).ratio()
+                    max_score = max(max_score, similarity)
+
+            # Method 2: Full title fuzzy matching
+            full_title_similarity = difflib.SequenceMatcher(None, query_lower, title).ratio()
+            max_score = max(max_score, full_title_similarity)
+
+            # Method 3: Check if query is a substring of title (for partial matches)
+            if query_lower in title:
+                max_score = max(max_score, 0.9)
+
+            # If score exceeds threshold, add to results
+            if max_score >= fuzzy_threshold:
+                results.append(SearchResult(
+                    id=theme_page.id,
+                    title=theme_page.title,
+                    info_type='temaside',
+                    score=max_score,
+                    explanation=f"Fuzzy match: {int(max_score * 100)}%"
+                ))
+
+        # Sort by score descending
+        results.sort(key=lambda x: x.score, reverse=True)
+
+        return results
+
+    def _populate_theme_page_children(self, results: List[SearchResult]) -> List[SearchResult]:
+        """
+        Populate children for theme pages.
+
+        For each theme page result, fetch its linked content from the junction table
+        and group by info_type.
+
+        Args:
+            results: List of search results
+
+        Returns:
+            Same list with theme page children populated
+        """
+        for result in results:
+            if result.info_type.lower() == "temaside":
+                # Fetch linked content for this theme page
+                linked_content = content_repository.get_theme_page_content(result.id)
+
+                if not linked_content:
+                    continue
+
+                # Group by info_type
+                grouped: Dict[str, List[SearchResult]] = defaultdict(list)
+                for content in linked_content:
+                    info_type = content.get('info_type', '').lower()
+                    if not info_type:
+                        continue
+
+                    # Create SearchResult for child content
+                    child_result = SearchResult(
+                        id=content.get('id', ''),
+                        title=content.get('tittel', ''),
+                        info_type=info_type,
+                        score=1.0,  # Children inherit parent's relevance
+                        explanation=f"Under {result.title}"
+                    )
+                    grouped[info_type].append(child_result)
+
+                # Convert grouped dict to GroupedContent list
+                children = []
+                for info_type, items in sorted(grouped.items()):
+                    children.append(GroupedContent(
+                        info_type=info_type,
+                        display_name=get_category_display_name(info_type),
+                        items=items
+                    ))
+
+                result.children = children
+
+        return results
+
+    def _merge_theme_page_results(
+        self,
+        regular_results: List[SearchResult],
+        theme_page_results: List[SearchResult]
+    ) -> List[SearchResult]:
+        """
+        Merge theme page results with regular results.
+
+        Removes duplicates and sorts by score.
+
+        Args:
+            regular_results: Results from regular search
+            theme_page_results: Results from fuzzy theme page search
+
+        Returns:
+            Merged and deduplicated results
+        """
+        # Create a dict to avoid duplicates (using id as key)
+        merged = {}
+
+        # Add regular results first
+        for result in regular_results:
+            merged[result.id] = result
+
+        # Add theme page results (override if better score)
+        for result in theme_page_results:
+            if result.id not in merged or result.score > merged[result.id].score:
+                merged[result.id] = result
+
+        # Convert back to list and sort by score
+        merged_list = list(merged.values())
+        merged_list.sort(key=lambda x: x.score, reverse=True)
+
+        return merged_list
+
     def _execute_search(
         self,
         query: str,
@@ -286,13 +443,26 @@ class SearchController:
         method: str,
         max_results: int
     ) -> List[SearchResult]:
-        """Execute the appropriate search method."""
+        """Execute the appropriate search method and include fuzzy theme page matching."""
+        # Execute regular search
         if method == "semantic":
-            return self.search_service.search_semantic(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
         elif method == "keyword":
-            return self.search_service.search(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search(query=query, role=role, k=max_results)
         else:  # hybrid
-            return self.search_service.search_hybrid(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_hybrid(query=query, role=role, k=max_results)
+
+        # Coerce None to empty list
+        if regular_results is None:
+            regular_results = []
+
+        # Search theme pages with fuzzy matching
+        theme_page_results = self._search_theme_pages_fuzzy(query, fuzzy_threshold=0.6)
+
+        # Merge results
+        merged_results = self._merge_theme_page_results(regular_results, theme_page_results)
+
+        return merged_results
 
     def _handle_search_id(
         self,

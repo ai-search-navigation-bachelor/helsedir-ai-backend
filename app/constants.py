@@ -30,6 +30,7 @@ CATEGORY_INFO = {
     "rundskriv": "Rundskriv",
     "statistikk": "Statistikk",
     "takst-med-merknad": "Takster med merknad",
+    "temaside": "Temasider",
     "veileder-lov-forskrift": "Veiledere",
 }
 
@@ -59,8 +60,8 @@ def get_category_display_name(info_type: str) -> str:
 # They are displayed at the top of the search results page.
 
 PRIORITY_CATEGORIES = [
+    "temaside",  # Theme pages shown first with all results
     "retningslinje",
-    # "temaside",  # TODO: Add when temaside is implemented
 ]
 
 PRIORITY_CATEGORIES_SET = set(PRIORITY_CATEGORIES)

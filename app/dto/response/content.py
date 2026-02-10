@@ -15,6 +15,20 @@ class ContentLinkResponse(BaseModel):
     strukturId: Optional[str] = None
 
 
+class LinkedContentItem(BaseModel):
+    """A single linked content item under a theme page."""
+    id: str
+    title: str
+    info_type: str
+
+
+class GroupedLinkedContent(BaseModel):
+    """Linked content grouped by info_type."""
+    info_type: str
+    display_name: str
+    items: List[LinkedContentItem]
+
+
 class ContentResponse(BaseModel):
     """Response model for content endpoint."""
     id: str
@@ -23,3 +37,4 @@ class ContentResponse(BaseModel):
     content_type: str
     target_groups: List[str] = []
     links: List[ContentLinkResponse] = []
+    linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
