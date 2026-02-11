@@ -352,10 +352,10 @@ class SearchController:
 
     def _populate_theme_page_children(self, results: List[SearchResult]) -> List[SearchResult]:
         """
-        Populate children for theme pages.
+        Populate children for theme pages using batch query (performance optimized).
 
         For each theme page result, fetch its linked content from the junction table
-        and group by info_type.
+        and group by info_type. Uses a single database query for all theme pages.
 
         Args:
             results: List of search results
@@ -363,41 +363,51 @@ class SearchController:
         Returns:
             Same list with theme page children populated
         """
-        for result in results:
-            if result.info_type.lower() == "temaside":
-                # Fetch linked content for this theme page
-                linked_content = content_repository.get_theme_page_content(result.id)
+        # Collect all theme page IDs
+        theme_page_ids = [r.id for r in results if r.info_type.lower() == "temaside"]
 
-                if not linked_content:
+        if not theme_page_ids:
+            return results  # No theme pages, nothing to do
+
+        # Fetch all children in ONE database query (much faster!)
+        all_children = content_repository.get_theme_pages_content_batch(theme_page_ids)
+
+        # Populate each theme page with its children
+        for result in results:
+            if result.info_type.lower() != "temaside":
+                continue
+
+            linked_content = all_children.get(result.id, [])
+            if not linked_content:
+                continue
+
+            # Group by info_type
+            grouped: Dict[str, List[SearchResult]] = defaultdict(list)
+            for content in linked_content:
+                info_type = content.get('info_type', '').lower()
+                if not info_type:
                     continue
 
-                # Group by info_type
-                grouped: Dict[str, List[SearchResult]] = defaultdict(list)
-                for content in linked_content:
-                    info_type = content.get('info_type', '').lower()
-                    if not info_type:
-                        continue
+                # Create SearchResult for child content
+                child_result = SearchResult(
+                    id=content.get('id', ''),
+                    title=content.get('tittel', ''),
+                    info_type=info_type,
+                    score=1.0,  # Children inherit parent's relevance
+                    explanation=f"Under {result.title}"
+                )
+                grouped[info_type].append(child_result)
 
-                    # Create SearchResult for child content
-                    child_result = SearchResult(
-                        id=content.get('id', ''),
-                        title=content.get('tittel', ''),
-                        info_type=info_type,
-                        score=1.0,  # Children inherit parent's relevance
-                        explanation=f"Under {result.title}"
-                    )
-                    grouped[info_type].append(child_result)
+            # Convert grouped dict to GroupedContent list
+            children = []
+            for info_type, items in sorted(grouped.items()):
+                children.append(GroupedContent(
+                    info_type=info_type,
+                    display_name=get_category_display_name(info_type),
+                    items=items
+                ))
 
-                # Convert grouped dict to GroupedContent list
-                children = []
-                for info_type, items in sorted(grouped.items()):
-                    children.append(GroupedContent(
-                        info_type=info_type,
-                        display_name=get_category_display_name(info_type),
-                        items=items
-                    ))
-
-                result.children = children
+            result.children = children
 
         return results
 

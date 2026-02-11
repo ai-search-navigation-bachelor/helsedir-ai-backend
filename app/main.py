@@ -37,6 +37,28 @@ async def startup_event():
     print(f"Database: {settings.mysql_database} @ {settings.mysql_host}:{settings.mysql_port}")
     print(f"ML models directory: {settings.ml_models_dir}")
 
+    # Pre-load embeddings if enabled
+    if settings.ml_embedding_enabled:
+        print("\nPre-loading embeddings...")
+        from app.services.search.semantic_search import semantic_search
+
+        # Load model
+        if semantic_search.load_embedding_model():
+            # Force load the actual transformer model (not just initialize)
+            if semantic_search.embedding_model:
+                semantic_search.embedding_model._load_model()
+            print("✓ Embedding model loaded")
+        else:
+            print("✗ Failed to load embedding model")
+
+        # Load embeddings into cache
+        if semantic_search.load_content_embeddings():
+            print(f"✓ Loaded {len(semantic_search.content_embeddings)} embeddings into cache")
+        else:
+            print("✗ Failed to load embeddings")
+    else:
+        print("\nEmbedding search disabled (ML_EMBEDDING_ENABLED=false)")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

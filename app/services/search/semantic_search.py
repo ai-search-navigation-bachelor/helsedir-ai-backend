@@ -120,7 +120,7 @@ class SemanticSearch:
         k: int = 10
     ) -> List[SearchResult]:
         """
-        Perform semantic search using E5 embeddings.
+        Perform semantic search using E5 embeddings (vectorized).
 
         Returns empty list if embeddings not available.
         """
@@ -131,26 +131,39 @@ class SemanticSearch:
         if query_embedding is None:
             return []
 
-        # Calculate similarities
-        similarities = []
+        # Pre-filter content items and prepare for vectorized operations
+        valid_items = []
+        valid_embeddings = []
+
         for item in content_service.get_all_content():
+            # Filter by info_type
             if not is_allowed_info_type(item.content_type):
                 continue
 
+            # Filter by role
             if role and role not in item.target_groups:
                 continue
 
+            # Check if embedding exists
             if item.id in self.content_embeddings:
-                doc_embedding = self.content_embeddings[item.id]
-                similarity = float(np.dot(query_embedding, doc_embedding))
-                similarities.append((item, similarity))
+                valid_items.append(item)
+                valid_embeddings.append(self.content_embeddings[item.id])
 
-        # Sort by similarity
-        similarities.sort(key=lambda x: -x[1])
+        if not valid_embeddings:
+            return []
 
-        # Normalize scores (semantic scores are already -1 to 1, normalize to 0-1)
+        # Vectorized similarity calculation (much faster than loop)
+        embeddings_matrix = np.vstack(valid_embeddings)  # Shape: (n_docs, 768)
+        similarities = np.dot(embeddings_matrix, query_embedding)  # Shape: (n_docs,)
+
+        # Get top-k indices (argsort returns ascending, so reverse)
+        top_k_indices = np.argsort(similarities)[-k:][::-1]
+
+        # Build results
         results = []
-        for item, sem_score in similarities[:k]:
+        for idx in top_k_indices:
+            item = valid_items[idx]
+            sem_score = float(similarities[idx])
             norm_score = (sem_score + 1) / 2
             results.append(
                 SearchResult(
