@@ -5,13 +5,23 @@ Fine-tune embedding model using GPL (Generative Pseudo Labeling).
 GPL uses an LLM to generate synthetic queries for each document, then trains
 the embedding model contrastively to match queries to their source documents.
 
+Recommended workflow:
+    1. Generate queries: python scripts/data/generate_queries.py
+    2. Train model: python scripts/train/finetune_gpl.py
+
+Features:
+- Uses cached queries by default (from data/gpl_queries.json)
+- Automatically filters out 'temaside' content (has its own system)
+- Can generate queries inline with --generate-queries flag
+
 Usage:
-    python scripts/train/finetune_gpl.py
-    python scripts/train/finetune_gpl.py --queries-per-doc 5
-    python scripts/train/finetune_gpl.py --skip-generation  # Use cached queries
+    python scripts/train/finetune_gpl.py                     # Use cached queries (default)
+    python scripts/train/finetune_gpl.py --generate-queries  # Generate queries inline
+    python scripts/train/finetune_gpl.py --epochs 10         # Train for 10 epochs
 
 Requirements:
-    GROQ_API_KEY in .env (free from https://console.groq.com/keys)
+    - Queries: Run scripts/data/generate_queries.py first (or use --generate-queries)
+    - GROQ_API_KEY in .env (only needed with --generate-queries flag)
 """
 
 import argparse
@@ -88,13 +98,57 @@ Returner kun søkefrasene, én per linje:"""
         text = data["choices"][0]["message"]["content"].strip()
         queries = [q.strip() for q in text.split("\n") if q.strip()]
 
-        # Clean up
+        # Clean up and filter
         cleaned = []
-        for q in queries[:num_queries]:
-            q = q.lstrip("0123456789.-) ")
-            q = q.strip('"\'')
-            if len(q) > 2 and len(q) < 100:
-                cleaned.append(q)
+        skip_phrases = [
+            "her er",
+            "søkeord",
+            "fraser",
+            "følgende",
+            "liste",
+            "kunne brukt",
+            "ville brukt",
+            "for å finne",
+        ]
+
+        for q in queries:
+            # Remove numbering, bullets, and leading symbols
+            q = q.lstrip("0123456789.-) *•")
+
+            # Remove "Søk etter" prefix (case insensitive)
+            if q.lower().startswith("søk etter "):
+                q = q[10:]  # Remove "Søk etter "
+
+            # Strip quotes and whitespace
+            q = q.strip('"\'').strip()
+
+            # Skip if empty after cleaning
+            if not q:
+                continue
+
+            # Skip if too long (likely explanation text, not a search query)
+            if len(q) > 100:
+                continue
+
+            # Skip if contains colon (likely a label/header like "Her er søkeordene:")
+            if ":" in q:
+                continue
+
+            # Skip if starts with quote but doesn't end with quote (incomplete)
+            if (q.startswith('"') and not q.endswith('"')) or \
+               (q.startswith("'") and not q.endswith("'")):
+                continue
+
+            # Skip if contains common intro phrases (case insensitive)
+            q_lower = q.lower()
+            if any(phrase in q_lower for phrase in skip_phrases):
+                continue
+
+            cleaned.append(q)
+
+            # Stop when we have enough
+            if len(cleaned) >= num_queries:
+                break
 
         return cleaned
 
@@ -113,9 +167,19 @@ def load_or_generate_queries(
     """
     Load cached queries or generate new ones.
 
+    Filters out 'temaside' content type (has its own system).
+    Generates missing queries to reach queries_per_doc target.
+
     Returns:
         Dict mapping content_id to list of queries
     """
+    # Filter out temasider (they have their own system)
+    content_items = [
+        item for item in content_items
+        if item.get("info_type", "").lower() != "temaside"
+    ]
+    print(f"Filtered content: {len(content_items)} documents (excluding temasider)")
+
     # Try to load from cache
     if cache_path.exists():
         print(f"Loading cached queries from {cache_path}")
@@ -124,54 +188,75 @@ def load_or_generate_queries(
 
         if skip_generation:
             return cached
-
-        # Check if we have queries for all items
-        missing = [item for item in content_items if str(item["id"]) not in cached]
-        if not missing:
-            print(f"  All {len(cached)} documents have cached queries")
-            return cached
-        print(f"  Found {len(cached)} cached, {len(missing)} missing")
     else:
         cached = {}
-        missing = content_items
 
     if skip_generation:
         print("Skipping generation, using only cached queries")
         return cached
 
-    # Generate queries for missing documents
-    print(f"\nGenerating queries for {len(missing)} documents...")
-    print(f"  Queries per document: {queries_per_doc}")
+    # Find documents that need more queries
+    items_needing_queries = []
+    for item in content_items:
+        content_id = str(item["id"])
+        existing_queries = cached.get(content_id, [])
+
+        if len(existing_queries) < queries_per_doc:
+            # Store how many more queries we need
+            item["_queries_needed"] = queries_per_doc - len(existing_queries)
+            items_needing_queries.append(item)
+
+    if not items_needing_queries:
+        print(f"  All {len(cached)} documents have {queries_per_doc}+ queries")
+        return cached
+
+    total_needed = sum(item["_queries_needed"] for item in items_needing_queries)
+    print(f"\n  Documents with <{queries_per_doc} queries: {len(items_needing_queries)}")
+    print(f"  Total queries to generate: {total_needed}")
+
+    # Generate queries for documents needing more
+    print(f"\nGenerating missing queries...")
     print(f"  Using: Groq API (llama-3.1-8b-instant)")
 
     from app.ml.embedding_model import HealthContentEmbedding
 
     failed = 0
-    for i, item in enumerate(missing):
+    generated_count = 0
+
+    for i, item in enumerate(items_needing_queries):
         content_id = str(item["id"])
         title = item.get("tittel") or item.get("title") or ""
         body = item.get("tekst") or item.get("body") or ""
         info_type = item.get("info_type") or ""
+        queries_needed = item["_queries_needed"]
+
+        # Get existing queries (if any)
+        existing_queries = cached.get(content_id, [])
 
         # Clean body
         if body:
             body = HealthContentEmbedding.strip_html_tags(body)
 
-        # Generate queries
-        queries = generate_queries_with_groq(
+        # Generate only the missing queries
+        new_queries = generate_queries_with_groq(
             api_key=api_key,
             title=title,
             body=body,
             info_type=info_type,
-            num_queries=queries_per_doc,
+            num_queries=queries_needed,
         )
 
-        if queries:
-            cached[content_id] = queries
+        if new_queries:
+            # Append to existing queries
+            cached[content_id] = existing_queries + new_queries
+            generated_count += len(new_queries)
+
             # Print first few to verify quality
-            if len(cached) <= 3:
-                print(f"\n  Doc {len(cached)}: {title[:60]}")
-                for q in queries:
+            if generated_count <= 10:
+                action = "Added" if existing_queries else "Generated"
+                print(f"\n  {action} {len(new_queries)} queries for: {title[:60]}")
+                print(f"    (had {len(existing_queries)}, now {len(cached[content_id])})")
+                for q in new_queries[:3]:
                     print(f"    -> {q}")
         else:
             failed += 1
@@ -180,7 +265,7 @@ def load_or_generate_queries(
 
         # Progress
         if (i + 1) % 10 == 0:
-            print(f"  [{i + 1}/{len(missing)}] Generated: {len(cached)}, Failed: {failed}")
+            print(f"  [{i + 1}/{len(items_needing_queries)}] Generated: {generated_count}, Failed: {failed}")
             # Save intermediate results
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(cached, f, ensure_ascii=False, indent=2)
@@ -192,7 +277,10 @@ def load_or_generate_queries(
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(cached, f, ensure_ascii=False, indent=2)
 
-    print(f"\n  Done! Generated: {len(cached)}, Failed: {failed}")
+    print(f"\n  Done!")
+    print(f"  Total documents: {len(cached)}")
+    print(f"  New queries generated: {generated_count}")
+    print(f"  Failed: {failed}")
     print(f"  Saved to {cache_path}")
     return cached
 
@@ -357,9 +445,9 @@ def main():
         help="Training batch size",
     )
     parser.add_argument(
-        "--skip-generation",
+        "--generate-queries",
         action="store_true",
-        help="Skip query generation, use only cached queries",
+        help="Generate queries inline (default: use cached queries from data/gpl_queries.json)",
     )
     args = parser.parse_args()
 
@@ -381,8 +469,8 @@ def main():
         print("Error: Cannot connect to database")
         sys.exit(1)
 
-    # Check Groq API key
-    if not args.skip_generation:
+    # Check Groq API key (only if generating queries inline)
+    if args.generate_queries:
         if not settings.groq_api_key:
             print("Error: GROQ_API_KEY not configured in .env")
             print("Get a free key at: https://console.groq.com/keys")
@@ -402,8 +490,8 @@ def main():
         content_items,
         cache_path,
         args.queries_per_doc,
-        args.skip_generation,
-        api_key=settings.groq_api_key,
+        skip_generation=not args.generate_queries,  # Skip by default
+        api_key=settings.groq_api_key if args.generate_queries else "",
     )
 
     if not queries:
