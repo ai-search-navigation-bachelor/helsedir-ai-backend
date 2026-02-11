@@ -248,6 +248,52 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_theme_pages(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all theme pages, optionally filtered by category.
+
+        Args:
+            category: Optional category slug to filter by (e.g., 'forebygging-diagnose-og-behandling')
+
+        Returns:
+            List of theme page items ordered by title
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+
+            if category:
+                # Filter by category using path prefix
+                cursor.execute(
+                    """
+                    SELECT * FROM content
+                    WHERE info_type = 'temaside'
+                    AND path LIKE %s
+                    ORDER BY tittel
+                    """,
+                    (f"/{category}%",)
+                )
+            else:
+                # Get all theme pages
+                cursor.execute(
+                    """
+                    SELECT * FROM content
+                    WHERE info_type = 'temaside'
+                    ORDER BY tittel
+                    """
+                )
+
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            print(f"Error getting theme pages: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
 
 # Global instance
 content_repository = ContentRepository()

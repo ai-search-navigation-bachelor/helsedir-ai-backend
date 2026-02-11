@@ -81,3 +81,17 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
     answer: str
     sources: List[ChatSource]
+
+
+class ThemePageResult(BaseModel):
+    """Single theme page result."""
+    id: str
+    title: str
+    info_type: str
+    path: str
+
+
+class ThemePageResponse(BaseModel):
+    """Response model for theme page listing endpoint."""
+    results: List[ThemePageResult]
+    total: int

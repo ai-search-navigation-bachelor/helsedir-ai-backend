@@ -88,3 +88,36 @@ def is_priority_category(info_type: str) -> bool:
     if not info_type:
         return False
     return info_type.lower() in PRIORITY_CATEGORIES_SET
+
+
+# =============================================================================
+# Theme Page Categories (Temaside)
+# =============================================================================
+# Maps theme page category slugs to Norwegian display names
+# Categories are determined by the first segment of the theme page path
+
+THEME_PAGE_CATEGORIES = {
+    "forebygging-diagnose-og-behandling": "Forebygging, diagnose og behandling",
+    "digitalisering-og-e-helse": "Digitalisering og e-helse",
+    "lov-og-forskrift": "Lov og forskrift",
+    "helseberedskap": "Helseberedskap",
+    "autorisasjon-og-spesialistutdanning": "Autorisasjon og spesialistutdanning",
+    "tilskudd-og-finansiering": "Tilskudd og finansiering",
+    "statistikk-registre-og-rapporter": "Statistikk, registre og rapporter",
+}
+
+THEME_PAGE_CATEGORIES_SET = set(THEME_PAGE_CATEGORIES.keys())
+
+
+def is_valid_theme_category(category: str) -> bool:
+    """Check if a category slug is valid for theme pages."""
+    if not category:
+        return False
+    return category.lower() in THEME_PAGE_CATEGORIES_SET
+
+
+def get_theme_category_display_name(category: str) -> str:
+    """Get the Norwegian display name for a theme category."""
+    if not category:
+        return "Ukjent"
+    return THEME_PAGE_CATEGORIES.get(category.lower(), category.title())

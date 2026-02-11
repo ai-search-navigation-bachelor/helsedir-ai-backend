@@ -50,3 +50,8 @@ class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     question: str = Field(..., min_length=1)
     role: Optional[str] = None
+
+
+class ThemePageRequest(BaseModel):
+    """Request model for theme page listing endpoint."""
+    category: Optional[str] = Field(None, description="Filter by theme category (e.g., 'forebygging-diagnose-og-behandling')")

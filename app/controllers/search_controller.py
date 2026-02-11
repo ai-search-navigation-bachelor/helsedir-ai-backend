@@ -82,9 +82,6 @@ class SearchController:
         if all_results is None:
             all_results = []
 
-        # Populate theme page children
-        all_results = self._populate_theme_page_children(all_results)
-
         total = len(all_results)
 
         # Clamp offset to not exceed result length
@@ -92,6 +89,9 @@ class SearchController:
 
         # Apply pagination
         page_results = all_results[offset:offset + limit]
+
+        # Populate theme page children AFTER pagination
+        page_results = self._populate_theme_page_children(page_results)
 
         # Handle search_id (new search vs pagination)
         search_id = self._handle_search_id(search_id, query, role)
@@ -493,6 +493,45 @@ class SearchController:
                 )
 
         return search_id
+
+    async def get_theme_pages(
+        self,
+        category: Optional[str] = None,
+    ):
+        """
+        Get all theme pages, optionally filtered by category.
+
+        Args:
+            category: Optional category slug (e.g., 'forebygging-diagnose-og-behandling')
+
+        Returns:
+            ThemePageResponse with all theme pages
+        """
+        from app.dto.response.search import ThemePageResponse, ThemePageResult
+
+        # Validate category if provided
+        if category:
+            from app.constants import is_valid_theme_category
+            if not is_valid_theme_category(category):
+                raise ValueError(f"Invalid theme category: {category}")
+
+        # Get theme pages from repository
+        theme_pages = content_repository.get_theme_pages(category=category)
+
+        # Convert to ThemePageResult objects
+        results = []
+        for item in theme_pages:
+            results.append(ThemePageResult(
+                id=item.get('id', ''),
+                title=item.get('tittel', ''),
+                info_type='temaside',
+                path=item.get('path', ''),
+            ))
+
+        return ThemePageResponse(
+            results=results,
+            total=len(results),
+        )
 
     def _log_results(
         self,

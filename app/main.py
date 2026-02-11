@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 # Import routers
-from app.routes import health, search, logging, helsedir, content
+from app.routes import health, search, logging, helsedir, content, temaside
 
 # Create FastAPI app
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(search.router)
 app.include_router(content.router)
 app.include_router(logging.router)
 app.include_router(helsedir.router)
+app.include_router(temaside.router)
 
 
 @app.on_event("startup")
