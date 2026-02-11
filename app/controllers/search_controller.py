@@ -18,6 +18,7 @@ from app.dto.response.search import (
     CategoryResults,
     CategorizedSearchResponse,
     GroupedContent,
+    ThemePageResponse,
 )
 from app.services.search.search_service import search_service
 from app.services.search.feature_extractor import feature_extractor
@@ -507,7 +508,7 @@ class SearchController:
     async def get_theme_pages(
         self,
         category: Optional[str] = None,
-    ):
+    ) -> ThemePageResponse:
         """
         Get all theme pages, optionally filtered by category.
 

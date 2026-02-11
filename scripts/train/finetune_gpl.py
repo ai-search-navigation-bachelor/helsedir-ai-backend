@@ -119,9 +119,6 @@ Returner kun søkefrasene, én per linje:"""
             if q.lower().startswith("søk etter "):
                 q = q[10:]  # Remove "Søk etter "
 
-            # Strip quotes and whitespace
-            q = q.strip('"\'').strip()
-
             # Skip if empty after cleaning
             if not q:
                 continue
@@ -134,9 +131,11 @@ Returner kun søkefrasene, én per linje:"""
             if ":" in q:
                 continue
 
-            # Skip if starts with quote but doesn't end with quote (incomplete)
-            if (q.startswith('"') and not q.endswith('"')) or \
-               (q.startswith("'") and not q.endswith("'")):
+            # Strip quotes and whitespace (do this after other checks)
+            q = q.strip('"\'').strip()
+
+            # Skip if empty after stripping quotes
+            if not q:
                 continue
 
             # Skip if contains common intro phrases (case insensitive)

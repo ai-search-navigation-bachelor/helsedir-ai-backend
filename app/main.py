@@ -42,20 +42,24 @@ async def startup_event():
         print("\nPre-loading embeddings...")
         from app.services.search.semantic_search import semantic_search
 
-        # Load model
-        if semantic_search.load_embedding_model():
-            # Force load the actual transformer model (not just initialize)
-            if semantic_search.embedding_model:
-                semantic_search.embedding_model._load_model()
-            print("✓ Embedding model loaded")
-        else:
-            print("✗ Failed to load embedding model")
+        try:
+            # Load model
+            if semantic_search.load_embedding_model():
+                # Force load the actual transformer model (not just initialize)
+                if semantic_search.embedding_model:
+                    semantic_search.embedding_model._load_model()
+                print("✓ Embedding model loaded")
+            else:
+                print("✗ Failed to load embedding model")
 
-        # Load embeddings into cache
-        if semantic_search.load_content_embeddings():
-            print(f"✓ Loaded {len(semantic_search.content_embeddings)} embeddings into cache")
-        else:
-            print("✗ Failed to load embeddings")
+            # Load embeddings into cache
+            if semantic_search.load_content_embeddings():
+                print(f"✓ Loaded {len(semantic_search.content_embeddings)} embeddings into cache")
+            else:
+                print("✗ Failed to load embeddings")
+        except Exception as e:
+            print(f"✗ Error loading embeddings: {e}")
+            print("  App will start without semantic search")
     else:
         print("\nEmbedding search disabled (ML_EMBEDDING_ENABLED=false)")
 

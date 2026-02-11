@@ -265,6 +265,7 @@ class ContentRepository:
         if not conn:
             return {}
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
 
@@ -293,8 +294,10 @@ class ContentRepository:
             print(f"Error getting theme pages content batch: {e}")
             return {}
         finally:
-            cursor.close()
-            conn.close()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
     def get_theme_pages(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -310,6 +313,7 @@ class ContentRepository:
         if not conn:
             return []
 
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
 
@@ -339,8 +343,10 @@ class ContentRepository:
             print(f"Error getting theme pages: {e}")
             return []
         finally:
-            cursor.close()
-            conn.close()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
 
 # Global instance
