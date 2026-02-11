@@ -39,7 +39,7 @@ logs/*.jsonl
 logs/*.log
 
 # Data
-data/
+/data/
 *.pkl
 *.npy
 

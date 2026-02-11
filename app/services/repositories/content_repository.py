@@ -248,6 +248,106 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_theme_pages_content_batch(self, theme_page_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get all content linked to multiple theme pages in a single query (batch operation).
+
+        Args:
+            theme_page_ids: List of theme page IDs
+
+        Returns:
+            Dict mapping theme_page_id -> list of linked content items
+        """
+        if not theme_page_ids:
+            return {}
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return {}
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+
+            # Use IN clause to fetch all at once
+            placeholders = ','.join(['%s'] * len(theme_page_ids))
+            query = f"""
+                SELECT tpc.theme_page_id, c.*
+                FROM content c
+                INNER JOIN theme_page_content tpc ON c.id = tpc.content_id
+                WHERE tpc.theme_page_id IN ({placeholders})
+                ORDER BY tpc.theme_page_id, tpc.display_order, c.tittel
+            """
+            cursor.execute(query, tuple(theme_page_ids))
+            rows = cursor.fetchall()
+
+            # Group by theme_page_id
+            result = {theme_id: [] for theme_id in theme_page_ids}
+            for row in rows:
+                theme_id = row.pop('theme_page_id')
+                if theme_id in result:
+                    result[theme_id].append(row)
+
+            return result
+
+        except mysql.connector.Error as e:
+            print(f"Error getting theme pages content batch: {e}")
+            return {}
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+    def get_theme_pages(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all theme pages, optionally filtered by category.
+
+        Args:
+            category: Optional category slug to filter by (e.g., 'forebygging-diagnose-og-behandling')
+
+        Returns:
+            List of theme page items ordered by title
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+
+            if category:
+                # Filter by category using path prefix
+                cursor.execute(
+                    """
+                    SELECT * FROM content
+                    WHERE info_type = 'temaside'
+                    AND path LIKE %s
+                    ORDER BY tittel
+                    """,
+                    (f"/{category}%",)
+                )
+            else:
+                # Get all theme pages
+                cursor.execute(
+                    """
+                    SELECT * FROM content
+                    WHERE info_type = 'temaside'
+                    ORDER BY tittel
+                    """
+                )
+
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            print(f"Error getting theme pages: {e}")
+            return []
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
 
 # Global instance
 content_repository = ContentRepository()
