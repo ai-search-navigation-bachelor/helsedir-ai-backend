@@ -1,5 +1,5 @@
 """
-Theme page (temaside) route for listing theme pages.
+Theme pages route for listing theme pages.
 """
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -7,7 +7,7 @@ from app.dto.request.search import ThemePageRequest
 from app.dto.response.search import ThemePageResponse
 from app.controllers.search_controller import search_controller
 
-router = APIRouter(prefix="/temaside", tags=["temaside"])
+router = APIRouter(prefix="/theme-pages", tags=["theme-pages"])
 
 
 @router.get("", response_model=ThemePageResponse)
