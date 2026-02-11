@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Generate embeddings for all content using multilingual-e5-base and store in database.
+Generate embeddings for all content and store in database.
 
-This script uses the pre-trained intfloat/multilingual-e5-base model.
-No training required - generates embeddings directly.
+By default, uses the fine-tuned model (models/finetuned-e5-gpl) which is optimized
+for Norwegian health content. Falls back to base model if fine-tuned not available.
 
-By default, fetches linked content (barn, forelder, root, publikasjon) from
-Helsedirektoratet API to enrich all documents with related content.
+Fetches linked content (barn, forelder, root, publikasjon) from Helsedirektoratet API
+to enrich all documents with related content.
 
 Usage:
-    python scripts/data/generate_embeddings.py
-    python scripts/data/generate_embeddings.py --batch-size 16
-    python scripts/data/generate_embeddings.py --no-fetch-links  # Skip API calls
+    python scripts/data/generate_embeddings.py                                    # Use fine-tuned model
+    python scripts/data/generate_embeddings.py --batch-size 16                    # Adjust batch size
+    python scripts/data/generate_embeddings.py --no-fetch-links                   # Skip API calls (faster)
+    python scripts/data/generate_embeddings.py --model-name intfloat/multilingual-e5-base  # Use base model
 """
 
 import argparse
@@ -233,8 +234,8 @@ def main():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="intfloat/multilingual-e5-base",
-        help="Model name (HuggingFace) or local path (e.g., models/finetuned-e5-tsdae)",
+        default="models/finetuned-e5-gpl",
+        help="Model name (HuggingFace) or local path. Default: models/finetuned-e5-gpl (fine-tuned). Use 'intfloat/multilingual-e5-base' for base model",
     )
     parser.add_argument(
         "--no-fetch-links",
@@ -267,9 +268,20 @@ def main():
         sys.exit(1)
 
     # Load E5 model (will download from HuggingFace first time)
-    print(f"\nLoading model: {args.model_name}")
+    model_name = args.model_name
+
+    # Check if fine-tuned model exists, fallback to base if not
+    if model_name.startswith("models/"):
+        model_path = Path(model_name)
+        if not model_path.exists():
+            print(f"\n⚠ Fine-tuned model not found at: {model_name}")
+            print("Falling back to base model: intfloat/multilingual-e5-base")
+            print("To train a fine-tuned model, run: python scripts/train/finetune_gpl.py")
+            model_name = "intfloat/multilingual-e5-base"
+
+    print(f"\nLoading model: {model_name}")
     print("(This may take a few minutes on first run...)")
-    model = HealthContentEmbedding(model_name=args.model_name)
+    model = HealthContentEmbedding(model_name=model_name)
 
     # Load content
     print("\nLoading content from database...")

@@ -2,13 +2,21 @@
 """
 Import content from Helsedirektoratet API to database.
 
-Usage:
-    python scripts/data/import_content.py                 # Default: 1000 items using search terms
-    python scripts/data/import_content.py --by-type       # Fetch by info type (ensures coverage)
-    python scripts/data/import_content.py --extended      # Use extended search terms (~120 terms)
-    python scripts/data/import_content.py --target 2000   # Fetch up to 2000 items
-    python scripts/data/import_content.py --no-links      # Skip fetching links (much faster)
-    python scripts/data/import_content.py --alphabet      # Search using alphabet (a-z, æøå)
+Note: Does not import 'temaside' type (only exists locally, not in API).
+
+Usage with --by-type (fetches directly by info_type, NO search terms used):
+    python scripts/data/import_content.py --by-type                # Fetch evenly distributed: 1000 total / 23 API types = ~43 per type
+    python scripts/data/import_content.py --by-type --target 1200  # Fetch 1200 total, evenly distributed (~52 per type)
+    python scripts/data/import_content.py --by-type --per-type 30  # Fetch 30 items per type (690 total)
+
+Usage with search terms (iterates through search terms until target reached):
+    python scripts/data/import_content.py                          # Default: 1000 items using 10 search terms
+    python scripts/data/import_content.py --extended               # Use extended search terms (~120 terms)
+    python scripts/data/import_content.py --target 2000            # Fetch up to 2000 items using search
+    python scripts/data/import_content.py --alphabet               # Search using alphabet (a-z, æøå)
+
+Other options:
+    python scripts/data/import_content.py --no-links               # Skip fetching links (much faster)
 """
 
 import argparse
@@ -26,6 +34,9 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
+
+# Info types to fetch from API (exclude temaside as it only exists locally)
+API_INFO_TYPES = [t for t in ALLOWED_INFO_TYPES if t != "temaside"]
 
 
 # Default search terms (quick import)
@@ -123,7 +134,8 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
     """
     Fetch content from Helsedir API by filtering on each info type.
 
-    This ensures balanced coverage across all allowed content types.
+    This ensures balanced coverage across all content types from the API.
+    Note: Excludes 'temaside' as it only exists locally, not in the API.
 
     Args:
         verbose: Whether to print progress
@@ -136,11 +148,11 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
     all_content = {}
     type_counts = defaultdict(int)
 
-    for i, info_type in enumerate(ALLOWED_INFO_TYPES, 1):
+    for i, info_type in enumerate(API_INFO_TYPES, 1):
         display_name = CATEGORY_INFO.get(info_type, info_type)
 
         if verbose:
-            print(f"\n[{i}/{len(ALLOWED_INFO_TYPES)}] Fetching: {display_name} ({info_type})...", flush=True)
+            print(f"\n[{i}/{len(API_INFO_TYPES)}] Fetching: {display_name} ({info_type})...", flush=True)
 
         try:
             # Filter by info type
@@ -224,7 +236,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
         print(f"\n\n{'='*50}")
         print("CONTENT BY TYPE:")
         print("="*50)
-        for info_type in ALLOWED_INFO_TYPES:
+        for info_type in API_INFO_TYPES:
             count = type_counts.get(info_type, 0)
             display = CATEGORY_INFO.get(info_type, info_type)
             print(f"  {display}: {count}")
@@ -426,18 +438,18 @@ def main():
         "--target",
         type=int,
         default=1000,
-        help="Target number of items to fetch (default: 1000, 0 = no limit)",
+        help="Target number of items total. With --by-type: distributed evenly across types. Without --by-type: total items from search (default: 1000, 0 = no limit)",
     )
     parser.add_argument(
         "--by-type",
         action="store_true",
-        help="Fetch by info type to ensure balanced coverage across all content types",
+        help="Fetch by info type to ensure balanced coverage. Use --target to set total (distributed evenly) or --per-type to set per-type count",
     )
     parser.add_argument(
         "--per-type",
         type=int,
-        default=50,
-        help="Target items per type when using --by-type (default: 50)",
+        default=None,
+        help="Items per type when using --by-type. If not set, --target is distributed evenly across all types",
     )
     parser.add_argument(
         "--quiet", "-q",
@@ -461,14 +473,29 @@ def main():
 
     target = args.target
 
+    # Calculate per-type target when using --by-type
+    if args.by_type:
+        if args.per_type is not None:
+            # Explicit per-type count
+            per_type_target = args.per_type
+            total_target = per_type_target * len(API_INFO_TYPES)
+        else:
+            # Distribute --target evenly across types (excluding temaside)
+            total_target = target
+            per_type_target = max(1, target // len(API_INFO_TYPES))
+    else:
+        per_type_target = 50  # Not used in search mode
+        total_target = target
+
     if verbose:
         print("=" * 50)
         print("HELSEDIR CONTENT IMPORT")
         print("=" * 50)
         if args.by_type:
             print(f"\nMode: By info type (balanced coverage)")
-            print(f"Target per type: {args.per_type}")
-            print(f"Info types: {len(ALLOWED_INFO_TYPES)}")
+            print(f"Info types from API: {len(API_INFO_TYPES)} (excludes 'temaside')")
+            print(f"Target per type: {per_type_target}")
+            print(f"Total target: ~{total_target}")
         else:
             print(f"\nSearch terms: {len(search_terms)}")
             print(f"Target items: {target if target > 0 else 'No limit'}")
@@ -490,7 +517,7 @@ def main():
         content_items = fetch_content_by_type(
             verbose=verbose,
             fetch_links=fetch_links,
-            target_per_type=args.per_type
+            target_per_type=per_type_target
         )
     else:
         content_items = fetch_content(search_terms, verbose=verbose, fetch_links=fetch_links, target=target)

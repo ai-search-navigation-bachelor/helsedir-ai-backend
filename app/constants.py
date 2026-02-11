@@ -11,27 +11,43 @@ Centralized location for configuration values used across the application.
 # Content with other types is filtered out from search results.
 
 CATEGORY_INFO = {
-    "anbefaling": "Anbefalinger",
-    "arrangement": "Arrangementer",
-    "artikkel": "Artikler",
-    "fil": "Filer",
-    "generisk-normerende-enhet": "Generiske normerende enheter",
-    "generisk-produkt": "Generiske produkter",
-    "horing": "Høringer",
-    "informasjon": "Informasjon",
-    "lov-eller-forskriftstekst-med-kommentar": "Lov/forskrift med kommentar",
-    "nasjonalt-forlop": "Nasjonale forløp",
-    "nyhet": "Nyheter",
-    "pakkeforlop-anbefaling": "Pakkeforløp-anbefalinger",
+    # Retningslinjer
+    "retningslinje": "Retningslinje",
+    "nasjonalt-forlop": "Nasjonalt forløp",
+    "pakkeforlop-anbefaling": "Pakkeforløp-anbefaling",
+    "normen-dokument": "Normen-dokument",
+    "nasjonal-veileder": "Nasjonal veileder",
+    "prioriteringsveileder": "Prioriteringsveileder",
+
+    # Faglige råd
+    "anbefaling": "Anbefaling",
     "rad": "Råd",
-    "rapport": "Rapporter",
-    "regelverk-lov-eller-forskrift": "Regelverk",
-    "retningslinje": "Retningslinjer",
+    "faglig-rad": "Faglig råd",
+    "pico": "PICO",
+
+    # Veiledere
+    "takst-med-merknad": "Takst med merknad",
+    "ehelsestandard": "E-helsestandard",
+    "tilskudd": "Tilskudd",
+    "veileder": "Veileder",
+    "veiledning": "Veiledning",
+
+    # Rundskriv
     "rundskriv": "Rundskriv",
+
+    # Lovfortolkning
+    "lov-eller-forskriftstekst-med-kommentar": "Lov/forskrift med kommentar",
+    "regelverk-lov-eller-forskrift": "Regelverk",
+    "veileder-lov-forskrift": "Veileder til lov og forskrift",
+    "paragraf-med-kommentar": "Paragraf med kommentar",
+
+    # Statistikk og rapporter
+    "rapport": "Rapport",
+    "statistikkelement": "Statistikkelement",
     "statistikk": "Statistikk",
-    "takst-med-merknad": "Takster med merknad",
-    "temaside": "Temasider",
-    "veileder-lov-forskrift": "Veiledere",
+
+    # Temasider (spesiell type)
+    "temaside": "Temaside",
 }
 
 # Derived from CATEGORY_INFO
@@ -72,3 +88,36 @@ def is_priority_category(info_type: str) -> bool:
     if not info_type:
         return False
     return info_type.lower() in PRIORITY_CATEGORIES_SET
+
+
+# =============================================================================
+# Theme Page Categories (Temaside)
+# =============================================================================
+# Maps theme page category slugs to Norwegian display names
+# Categories are determined by the first segment of the theme page path
+
+THEME_PAGE_CATEGORIES = {
+    "forebygging-diagnose-og-behandling": "Forebygging, diagnose og behandling",
+    "digitalisering-og-e-helse": "Digitalisering og e-helse",
+    "lov-og-forskrift": "Lov og forskrift",
+    "helseberedskap": "Helseberedskap",
+    "autorisasjon-og-spesialistutdanning": "Autorisasjon og spesialistutdanning",
+    "tilskudd-og-finansiering": "Tilskudd og finansiering",
+    "statistikk-registre-og-rapporter": "Statistikk, registre og rapporter",
+}
+
+THEME_PAGE_CATEGORIES_SET = set(THEME_PAGE_CATEGORIES.keys())
+
+
+def is_valid_theme_category(category: str) -> bool:
+    """Check if a category slug is valid for theme pages."""
+    if not category:
+        return False
+    return category.lower() in THEME_PAGE_CATEGORIES_SET
+
+
+def get_theme_category_display_name(category: str) -> str:
+    """Get the Norwegian display name for a theme category."""
+    if not category:
+        return "Ukjent"
+    return THEME_PAGE_CATEGORIES.get(category.lower(), category.title())
