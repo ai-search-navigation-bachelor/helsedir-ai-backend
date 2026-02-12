@@ -36,6 +36,30 @@ CREATE TABLE IF NOT EXISTS content (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
+-- Anbefaling Details Table
+-- ============================================================
+-- Stores anbefaling-specific fields from /innhold/anbefalinger/{id}
+-- Separate table to avoid NULL-spam in content table (normalization)
+CREATE TABLE IF NOT EXISTS anbefaling_details (
+    content_id VARCHAR(255) PRIMARY KEY,
+    praktisk LONGTEXT DEFAULT NULL,
+    rasjonale LONGTEXT DEFAULT NULL,
+    fordeler_ulemper LONGTEXT DEFAULT NULL,
+    verdier_preferanser LONGTEXT DEFAULT NULL,
+    kvalitet_dokumentasjon LONGTEXT DEFAULT NULL,
+    ressurshensyn LONGTEXT DEFAULT NULL,
+    styrke VARCHAR(100) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- Foreign key to ensure referential integrity
+    FOREIGN KEY (content_id) REFERENCES content(id) ON DELETE CASCADE,
+
+    -- Index for potential future search on styrke
+    INDEX idx_styrke (styrke)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
 -- Theme Page Content Junction Table
 -- ============================================================
 -- Links theme pages to their associated content items

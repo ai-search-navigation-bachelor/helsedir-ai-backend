@@ -20,6 +20,53 @@ class ContentRepository:
             return value
         return json.dumps(value, ensure_ascii=False)
 
+    def _cache_anbefaling_details(self, content_id: str, content: Dict[str, Any], cursor) -> bool:
+        """
+        Cache anbefaling-specific fields in anbefaling_details table.
+
+        Args:
+            content_id: The content ID
+            content: Full content dict from API (should have 'data' key)
+            cursor: Active database cursor
+
+        Returns:
+            True if saved successfully
+        """
+        try:
+            data = content.get("data", {})
+            nokkel_info = data.get("nokkelInfo", {})
+
+            cursor.execute(
+                """
+                INSERT INTO anbefaling_details
+                (content_id, praktisk, rasjonale, fordeler_ulemper, verdier_preferanser,
+                 kvalitet_dokumentasjon, ressurshensyn, styrke)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    praktisk = VALUES(praktisk),
+                    rasjonale = VALUES(rasjonale),
+                    fordeler_ulemper = VALUES(fordeler_ulemper),
+                    verdier_preferanser = VALUES(verdier_preferanser),
+                    kvalitet_dokumentasjon = VALUES(kvalitet_dokumentasjon),
+                    ressurshensyn = VALUES(ressurshensyn),
+                    styrke = VALUES(styrke)
+                """,
+                (
+                    content_id,
+                    data.get("praktisk"),
+                    data.get("rasjonale"),
+                    nokkel_info.get("fordelerogulemper"),
+                    nokkel_info.get("verdierogpreferanser"),
+                    nokkel_info.get("kvalitetdokumentasjon"),
+                    nokkel_info.get("ressurshensyn"),
+                    data.get("styrke"),
+                ),
+            )
+            return True
+        except mysql.connector.Error as e:
+            print(f"Error caching anbefaling details for {content_id}: {e}")
+            return False
+
     def cache_content(self, content: Dict[str, Any]) -> bool:
         """
         Cache a content item from Helsedir API or theme page.
@@ -27,6 +74,7 @@ class ContentRepository:
         Args:
             content: Content dict with id, tittel, tekst, koder, maalgruppe, etc.
                      For theme pages: also includes path, info_type='temaside'
+                     For anbefaling: also includes data.praktisk, data.rasjonale, etc.
 
         Returns:
             True if cached successfully
@@ -67,6 +115,11 @@ class ContentRepository:
                     content.get("path"),
                 ),
             )
+
+            # If anbefaling, also save anbefaling-specific details
+            if info_type == "anbefaling":
+                self._cache_anbefaling_details(content.get("id"), content, cursor)
+
             conn.commit()
             return True
         except mysql.connector.Error as e:
@@ -125,6 +178,11 @@ class ContentRepository:
                             content.get("path"),
                         ),
                     )
+
+                    # If anbefaling, also save anbefaling-specific details
+                    if info_type == "anbefaling":
+                        self._cache_anbefaling_details(content.get("id"), content, cursor)
+
                     cached += 1
                 except mysql.connector.Error as e:
                     print(f"Error caching content {content.get('id')}: {e}")
@@ -140,14 +198,29 @@ class ContentRepository:
             conn.close()
 
     def get_content(self, content_id: str) -> Optional[Dict[str, Any]]:
-        """Get a cached content item by ID."""
+        """
+        Get a cached content item by ID.
+
+        For anbefaling content, also includes anbefaling_details fields.
+        """
         conn = db_pool.get_connection()
         if not conn:
             return None
 
         try:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM content WHERE id = %s", (content_id,))
+            cursor.execute(
+                """
+                SELECT c.*,
+                       a.praktisk, a.rasjonale, a.fordeler_ulemper,
+                       a.verdier_preferanser, a.kvalitet_dokumentasjon,
+                       a.ressurshensyn, a.styrke
+                FROM content c
+                LEFT JOIN anbefaling_details a ON c.id = a.content_id
+                WHERE c.id = %s
+                """,
+                (content_id,)
+            )
             return cursor.fetchone()
         except mysql.connector.Error as e:
             print(f"Error getting content: {e}")
@@ -157,14 +230,27 @@ class ContentRepository:
             conn.close()
 
     def get_all_content(self) -> List[Dict[str, Any]]:
-        """Get all cached content."""
+        """
+        Get all cached content.
+
+        For anbefaling content, also includes anbefaling_details fields.
+        """
         conn = db_pool.get_connection()
         if not conn:
             return []
 
         try:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM content")
+            cursor.execute(
+                """
+                SELECT c.*,
+                       a.praktisk, a.rasjonale, a.fordeler_ulemper,
+                       a.verdier_preferanser, a.kvalitet_dokumentasjon,
+                       a.ressurshensyn, a.styrke
+                FROM content c
+                LEFT JOIN anbefaling_details a ON c.id = a.content_id
+                """
+            )
             return cursor.fetchall()
         except mysql.connector.Error as e:
             print(f"Error getting all content: {e}")
