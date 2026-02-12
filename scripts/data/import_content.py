@@ -4,6 +4,12 @@ Import content from Helsedirektoratet API to database.
 
 Note: Does not import 'temaside' type (only exists locally, not in API).
 
+Usage with --info-type (fetch specific content type):
+    python scripts/data/import_content.py --info-type anbefaling --limit 2000   # Fetch 2000 anbefalinger
+    python scripts/data/import_content.py --info-type anbefaling --limit 0      # Fetch ALL available anbefalinger
+    python scripts/data/import_content.py --info-type retningslinje --limit 500 # Fetch 500 retningslinjer
+    python scripts/data/import_content.py --info-type anbefaling                # Fetch 50 anbefalinger (default)
+
 Usage with --by-type (fetches directly by info_type, NO search terms used):
     python scripts/data/import_content.py --by-type                # Fetch evenly distributed: 1000 total / 23 API types = ~43 per type
     python scripts/data/import_content.py --by-type --target 1200  # Fetch 1200 total, evenly distributed (~52 per type)
@@ -17,6 +23,13 @@ Usage with search terms (iterates through search terms until target reached):
 
 Other options:
     python scripts/data/import_content.py --no-links               # Skip fetching links (much faster)
+    python scripts/data/import_content.py --skip-existing          # Skip detail fetch for existing items (saves API calls)
+    python scripts/data/import_content.py --info-type anbefaling --limit 2000 --skip-existing  # Update existing anbefalinger
+
+Performance tips:
+    - Use --skip-existing on re-runs to avoid unnecessary API calls for items you already have
+    - Use --no-links for fastest import (but you'll miss koder, maalgruppe, and links data)
+    - Combine both for maximum speed: --skip-existing --no-links
 """
 
 import argparse
@@ -130,7 +143,7 @@ EXTENDED_SEARCH_TERMS = [
 ALPHABET_SEARCH_TERMS = list("abcdefghijklmnopqrstuvwxyzæøå")
 
 
-def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50) -> dict:
+def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50, specific_type: str = None, skip_existing: bool = False, existing_ids: set = None) -> dict:
     """
     Fetch content from Helsedir API by filtering on each info type.
 
@@ -140,19 +153,29 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
     Args:
         verbose: Whether to print progress
         fetch_links: Whether to fetch detailed info including links
-        target_per_type: Target number of items per info type
+        target_per_type: Target number of items per info type (0 = all available)
+        specific_type: If set, only fetch this specific info_type
+        skip_existing: If True, skip fetching details for items already in database
+        existing_ids: Set of content IDs that already exist in database
 
     Returns:
         Dictionary of content items keyed by ID (deduped)
     """
     all_content = {}
     type_counts = defaultdict(int)
+    skipped_count = 0
 
-    for i, info_type in enumerate(API_INFO_TYPES, 1):
+    if existing_ids is None:
+        existing_ids = set()
+
+    # If specific type is requested, only fetch that one
+    types_to_fetch = [specific_type] if specific_type else API_INFO_TYPES
+
+    for i, info_type in enumerate(types_to_fetch, 1):
         display_name = CATEGORY_INFO.get(info_type, info_type)
 
         if verbose:
-            print(f"\n[{i}/{len(API_INFO_TYPES)}] Fetching: {display_name} ({info_type})...", flush=True)
+            print(f"\n[{i}/{len(types_to_fetch)}] Fetching: {display_name} ({info_type})...", flush=True)
 
         try:
             # Filter by info type
@@ -182,23 +205,35 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
             # Create lookup for basic info
             basic_by_id = {item.get("id"): item for item in basic_results}
 
-            # Merge and limit to target
+            # Merge and limit to target (if target_per_type is 0, take all)
             new_count = 0
             new_items = []
+            skipped_existing = 0
 
-            for item in full_results[:target_per_type]:
+            items_to_process = full_results if target_per_type == 0 else full_results[:target_per_type]
+
+            for item in items_to_process:
                 item_id = item.get("id")
                 if item_id and item_id not in all_content:
                     # Add infoType from basic
                     if item_id in basic_by_id:
                         item["infoType"] = basic_by_id[item_id].get("infoType")
                     all_content[item_id] = item
-                    new_items.append((item_id, item))
+
+                    # Only add to new_items if not skipping existing
+                    if skip_existing and item_id in existing_ids:
+                        skipped_existing += 1
+                        skipped_count += 1
+                    else:
+                        new_items.append((item_id, item))
+
                     new_count += 1
                     type_counts[info_type] += 1
 
             if verbose:
-                print(f"found {len(full_results)}, added {new_count} | Total: {len(all_content)}", flush=True)
+                limit_msg = "all" if target_per_type == 0 else f"first {target_per_type}"
+                skip_msg = f", skipped {skipped_existing} existing" if skip_existing and skipped_existing > 0 else ""
+                print(f"found {len(full_results)}, added {new_count} ({limit_msg}){skip_msg} | Total: {len(all_content)}", flush=True)
 
             # Fetch details for new items
             if fetch_links and new_items:
@@ -236,16 +271,19 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
         print(f"\n\n{'='*50}")
         print("CONTENT BY TYPE:")
         print("="*50)
-        for info_type in API_INFO_TYPES:
+        types_to_show = types_to_fetch if specific_type else API_INFO_TYPES
+        for info_type in types_to_show:
             count = type_counts.get(info_type, 0)
             display = CATEGORY_INFO.get(info_type, info_type)
             print(f"  {display}: {count}")
         print(f"\nTotal: {len(all_content)}")
+        if skip_existing and skipped_count > 0:
+            print(f"Skipped existing: {skipped_count}")
 
     return all_content
 
 
-def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0) -> dict:
+def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0, skip_existing: bool = False, existing_ids: set = None) -> dict:
     """
     Fetch content from Helsedir API using search terms.
 
@@ -254,12 +292,18 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
         verbose: Whether to print progress
         fetch_links: Whether to fetch detailed info including links for each item
         target: Target number of items (0 = no limit)
+        skip_existing: If True, skip fetching details for items already in database
+        existing_ids: Set of content IDs that already exist in database
 
     Returns:
         Dictionary of content items keyed by ID (deduped)
     """
     all_content = {}
     total_detail_fetches = 0
+    total_skipped = 0
+
+    if existing_ids is None:
+        existing_ids = set()
 
     for i, term in enumerate(search_terms, 1):
         # Check if we've reached target
@@ -321,13 +365,25 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
             # Fetch detailed info with links for new items
             if fetch_links and new_items_this_term:
-                if verbose:
-                    print(f"    Fetching details for {len(new_items_this_term)} items:", flush=True)
+                # Filter out existing items if skip_existing is enabled
+                items_to_fetch = []
+                skipped_this_term = 0
 
-                for j, (content_id, item) in enumerate(new_items_this_term):
+                for content_id, item in new_items_this_term:
+                    if skip_existing and content_id in existing_ids:
+                        skipped_this_term += 1
+                        total_skipped += 1
+                    else:
+                        items_to_fetch.append((content_id, item))
+
+                if verbose:
+                    skip_msg = f" (skipped {skipped_this_term} existing)" if skipped_this_term > 0 else ""
+                    print(f"    Fetching details for {len(items_to_fetch)} items{skip_msg}:", flush=True)
+
+                for j, (content_id, item) in enumerate(items_to_fetch):
                     try:
                         if verbose:
-                            print(f"      [{j+1}/{len(new_items_this_term)}] ID: {content_id}", flush=True)
+                            print(f"      [{j+1}/{len(items_to_fetch)}] ID: {content_id}", flush=True)
 
                         detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
 
@@ -367,7 +423,8 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
             continue
 
     if verbose:
-        print(f"\n\nTotal items: {len(all_content)}, Detail fetches: {total_detail_fetches}")
+        skip_msg = f", Skipped existing: {total_skipped}" if total_skipped > 0 else ""
+        print(f"\n\nTotal items: {len(all_content)}, Detail fetches: {total_detail_fetches}{skip_msg}")
 
     return all_content
 
@@ -452,6 +509,23 @@ def main():
         help="Items per type when using --by-type. If not set, --target is distributed evenly across all types",
     )
     parser.add_argument(
+        "--info-type",
+        type=str,
+        default=None,
+        help="Fetch only a specific info_type (e.g., 'anbefaling', 'retningslinje'). Use with --limit to control count (0 = all available)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Number of items to fetch for the specified --info-type (0 = all available). If not set, defaults to 50",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip fetching details for items already in database (faster re-runs, saves API calls)",
+    )
+    parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Suppress progress output",
@@ -461,7 +535,27 @@ def main():
     verbose = not args.quiet
     fetch_links = not args.no_links
 
-    # Determine search terms to use
+    # Check for --info-type mode
+    if args.info_type:
+        # Validate info_type
+        if args.info_type not in API_INFO_TYPES:
+            print(f"ERROR: Invalid info_type '{args.info_type}'")
+            print(f"\nAvailable info types:")
+            for info_type in API_INFO_TYPES:
+                display = CATEGORY_INFO.get(info_type, info_type)
+                print(f"  - {info_type:30s} ({display})")
+            sys.exit(1)
+
+        # Specific info_type mode - use --limit or default to 50
+        specific_type = args.info_type
+        limit = args.limit if args.limit is not None else 50
+        mode = "specific_type"
+    else:
+        specific_type = None
+        limit = None
+        mode = "by_type" if args.by_type else "search"
+
+    # Determine search terms to use (for search mode)
     if args.search_terms:
         search_terms = [t.strip() for t in args.search_terms.split(",")]
     elif args.alphabet:
@@ -491,13 +585,19 @@ def main():
         print("=" * 50)
         print("HELSEDIR CONTENT IMPORT")
         print("=" * 50)
-        if args.by_type:
+        if mode == "specific_type":
+            display_name = CATEGORY_INFO.get(specific_type, specific_type)
+            print(f"\nMode: Specific info type")
+            print(f"Info type: {specific_type} ({display_name})")
+            print(f"Limit: {'All available' if limit == 0 else limit}")
+        elif args.by_type:
             print(f"\nMode: By info type (balanced coverage)")
             print(f"Info types from API: {len(API_INFO_TYPES)} (excludes 'temaside')")
             print(f"Target per type: {per_type_target}")
             print(f"Total target: ~{total_target}")
         else:
-            print(f"\nSearch terms: {len(search_terms)}")
+            print(f"\nMode: Search terms")
+            print(f"Search terms: {len(search_terms)}")
             print(f"Target items: {target if target > 0 else 'No limit'}")
         print(f"Fetch links: {'Yes' if fetch_links else 'No (fast mode)'}")
 
@@ -507,20 +607,48 @@ def main():
         print("Make sure MySQL is running and .env is configured correctly")
         sys.exit(1)
 
-    # Show existing count
+    # Show existing count and load IDs if skip-existing is enabled
     existing = database_service.get_content_count()
+    existing_ids = set()
+
     if verbose:
         print(f"Existing items in database: {existing}")
 
+    if args.skip_existing:
+        if verbose:
+            print(f"Loading existing IDs for skip-check...", end=" ", flush=True)
+        existing_ids = set(database_service.get_all_content_ids())
+        if verbose:
+            print(f"loaded {len(existing_ids)} IDs")
+            print(f"⚡ Optimization: Will skip detail fetch for existing items")
+
     # Fetch content
-    if args.by_type:
+    if mode == "specific_type":
         content_items = fetch_content_by_type(
             verbose=verbose,
             fetch_links=fetch_links,
-            target_per_type=per_type_target
+            target_per_type=limit,
+            specific_type=specific_type,
+            skip_existing=args.skip_existing,
+            existing_ids=existing_ids
+        )
+    elif args.by_type:
+        content_items = fetch_content_by_type(
+            verbose=verbose,
+            fetch_links=fetch_links,
+            target_per_type=per_type_target,
+            skip_existing=args.skip_existing,
+            existing_ids=existing_ids
         )
     else:
-        content_items = fetch_content(search_terms, verbose=verbose, fetch_links=fetch_links, target=target)
+        content_items = fetch_content(
+            search_terms,
+            verbose=verbose,
+            fetch_links=fetch_links,
+            target=target,
+            skip_existing=args.skip_existing,
+            existing_ids=existing_ids
+        )
 
     # Save to database
     if content_items:

@@ -56,6 +56,9 @@ class DatabaseService:
     def get_content_stats_by_type(self) -> List[Dict[str, Any]]:
         return self._content.get_content_stats_by_type()
 
+    def get_all_content_ids(self) -> List[str]:
+        return self._content.get_all_content_ids()
+
     # ==================== Statistics Operations ====================
 
     def record_impression(self, content_id: str) -> bool:

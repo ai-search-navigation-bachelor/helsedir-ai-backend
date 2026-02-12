@@ -191,6 +191,24 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_all_content_ids(self) -> List[str]:
+        """Get all content IDs from database (for deduplication/skip checks)."""
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM content")
+            results = cursor.fetchall()
+            return [row[0] for row in results]
+        except mysql.connector.Error as e:
+            print(f"Error getting content IDs: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_content_stats_by_type(self) -> List[Dict[str, Any]]:
         """Get content count grouped by info_type."""
         conn = db_pool.get_connection()
