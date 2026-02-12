@@ -23,28 +23,16 @@ def load_theme_pages(json_path: str = "data/theme_pages.json") -> list:
 
 
 def populate_theme_pages():
-    """Populate theme pages into the database."""
+    """Populate theme pages into the database using optimized batch insert."""
     print("Loading theme pages from JSON...")
     theme_pages = load_theme_pages()
     print(f"Found {len(theme_pages)} theme pages")
 
-    print("\nPopulating database...")
-    success_count = 0
-    error_count = 0
+    print("\nPopulating database (batch mode)...")
 
-    for page in theme_pages:
-        try:
-            # Use content_repository to cache the theme page
-            success = content_repository.cache_content(page)
-            if success:
-                success_count += 1
-                print(f"✓ {page['path']}")
-            else:
-                error_count += 1
-                print(f"✗ Failed: {page['path']}")
-        except Exception as e:
-            error_count += 1
-            print(f"✗ Error on {page['path']}: {e}")
+    # Use batch insert for performance (single DB connection + transaction)
+    success_count = content_repository.cache_content_batch(theme_pages)
+    error_count = len(theme_pages) - success_count
 
     print(f"\n{'='*60}")
     print(f"Results:")

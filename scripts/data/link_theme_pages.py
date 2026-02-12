@@ -14,7 +14,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Dict
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -103,30 +103,58 @@ def extract_links_from_theme_page(html: str, theme_path: str) -> Set[str]:
     return links
 
 
-def find_content_by_page_id(page_id: str) -> Optional[dict]:
+def load_content_cache() -> Dict[str, dict]:
     """
-    Find content in database by pageID.
-    Searches for ID ending with the pageID (ignores 0006-XXXX- prefix).
+    Load all content from database into memory for fast lookups.
+    Returns dict mapping pageID suffix to full content record.
     """
+    print("\nLoading content cache from database...")
     conn = db_pool.get_connection()
     if not conn:
-        return None
+        print("ERROR: Could not connect to database")
+        return {}
 
     try:
         cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM content WHERE info_type != 'temaside'")
+        all_content = cursor.fetchall()
 
-        # Search for ID ending with pageID
-        query = "SELECT * FROM content WHERE id LIKE %s AND info_type != 'temaside'"
-        cursor.execute(query, (f'%{page_id}',))
+        # Build lookup dict: pageID -> content
+        cache = {}
+        for content in all_content:
+            content_id = content['id']
+            # Extract the last part after dashes (the pageID)
+            # e.g., "0006-retningslinje-abc123" -> "abc123"
+            parts = content_id.split('-')
+            if len(parts) >= 2:
+                page_id_suffix = parts[-1]
+                cache[page_id_suffix] = content
 
-        result = cursor.fetchone()
-        return result
+        print(f"Loaded {len(cache)} content items into cache")
+        return cache
+
     except Exception as e:
-        print(f"    DB ERROR searching for {page_id}: {e}")
-        return None
+        print(f"ERROR loading content cache: {e}")
+        return {}
     finally:
         cursor.close()
         conn.close()
+
+
+def find_content_by_page_id(page_id: str, content_cache: Dict[str, dict]) -> Optional[dict]:
+    """
+    Find content by pageID using in-memory cache (optimized).
+    """
+    # Try direct lookup first
+    if page_id in content_cache:
+        return content_cache[page_id]
+
+    # Fallback: search for partial matches
+    for cached_id, content in content_cache.items():
+        if page_id in cached_id or cached_id in page_id:
+            return content
+
+    return None
 
 
 def create_junction_table():
@@ -164,32 +192,49 @@ def create_junction_table():
         conn.close()
 
 
-def link_content_to_theme(theme_page_id: str, content_id: str) -> bool:
-    """Create a link between theme page and content."""
+def link_content_batch(theme_page_id: str, content_ids: List[str]) -> int:
+    """
+    Link multiple content items to a theme page in one batch (optimized).
+
+    Returns:
+        Number of items successfully linked
+    """
+    if not content_ids:
+        return 0
+
     conn = db_pool.get_connection()
     if not conn:
-        return False
+        return 0
 
     try:
         cursor = conn.cursor()
-        cursor.execute("""
+
+        # Batch insert with single transaction
+        values = [(theme_page_id, content_id) for content_id in content_ids]
+        cursor.executemany("""
             INSERT IGNORE INTO theme_page_content
             (theme_page_id, content_id)
             VALUES (%s, %s)
-        """, (theme_page_id, content_id))
+        """, values)
+
         conn.commit()
-        return cursor.rowcount > 0
+        return cursor.rowcount
     except Exception as e:
-        print(f"    ERROR linking {content_id} to {theme_page_id}: {e}")
-        return False
+        print(f"    ERROR batch linking to {theme_page_id}: {e}")
+        return 0
     finally:
         cursor.close()
         conn.close()
 
 
-def process_theme_page(theme_page: dict, verbose: bool = True) -> int:
+def process_theme_page(theme_page: dict, content_cache: Dict[str, dict], verbose: bool = True) -> int:
     """
-    Process a single theme page: fetch, extract links, match content.
+    Process a single theme page: fetch, extract links, match content (optimized).
+
+    Args:
+        theme_page: Theme page dict
+        content_cache: In-memory cache of all content (for fast lookups)
+        verbose: Print detailed progress
 
     Returns:
         Number of content items linked
@@ -222,8 +267,10 @@ def process_theme_page(theme_page: dict, verbose: bool = True) -> int:
     if not links:
         return 0
 
+    # Collect all matched content IDs (for batch insert)
+    matched_content_ids = []
+
     # Process each link
-    linked_count = 0
     for i, link_url in enumerate(sorted(links), 1):
         if verbose:
             print(f"\n  [{i}/{len(links)}] {link_url}")
@@ -243,11 +290,11 @@ def process_theme_page(theme_page: dict, verbose: bool = True) -> int:
         if verbose:
             print(f"    pageID: {page_id}")
 
-        # Find matching content in database
-        content = find_content_by_page_id(page_id)
+        # Find matching content using in-memory cache (fast!)
+        content = find_content_by_page_id(page_id, content_cache)
         if not content:
             if verbose:
-                print("    ✗ No matching content in database")
+                print("    ✗ No matching content in cache")
             continue
 
         content_id = content['id']
@@ -256,19 +303,21 @@ def process_theme_page(theme_page: dict, verbose: bool = True) -> int:
             print(f"    ✓ Found: {content_id}")
             print(f"      Title: {content_title[:60]}...")
 
-        # Link to theme page
-        if link_content_to_theme(theme_id, content_id):
-            linked_count += 1
-            if verbose:
-                print(f"    ✓ Linked to theme page")
+        matched_content_ids.append(content_id)
 
         # Rate limiting
         time.sleep(0.2)
 
-    if verbose:
-        print(f"\n✓ Linked {linked_count} content items to theme page")
-
-    return linked_count
+    # Batch insert all links at once (optimized!)
+    if matched_content_ids:
+        linked_count = link_content_batch(theme_id, matched_content_ids)
+        if verbose:
+            print(f"\n✓ Batch linked {linked_count} content items to theme page")
+        return linked_count
+    else:
+        if verbose:
+            print(f"\n✗ No content items matched")
+        return 0
 
 
 def has_children(theme_page: dict) -> bool:
@@ -282,12 +331,18 @@ def has_children(theme_page: dict) -> bool:
 
 def main():
     print("="*60)
-    print("THEME PAGE CONTENT LINKING")
+    print("THEME PAGE CONTENT LINKING (OPTIMIZED)")
     print("="*60)
 
     # Create junction table
     if not create_junction_table():
         print("\nERROR: Could not create junction table")
+        return
+
+    # Load content cache (optimization: all content in memory)
+    content_cache = load_content_cache()
+    if not content_cache:
+        print("\nERROR: Could not load content cache")
         return
 
     # Load theme pages
@@ -309,7 +364,7 @@ def main():
         print(f"{'#'*60}")
 
         try:
-            linked = process_theme_page(theme_page, verbose=True)
+            linked = process_theme_page(theme_page, content_cache, verbose=True)
             total_linked += linked
             processed += 1
         except KeyboardInterrupt:
