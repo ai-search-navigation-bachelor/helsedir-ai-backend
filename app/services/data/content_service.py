@@ -8,7 +8,7 @@ import json
 import logging
 from typing import List, Optional
 from pydantic import ValidationError
-from app.entities.content import ContentItem, ContentLink
+from app.entities.content import ContentItem, ContentLink, AnbefalingFields
 from app.services.data.database_service import database_service
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,29 @@ class ContentService:
             maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
             links = self._parse_links(item.get("links"))
 
+            # Parse anbefaling-specific fields if this is an anbefaling
+            anbefaling_fields = None
+            if item.get("info_type") == "anbefaling":
+                # Check if any anbefaling field has data (from LEFT JOIN)
+                if any([
+                    item.get("praktisk"),
+                    item.get("rasjonale"),
+                    item.get("fordeler_ulemper"),
+                    item.get("verdier_preferanser"),
+                    item.get("kvalitet_dokumentasjon"),
+                    item.get("ressurshensyn"),
+                    item.get("styrke"),
+                ]):
+                    anbefaling_fields = AnbefalingFields(
+                        praktisk=item.get("praktisk"),
+                        rasjonale=item.get("rasjonale"),
+                        fordeler_ulemper=item.get("fordeler_ulemper"),
+                        verdier_preferanser=item.get("verdier_preferanser"),
+                        kvalitet_dokumentasjon=item.get("kvalitet_dokumentasjon"),
+                        ressurshensyn=item.get("ressurshensyn"),
+                        styrke=item.get("styrke"),
+                    )
+
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
@@ -76,6 +99,7 @@ class ContentService:
                 content_type=item.get("info_type") or "unknown",
                 target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
                 links=links,
+                anbefaling_fields=anbefaling_fields,
             )
             self.content.append(content_item)
 
