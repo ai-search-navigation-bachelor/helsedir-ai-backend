@@ -143,7 +143,7 @@ EXTENDED_SEARCH_TERMS = [
 ALPHABET_SEARCH_TERMS = list("abcdefghijklmnopqrstuvwxyzæøå")
 
 
-def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50, specific_type: str = None, skip_existing: bool = False, existing_ids: set = None) -> dict:
+def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50, specific_type: Optional[str] = None, skip_existing: bool = False, existing_ids: Optional[set] = None) -> dict:
     """
     Fetch content from Helsedir API by filtering on each info type.
 
@@ -283,7 +283,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
     return all_content
 
 
-def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0, skip_existing: bool = False, existing_ids: set = None) -> dict:
+def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0, skip_existing: bool = False, existing_ids: Optional[set] = None) -> dict:
     """
     Fetch content from Helsedir API using search terms.
 
