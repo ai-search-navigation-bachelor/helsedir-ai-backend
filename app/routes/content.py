@@ -11,6 +11,7 @@ from app.dto.response.content import (
     ContentLinkResponse,
     GroupedLinkedContent,
     LinkedContentItem,
+    AnbefalingFieldsResponse,
 )
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
@@ -112,6 +113,19 @@ async def get_content(
     if content.content_type.lower() == "temaside":
         linked_content_response = _get_theme_page_linked_content(content_id)
 
+    # Map anbefaling-specific fields if present
+    anbefaling_fields_response = None
+    if content.anbefaling_fields:
+        anbefaling_fields_response = AnbefalingFieldsResponse(
+            praktisk=content.anbefaling_fields.praktisk,
+            rasjonale=content.anbefaling_fields.rasjonale,
+            fordeler_ulemper=content.anbefaling_fields.fordeler_ulemper,
+            verdier_preferanser=content.anbefaling_fields.verdier_preferanser,
+            kvalitet_dokumentasjon=content.anbefaling_fields.kvalitet_dokumentasjon,
+            ressurshensyn=content.anbefaling_fields.ressurshensyn,
+            styrke=content.anbefaling_fields.styrke,
+        )
+
     return ContentResponse(
         id=content.id,
         title=content.title,
@@ -120,4 +134,5 @@ async def get_content(
         target_groups=content.target_groups,
         links=links_response,
         linked_content=linked_content_response,
+        anbefaling_fields=anbefaling_fields_response,
     )

@@ -9,6 +9,7 @@ Features:
 - Automatically filters out 'temaside' content (has its own system)
 - Incremental generation: only generates missing queries to reach target
 - Caches all queries for fast reuse
+- Uses same passage format as embeddings (includes linked content)
 
 Usage:
     python scripts/data/generate_queries.py                     # Generate 10 queries per doc
@@ -17,6 +18,7 @@ Usage:
 
 Requirements:
     GROQ_API_KEY in .env (free from https://console.groq.com/keys)
+    HELSEDIR_API_KEY in .env (for fetching linked content)
 """
 
 import argparse
@@ -33,8 +35,7 @@ sys.path.insert(0, str(project_root))
 
 def generate_queries_with_groq(
     api_key: str,
-    title: str,
-    body: str,
+    passage: str,
     info_type: str,
     num_queries: int = 3,
     _retries: int = 0,
@@ -45,24 +46,25 @@ def generate_queries_with_groq(
 
     Args:
         api_key: Groq API key
-        title: Document title
-        body: Document body (will be truncated to 1500 chars)
+        passage: Formatted passage (same as used for embeddings)
         info_type: Document type (e.g., 'retningslinje', 'veileder')
         num_queries: Number of queries to generate
         _retries: Internal retry counter
+        show_prompt: Show the prompt sent to Groq
 
     Returns:
         List of generated query strings
     """
     import httpx
 
-    body_truncated = body[:1500] if body else ""
+    # Truncate passage if too long (keep it reasonable for LLM)
+    passage_truncated = passage[:2000] if passage else ""
 
     prompt = f"""Du er en ekspert på norsk helseinformasjon. Generer {num_queries} realistiske søkeord/fraser som en helsepersonell ville brukt for å finne dette dokumentet.
 
 Dokumenttype: {info_type}
-Tittel: {title}
-Innhold: {body_truncated}
+Dokumentinnhold:
+{passage_truncated}
 
 Regler:
 - Skriv søk slik en lege eller sykepleier ville skrevet dem
@@ -102,7 +104,7 @@ Returner kun søkefrasene, én per linje:"""
             wait = 15 * (_retries + 1)
             print(f"  Rate limited, waiting {wait}s (retry {_retries + 1}/3)...")
             time.sleep(wait)
-            return generate_queries_with_groq(api_key, title, body, info_type, num_queries, _retries + 1, show_prompt)
+            return generate_queries_with_groq(api_key, passage, info_type, num_queries, _retries + 1, show_prompt)
 
         if response.status_code != 200:
             print(f"  Groq error: {response.status_code} - {response.text[:200]}")
@@ -198,10 +200,28 @@ def main():
     from app.services.data.database_service import database_service
     from app.ml.embedding_model import HealthContentEmbedding
 
+    # Import enrich_content_with_links from generate_embeddings.py
+    import sys
+    from pathlib import Path
+    embeddings_script = Path(__file__).parent / "generate_embeddings.py"
+
+    # Load enrich_content_with_links function
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gen_embeddings", embeddings_script)
+    gen_embeddings = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen_embeddings)
+    enrich_content_with_links = gen_embeddings.enrich_content_with_links
+
     # Check Groq API key
     if not settings.groq_api_key:
         print("Error: GROQ_API_KEY not configured in .env")
         print("Get a free key at: https://console.groq.com/keys")
+        sys.exit(1)
+
+    # Check Helsedir API key (needed for linked content)
+    if not settings.helsedir_api_key:
+        print("Error: HELSEDIR_API_KEY not configured in .env")
+        print("Needed for fetching linked content (barn, forelder, root)")
         sys.exit(1)
 
     # Check database
@@ -242,7 +262,7 @@ def main():
     elif args.force:
         print(f"\n--force specified, regenerating all queries")
 
-    # Find documents needing queries
+    # Find documents needing queries FIRST (before fetching linked content)
     items_needing_queries = []
     for item in content_items:
         content_id = str(item["id"])
@@ -257,6 +277,18 @@ def main():
         print(f"\n✓ All {len(cached)} documents already have {args.queries_per_doc}+ queries")
         print(f"  Use --force to regenerate, or --queries-per-doc to increase target")
         return
+
+    # NOW enrich ONLY the documents that need queries (optimization!)
+    print(f"\nFetching linked content for {len(items_needing_queries)} documents that need queries...")
+    print(f"(Skipping {len(content_items) - len(items_needing_queries)} documents that already have queries)")
+    print(f"This ensures queries match the embedding format (includes barn, forelder, root, publikasjon)")
+    model = HealthContentEmbedding()
+    items_needing_queries = enrich_content_with_links(
+        items_needing_queries,
+        api_key=settings.helsedir_api_key,
+        max_links_per_item=10,
+        format_passage_fn=model.format_passage,
+    )
 
     total_needed = sum(item["_queries_needed"] for item in items_needing_queries)
     print(f"\nQuery generation needed:")
@@ -288,15 +320,13 @@ def main():
 
     for i, item in enumerate(items_needing_queries):
         content_id = str(item["id"])
-        title = item.get("tittel") or item.get("title") or ""
-        body = item.get("tekst") or item.get("body") or ""
         info_type = item.get("info_type") or ""
         queries_needed = item["_queries_needed"]
         existing_count = item["_existing_count"]
+        title = item.get("tittel") or item.get("title") or ""
 
-        # Clean body
-        if body:
-            body = HealthContentEmbedding.strip_html_tags(body)
+        # Format passage using same format as embeddings
+        passage = model.format_passage(item)
 
         # Show prompt for first 2 documents
         show_prompt = shown_prompts < 2
@@ -304,8 +334,7 @@ def main():
         # Generate missing queries
         new_queries = generate_queries_with_groq(
             api_key=settings.groq_api_key,
-            title=title,
-            body=body,
+            passage=passage,
             info_type=info_type,
             num_queries=queries_needed,
             show_prompt=show_prompt,
@@ -326,6 +355,8 @@ def main():
                 print(f"{'='*80}")
                 print(f"Document: {title}")
                 print(f"Type: {info_type}")
+                print(f"Linked content: {len(item.get('linked_content', []))} items")
+                print(f"Passage length: {len(passage)} chars")
                 print(f"{action} {len(new_queries)} queries (had {existing_count}, now {len(cached[content_id])})")
                 print(f"\nGenerated queries:")
                 for j, q in enumerate(new_queries, 1):
