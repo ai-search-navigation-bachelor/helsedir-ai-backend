@@ -43,13 +43,13 @@ class ContentRepository:
                  kvalitet_dokumentasjon, ressurshensyn, styrke)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
-                    praktisk = VALUES(praktisk),
-                    rasjonale = VALUES(rasjonale),
-                    fordeler_ulemper = VALUES(fordeler_ulemper),
-                    verdier_preferanser = VALUES(verdier_preferanser),
-                    kvalitet_dokumentasjon = VALUES(kvalitet_dokumentasjon),
-                    ressurshensyn = VALUES(ressurshensyn),
-                    styrke = VALUES(styrke)
+                    praktisk = COALESCE(VALUES(praktisk), praktisk),
+                    rasjonale = COALESCE(VALUES(rasjonale), rasjonale),
+                    fordeler_ulemper = COALESCE(VALUES(fordeler_ulemper), fordeler_ulemper),
+                    verdier_preferanser = COALESCE(VALUES(verdier_preferanser), verdier_preferanser),
+                    kvalitet_dokumentasjon = COALESCE(VALUES(kvalitet_dokumentasjon), kvalitet_dokumentasjon),
+                    ressurshensyn = COALESCE(VALUES(ressurshensyn), ressurshensyn),
+                    styrke = COALESCE(VALUES(styrke), styrke)
                 """,
                 (
                     content_id,
