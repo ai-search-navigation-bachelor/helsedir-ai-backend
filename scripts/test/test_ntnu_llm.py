@@ -36,7 +36,8 @@ def test_api_connection():
         print("   Please add your NTNU HPC API key to .env file")
         return False
 
-    print(f"   ✅ API Key: {settings.ntnu_llm_api_key[:20]}...")
+    api_key_length = len(settings.ntnu_llm_api_key)
+    print(f"   ✅ API Key: CONFIGURED (length: {api_key_length} characters)")
 
     # Test API call
     print("\n2. Testing API connection...")
