@@ -11,8 +11,10 @@ class ContentLinkResponse(BaseModel):
     rel: str  # forelder, barn, root, publikasjon
     type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, etc.
     tittel: Optional[str] = None
-    href: str
-    strukturId: Optional[str] = None
+    # For internal links (in our database): use id
+    # For external links (not in database): use href
+    id: Optional[str] = None
+    href: Optional[str] = None
 
 
 class LinkedContentItem(BaseModel):

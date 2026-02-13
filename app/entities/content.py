@@ -13,7 +13,11 @@ class ContentLink(BaseModel):
     rel: str  # forelder, barn, root, publikasjon
     type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, etc.
     tittel: Optional[str] = None
-    href: str
+    # For internal links: use id (references content in our database)
+    # For external links: use href (points to external URL)
+    id: Optional[str] = None
+    href: Optional[str] = None
+    # Legacy field - will be removed after migration
     strukturId: Optional[str] = None
 
 

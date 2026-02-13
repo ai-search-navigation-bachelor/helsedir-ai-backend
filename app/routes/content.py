@@ -96,14 +96,14 @@ async def get_content(
             content_id=content_id,
         )
 
-    # Convert links to response format
+    # Convert links to response format (already processed at import/migration)
     links_response = [
         ContentLinkResponse(
             rel=link.rel,
             type=link.type,
             tittel=link.tittel,
+            id=link.id,
             href=link.href,
-            strukturId=link.strukturId,
         )
         for link in content.links
     ]
