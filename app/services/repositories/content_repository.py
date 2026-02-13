@@ -298,6 +298,43 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def check_content_exists_batch(self, content_ids: List[str]) -> set:
+        """
+        Check which content IDs exist in the database (batch operation).
+
+        Args:
+            content_ids: List of content IDs to check
+
+        Returns:
+            Set of content IDs that exist in database
+        """
+        if not content_ids:
+            return set()
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return set()
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+
+            # Use IN clause for batch lookup
+            placeholders = ','.join(['%s'] * len(content_ids))
+            query = f"SELECT id FROM content WHERE id IN ({placeholders})"
+            cursor.execute(query, tuple(content_ids))
+            results = cursor.fetchall()
+
+            return {row[0] for row in results}
+
+        except mysql.connector.Error as e:
+            print(f"Error checking content existence: {e}")
+            return set()
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
     def get_content_stats_by_type(self) -> List[Dict[str, Any]]:
         """Get content count grouped by info_type."""
         conn = db_pool.get_connection()
