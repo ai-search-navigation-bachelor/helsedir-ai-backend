@@ -114,6 +114,7 @@ def load_content_cache() -> Dict[str, dict]:
         print("ERROR: Could not connect to database")
         return {}
 
+    cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM content WHERE info_type != 'temaside'")
@@ -137,7 +138,8 @@ def load_content_cache() -> Dict[str, dict]:
         print(f"ERROR loading content cache: {e}")
         return {}
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 
@@ -206,6 +208,7 @@ def link_content_batch(theme_page_id: str, content_ids: List[str]) -> int:
     if not conn:
         return 0
 
+    cursor = None
     try:
         cursor = conn.cursor()
 
@@ -223,7 +226,8 @@ def link_content_batch(theme_page_id: str, content_ids: List[str]) -> int:
         print(f"    ERROR batch linking to {theme_page_id}: {e}")
         return 0
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 
