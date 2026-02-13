@@ -17,6 +17,17 @@ class ContentLink(BaseModel):
     strukturId: Optional[str] = None
 
 
+class AnbefalingFields(BaseModel):
+    """Anbefaling-specific fields from /innhold/anbefalinger/{id}."""
+    praktisk: Optional[str] = None
+    rasjonale: Optional[str] = None
+    fordeler_ulemper: Optional[str] = None
+    verdier_preferanser: Optional[str] = None
+    kvalitet_dokumentasjon: Optional[str] = None
+    ressurshensyn: Optional[str] = None
+    styrke: Optional[str] = None
+
+
 class ContentItem(BaseModel):
     """Content item entity."""
     id: str
@@ -25,6 +36,9 @@ class ContentItem(BaseModel):
     content_type: str
     target_groups: List[str] = []
     links: List[ContentLink] = []
+
+    # Info type-specific fields (extensible pattern for future types)
+    anbefaling_fields: Optional[AnbefalingFields] = None
 
     @property
     def info_type(self) -> str:

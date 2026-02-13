@@ -29,6 +29,17 @@ class GroupedLinkedContent(BaseModel):
     items: List[LinkedContentItem]
 
 
+class AnbefalingFieldsResponse(BaseModel):
+    """Anbefaling-specific fields."""
+    praktisk: Optional[str] = None
+    rasjonale: Optional[str] = None
+    fordeler_ulemper: Optional[str] = None
+    verdier_preferanser: Optional[str] = None
+    kvalitet_dokumentasjon: Optional[str] = None
+    ressurshensyn: Optional[str] = None
+    styrke: Optional[str] = None
+
+
 class ContentResponse(BaseModel):
     """Response model for content endpoint."""
     id: str
@@ -38,3 +49,6 @@ class ContentResponse(BaseModel):
     target_groups: List[str] = []
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
+
+    # Info type-specific fields (extensible pattern for future types)
+    anbefaling_fields: Optional[AnbefalingFieldsResponse] = None
