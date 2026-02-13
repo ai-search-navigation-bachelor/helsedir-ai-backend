@@ -4,7 +4,7 @@ Entity models.
 Core business entities that represent the domain model.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, List
 
 
@@ -19,6 +19,19 @@ class ContentLink(BaseModel):
     href: Optional[str] = None
     # Legacy field - will be removed after migration
     strukturId: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_id_or_href(self):
+        """Ensure exactly one of 'id' or 'href' is provided."""
+        has_id = self.id is not None
+        has_href = self.href is not None
+
+        if not has_id and not has_href:
+            raise ValueError("ContentLink must have either 'id' or 'href'")
+        if has_id and has_href:
+            raise ValueError("ContentLink cannot have both 'id' and 'href'")
+
+        return self
 
 
 class AnbefalingFields(BaseModel):
