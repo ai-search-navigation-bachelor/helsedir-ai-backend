@@ -38,7 +38,7 @@ import os
 import re
 import time
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
