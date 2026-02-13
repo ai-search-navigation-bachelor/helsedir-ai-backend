@@ -9,7 +9,6 @@ Usage:
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path
@@ -197,8 +196,6 @@ def clean_query(q: str, num_queries: int) -> list:
     ]
 
     for q in queries:
-        original_q = q
-
         # Remove markdown bold (**text**)
         q = re.sub(r'\*\*([^*]+)\*\*', r'\1', q)
 
