@@ -4,7 +4,7 @@ Migrate existing links in database to new format.
 
 This script:
 1. Reads all content with links
-2. For each link with rel='forelder' or rel='root':
+2. For each link (all types: forelder, root, barn, publikasjon):
    - Extracts content ID from href
    - Checks if that content exists in database
    - If yes: replaces href with id field
