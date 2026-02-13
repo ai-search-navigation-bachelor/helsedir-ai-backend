@@ -168,6 +168,9 @@ def migrate_content_links(dry_run: bool = False):
 
                 for link in links:
                     if not isinstance(link, dict):
+                        # Preserve non-dict entries unchanged
+                        print(f"  ⚠️  Warning: Non-dict link in {content_id}: {link}")
+                        new_links.append(link)
                         continue
 
                     new_link = transform_link(link, existing_ids)

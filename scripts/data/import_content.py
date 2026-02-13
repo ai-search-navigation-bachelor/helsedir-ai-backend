@@ -76,6 +76,9 @@ def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
     processed = []
     for link in links:
         if not isinstance(link, dict):
+            # Preserve non-dict entries unchanged
+            print(f"  ⚠️  Warning: Non-dict link encountered: {link}")
+            processed.append(link)
             continue
 
         rel = link.get('rel', '')
