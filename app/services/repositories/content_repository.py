@@ -118,7 +118,10 @@ class ContentRepository:
 
             # If anbefaling, also save anbefaling-specific details
             if info_type == "anbefaling":
-                self._cache_anbefaling_details(content.get("id"), content, cursor)
+                details_ok = self._cache_anbefaling_details(content.get("id"), content, cursor)
+                if not details_ok:
+                    conn.rollback()
+                    return False
 
             conn.commit()
             return True
