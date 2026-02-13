@@ -35,8 +35,10 @@ Performance tips:
 import argparse
 import sys
 import os
+import re
 import time
 from collections import defaultdict
+from typing import List, Dict, Any, Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -47,6 +49,56 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
+
+
+def extract_content_id_from_href(href: str) -> Optional[str]:
+    """Extract content ID from Helsedir API URL."""
+    if not href:
+        return None
+    pattern = r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}-[a-f0-9\-]+)'
+    match = re.search(pattern, href, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
+    """
+    Process links during import to new format.
+
+    For all link types (forelder, root, barn, publikasjon):
+    - Extract ID from href
+    - If exists in DB: use 'id' field
+    - If not: use 'href' field
+    - Remove 'strukturId'
+    """
+    if not links:
+        return []
+
+    processed = []
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+
+        rel = link.get('rel', '')
+        new_link = {
+            'rel': rel,
+            'type': link.get('type', ''),
+        }
+
+        if link.get('tittel'):
+            new_link['tittel'] = link['tittel']
+
+        # Resolve internal links for all types
+        href = link.get('href', '')
+        extracted_id = extract_content_id_from_href(href)
+
+        if extracted_id and extracted_id in existing_ids:
+            new_link['id'] = extracted_id  # Internal link
+        else:
+            new_link['href'] = href  # External link or no valid ID
+
+        processed.append(new_link)
+
+    return processed
 
 # Info types to fetch from API (exclude temaside as it only exists locally)
 API_INFO_TYPES = [t for t in ALLOWED_INFO_TYPES if t != "temaside"]
@@ -430,14 +482,29 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
 
 def save_to_database(content_items: dict, verbose: bool = True) -> int:
-    """Save content items to database."""
+    """Save content items to database with processed links."""
     if not content_items:
         return 0
 
     contents = list(content_items.values())
 
+    # Get existing content IDs for link resolution
     if verbose:
-        print(f"\nSaving {len(contents)} items to database...")
+        print(f"\nLoading existing content IDs for link resolution...")
+    existing_ids = set(database_service.get_all_content_ids())
+    if verbose:
+        print(f"  Found {len(existing_ids)} existing content items")
+
+    # Process links for each content item
+    if verbose:
+        print(f"Processing links for {len(contents)} items...")
+
+    for content in contents:
+        if 'links' in content and content['links']:
+            content['links'] = process_links_at_import(content['links'], existing_ids)
+
+    if verbose:
+        print(f"Saving {len(contents)} items to database...")
 
     saved = database_service.cache_content_batch(contents)
 
