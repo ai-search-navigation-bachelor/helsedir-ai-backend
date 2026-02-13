@@ -323,6 +323,7 @@ def main():
         info_type = item.get("info_type") or ""
         queries_needed = item["_queries_needed"]
         existing_count = item["_existing_count"]
+        title = item.get("tittel") or item.get("title") or ""
 
         # Format passage using same format as embeddings
         passage = model.format_passage(item)
@@ -349,7 +350,6 @@ def main():
             if show_prompt:
                 shown_prompts += 1
                 action = "Added" if existing_count > 0 else "Generated"
-                title = item.get("tittel") or item.get("title") or ""
                 print(f"\n{'='*80}")
                 print(f"GROQ RESPONSE (Example {shown_prompts}):")
                 print(f"{'='*80}")
