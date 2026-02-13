@@ -140,7 +140,6 @@ def main():
 
     success = 0
     failed = 0
-    skipped = 0
 
     for i, item in enumerate(items_to_backfill, 1):
         content_id = item["id"]
