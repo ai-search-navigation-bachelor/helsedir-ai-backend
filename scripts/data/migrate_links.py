@@ -58,13 +58,15 @@ def get_all_content_ids() -> set:
     if not conn:
         return set()
 
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM content")
         results = cursor.fetchall()
         return {row[0] for row in results}
     finally:
-        cursor.close()
+        if cursor is not None:
+            cursor.close()
         conn.close()
 
 
@@ -130,6 +132,7 @@ def migrate_content_links(dry_run: bool = False):
         print("ERROR: Could not connect to database")
         return
 
+    cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT id, links FROM content WHERE links IS NOT NULL")
@@ -240,7 +243,8 @@ def migrate_content_links(dry_run: bool = False):
             print(f"\n✅ Migration complete!")
 
     finally:
-        cursor.close()
+        if cursor is not None:
+            cursor.close()
         conn.close()
 
 
