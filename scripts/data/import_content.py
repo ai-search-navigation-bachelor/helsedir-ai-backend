@@ -498,13 +498,17 @@ def save_to_database(content_items: dict, verbose: bool = True) -> int:
     if verbose:
         print(f"  Found {len(existing_ids)} existing content items")
 
-    # Process links for each content item
+    # Add IDs from current batch to existing_ids (for resolving links within same batch)
+    batch_ids = {content.get('id') for content in contents if content.get('id')}
+    all_ids = existing_ids.union(batch_ids)
+
     if verbose:
+        print(f"  Including {len(batch_ids)} IDs from current batch")
         print(f"Processing links for {len(contents)} items...")
 
     for content in contents:
         if 'links' in content and content['links']:
-            content['links'] = process_links_at_import(content['links'], existing_ids)
+            content['links'] = process_links_at_import(content['links'], all_ids)
 
     if verbose:
         print(f"Saving {len(contents)} items to database...")
