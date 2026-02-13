@@ -3,7 +3,7 @@ Repository for content operations.
 """
 
 import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 import mysql.connector
 
 from app.services.repositories.base import db_pool
@@ -298,7 +298,7 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
-    def check_content_exists_batch(self, content_ids: List[str]) -> set:
+    def check_content_exists_batch(self, content_ids: List[str]) -> Set[str]:
         """
         Check which content IDs exist in the database (batch operation).
 
