@@ -27,7 +27,7 @@ def path_to_title(path: str) -> str:
         /autorisasjon-og-spesialistutdanning -> Autorisasjon og spesialistutdanning
     """
     # Get last segment
-    segments = [s for s in path.split('/') if s]
+    segments = [s for s in path.split("/") if s]
     if not segments:
         return ""
 
@@ -37,41 +37,43 @@ def path_to_title(path: str) -> str:
     last_segment = unquote(last_segment)
 
     # Replace hyphens with spaces
-    title = last_segment.replace('-', ' ')
+    title = last_segment.replace("-", " ")
 
     # Capitalize first letter of each word, but preserve acronyms
     words = title.split()
     capitalized_words = []
     for word in words:
         # Keep acronyms like 'e-helse' lowercase
-        if word in ['og', 'for', 'i', 'av', 'til', 'med', 'pa', 'om']:
+        if word in ["og", "for", "i", "av", "til", "med", "pa", "om"]:
             capitalized_words.append(word)
         else:
             # Capitalize first letter
-            capitalized_words.append(word[0].upper() + word[1:] if len(word) > 1 else word.upper())
+            capitalized_words.append(
+                word[0].upper() + word[1:] if len(word) > 1 else word.upper()
+            )
 
-    return ' '.join(capitalized_words)
+    return " ".join(capitalized_words)
 
 
 def get_parent_path(path: str) -> Optional[str]:
     """Get the parent path from a path."""
-    segments = [s for s in path.split('/') if s]
+    segments = [s for s in path.split("/") if s]
     if len(segments) <= 1:
         return None
-    return '/' + '/'.join(segments[:-1])
+    return "/" + "/".join(segments[:-1])
 
 
 def get_children_paths(path: str, all_paths: List[str]) -> List[str]:
     """Get all direct children of a path."""
     children = []
-    path_depth = path.count('/')
+    path_depth = path.count("/")
 
     for p in all_paths:
         if p == path:
             continue
-        if p.startswith(path + '/'):
+        if p.startswith(path + "/"):
             # Check if it's a direct child (one level deeper)
-            if p.count('/') == path_depth + 1:
+            if p.count("/") == path_depth + 1:
                 children.append(p)
 
     return sorted(children)
@@ -91,7 +93,7 @@ ROOT_CATEGORIES = {
 
 def get_category_code(path: str) -> str:
     """Get category code for a path based on root theme."""
-    segments = [s for s in path.split('/') if s]
+    segments = [s for s in path.split("/") if s]
     if not segments:
         return "9999"  # Uncategorized
 
@@ -102,7 +104,7 @@ def get_category_code(path: str) -> str:
 def generate_theme_pages(paths: List[str]) -> List[Dict]:
     """Generate theme page data from paths."""
     # First, decode all paths and replace spaces with hyphens
-    decoded_paths = [unquote(p).replace(' ', '-') for p in paths]
+    decoded_paths = [unquote(p).replace(" ", "-") for p in paths]
 
     theme_pages = []
 
@@ -115,7 +117,9 @@ def generate_theme_pages(paths: List[str]) -> List[Dict]:
         # - 9999: indicates theme page
         # - category: 0001-0007 for main themes, 9999 for uncategorized
         # - uuid: unique identifier for this specific page
-        page_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://helsedirektoratet.no{path}"))
+        page_uuid = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"https://helsedirektoratet.no{path}")
+        )
         page_id = f"9999-{category_code}-{page_uuid}"
 
         # Generate title
@@ -132,19 +136,11 @@ def generate_theme_pages(paths: List[str]) -> List[Dict]:
 
         # Add parent link if exists
         if parent_path:
-            links.append({
-                "rel": "forelder",
-                "type": "temaside",
-                "href": parent_path
-            })
+            links.append({"rel": "forelder", "type": "temaside", "href": parent_path})
 
         # Add child links
         for child_path in children:
-            links.append({
-                "rel": "barn",
-                "type": "temaside",
-                "href": child_path
-            })
+            links.append({"rel": "barn", "type": "temaside", "href": child_path})
 
         theme_page = {
             "id": page_id,
@@ -154,7 +150,7 @@ def generate_theme_pages(paths: List[str]) -> List[Dict]:
             "path": path,
             "koder": None,
             "maalgruppe": None,
-            "links": links
+            "links": links,
         }
 
         theme_pages.append(theme_page)
