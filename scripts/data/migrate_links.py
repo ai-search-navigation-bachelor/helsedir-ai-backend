@@ -29,27 +29,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.services.repositories.base import db_pool
-
-
-def extract_content_id_from_href(href: str) -> Optional[str]:
-    """
-    Extract content ID from Helsedir API href URL.
-
-    Extracts ID from URLs like:
-    - https://api.helsedirektoratet.no/innhold/veiledere/0006-0008-2c686203-c2d2-4bd5-94eb-3e1366c57bfa
-    - https://api.helsedirektoratet.no/innhold/kapitler/0006-0041-662959ab-1f9b-4438-8b98-9bbf9dcc1ac1
-    """
-    if not href:
-        return None
-
-    # Pattern: /innhold/{type}/{id}
-    pattern = r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}-[a-f0-9\-]+)'
-    match = re.search(pattern, href, re.IGNORECASE)
-
-    if match:
-        return match.group(1)
-
-    return None
+from scripts.data.link_utils import extract_content_id_from_href
 
 
 def get_all_content_ids() -> set:
@@ -70,7 +50,7 @@ def get_all_content_ids() -> set:
         conn.close()
 
 
-def transform_link(link: dict, existing_ids: set) -> dict:
+def transform_link(link: dict, existing_ids: set) -> Optional[dict]:
     """
     Transform a single link to new format.
 
@@ -79,7 +59,7 @@ def transform_link(link: dict, existing_ids: set) -> dict:
         existing_ids: Set of content IDs that exist in database
 
     Returns:
-        Transformed link dict
+        Transformed link dict, or None if link is invalid and should be removed
     """
     rel = link.get('rel', '')
 
@@ -93,16 +73,31 @@ def transform_link(link: dict, existing_ids: set) -> dict:
     if link.get('tittel'):
         new_link['tittel'] = link['tittel']
 
-    # Process all link types - try to resolve to internal ID
-    href = link.get('href', '')
-    extracted_id = extract_content_id_from_href(href)
+    # Check if link already has an 'id' field
+    existing_id = link.get('id')
 
-    if extracted_id and extracted_id in existing_ids:
-        # Internal link - use id
-        new_link['id'] = extracted_id
+    # Handle href - normalize "None" string and empty strings to None
+    href = link.get('href')
+    if href == 'None' or href == '' or (isinstance(href, str) and href.strip() == ''):
+        href = None
+
+    # Determine if this is internal or external link
+    if existing_id:
+        # Link already has an ID - this is an internal link
+        new_link['id'] = existing_id
+        # href should be None for internal links (don't include it)
+    elif href:
+        # Try to extract ID from href
+        extracted_id = extract_content_id_from_href(href)
+        if extracted_id and extracted_id in existing_ids:
+            # Can be converted to internal link
+            new_link['id'] = extracted_id
+        else:
+            # External link or unknown ID - keep href
+            new_link['href'] = href
     else:
-        # External link or no valid ID - keep href
-        new_link['href'] = href
+        # No id and no valid href - this link is invalid
+        return None
 
     return new_link
 
@@ -119,7 +114,7 @@ def migrate_content_links(dry_run: bool = False):
     print("=" * 60)
 
     if dry_run:
-        print("\n⚠️  DRY RUN MODE - No changes will be saved\n")
+        print("\nDRY RUN MODE - No changes will be saved\n")
 
     # Get all content IDs for lookup
     print("Loading all content IDs...")
@@ -155,7 +150,7 @@ def migrate_content_links(dry_run: bool = False):
                     try:
                         links = json.loads(links_json)
                     except json.JSONDecodeError:
-                        print(f"  ⚠️  Skipping {content_id}: Invalid JSON")
+                        print(f"  WARNING:  Skipping {content_id}: Invalid JSON")
                         error_count += 1
                         continue
                 else:
@@ -168,15 +163,23 @@ def migrate_content_links(dry_run: bool = False):
                 # Transform each link
                 new_links = []
                 has_changes = False
+                removed_count = 0
 
                 for link in links:
                     if not isinstance(link, dict):
                         # Preserve non-dict entries unchanged
-                        print(f"  ⚠️  Warning: Non-dict link in {content_id}: {link}")
+                        print(f"  WARNING:  Warning: Non-dict link in {content_id}: {link}")
                         new_links.append(link)
                         continue
 
                     new_link = transform_link(link, existing_ids)
+
+                    if new_link is None:
+                        # Link was invalid and removed
+                        has_changes = True
+                        removed_count += 1
+                        continue
+
                     new_links.append(new_link)
 
                     # Check if anything changed
@@ -185,14 +188,24 @@ def migrate_content_links(dry_run: bool = False):
                     # Check if any link got converted to use 'id' instead of 'href'
                     if 'id' in new_link and 'id' not in link:
                         has_changes = True
+                    # Check if href was "None" string or empty and got normalized
+                    old_href = link.get('href')
+                    new_href = new_link.get('href')
+                    if old_href in ['None', '', ' '] and new_href != old_href:
+                        has_changes = True
+                    # Check if href was removed (internal link)
+                    if 'href' in link and 'href' not in new_link:
+                        has_changes = True
 
                 if has_changes:
                     updated_count += 1
 
                     # Show example of first 5 changes
                     if updated_count <= 5:
-                        print(f"\n📝 {content_id}:")
-                        print(f"  Before: {len(links)} links")
+                        print(f"\nUPDATE: {content_id}:")
+                        print(f"  Before: {len(links)} links, After: {len(new_links)} links")
+                        if removed_count > 0:
+                            print(f"  Removed {removed_count} invalid link(s)")
                         for i, (old, new) in enumerate(zip(links, new_links)):
                             if old != new:
                                 print(f"    Link {i+1}:")
@@ -218,14 +231,14 @@ def migrate_content_links(dry_run: bool = False):
                     print(f"  Progress: {processed_count}/{len(content_rows)} items processed ({updated_count} updated, {unchanged_count} unchanged, {error_count} errors)")
 
             except Exception as e:
-                print(f"  ❌ Error processing {content_id}: {e}")
+                print(f"  ERROR: Error processing {content_id}: {e}")
                 error_count += 1
                 continue
 
         # Final commit for any remaining changes
         if not dry_run:
             conn.commit()
-            print(f"\n✅ All changes committed to database")
+            print(f"\nSUCCESS: All changes committed to database")
 
         # Summary
         print("\n" + "=" * 60)
@@ -237,10 +250,10 @@ def migrate_content_links(dry_run: bool = False):
         print(f"  Total: {len(content_rows)}")
 
         if dry_run:
-            print(f"\n⚠️  DRY RUN - No changes were saved")
+            print(f"\nWARNING:  DRY RUN - No changes were saved")
             print(f"   Run without --dry-run to apply changes")
         else:
-            print(f"\n✅ Migration complete!")
+            print(f"\nSUCCESS: Migration complete!")
 
     finally:
         if cursor is not None:

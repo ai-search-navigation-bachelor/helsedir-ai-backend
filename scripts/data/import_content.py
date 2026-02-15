@@ -49,15 +49,7 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
-
-
-def extract_content_id_from_href(href: str) -> Optional[str]:
-    """Extract content ID from Helsedir API URL."""
-    if not href:
-        return None
-    pattern = r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}-[a-f0-9\-]+)'
-    match = re.search(pattern, href, re.IGNORECASE)
-    return match.group(1) if match else None
+from scripts.data.link_utils import extract_content_id_from_href
 
 
 def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
@@ -66,9 +58,12 @@ def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
 
     For all link types (forelder, root, barn, publikasjon):
     - Extract ID from href
-    - If exists in DB: use 'id' field
-    - If not: use 'href' field
+    - If exists in DB: use 'id' field (href is omitted)
+    - If not: use 'href' field (id is omitted)
     - Remove 'strukturId'
+    - Skip invalid links (no valid id or href)
+
+    Rule: Each link must have EITHER 'id' OR 'href', never both, never neither.
     """
     if not links:
         return []
@@ -90,14 +85,32 @@ def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
         if link.get('tittel'):
             new_link['tittel'] = link['tittel']
 
-        # Resolve internal links for all types
-        href = link.get('href', '')
-        extracted_id = extract_content_id_from_href(href)
+        # Get href and normalize "None" string and empty strings to None
+        href = link.get('href')
+        if href == 'None' or href == '' or (isinstance(href, str) and href.strip() == ''):
+            href = None
 
-        if extracted_id and extracted_id in existing_ids:
-            new_link['id'] = extracted_id  # Internal link
+        # Check if link already has 'id' field from API
+        existing_id = link.get('id')
+
+        # Determine if this is internal or external link
+        if existing_id:
+            # Link already has an ID - this is an internal link
+            new_link['id'] = existing_id
+            # Don't include href for internal links
+        elif href:
+            # Try to extract ID from href
+            extracted_id = extract_content_id_from_href(href)
+            if extracted_id and extracted_id in existing_ids:
+                # Can be converted to internal link
+                new_link['id'] = extracted_id
+            else:
+                # External link - keep href
+                new_link['href'] = href
         else:
-            new_link['href'] = href  # External link or no valid ID
+            # No id and no valid href - skip this invalid link
+            print(f"  ⚠️  Skipping invalid link (no id or href): rel={rel}, type={link.get('type')}, title={link.get('tittel', '')[:50]}")
+            continue
 
         processed.append(new_link)
 
