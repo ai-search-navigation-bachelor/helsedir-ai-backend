@@ -19,6 +19,8 @@ from app.dto.response.search import (
     CategorizedSearchResponse,
     GroupedContent,
     ThemePageResponse,
+    Suggestion,
+    SuggestionResponse,
 )
 from app.services.search.search_service import search_service
 from app.services.search.feature_extractor import feature_extractor
@@ -543,6 +545,49 @@ class SearchController:
             results=results,
             total=len(results),
         )
+
+    def get_suggestions(self, query: str) -> SuggestionResponse:
+        """
+        Get autocomplete suggestions from theme pages.
+
+        Matches theme page titles against query using prefix and substring matching.
+        Returns up to 5 suggestions, with prefix matches ranked first.
+
+        Args:
+            query: Partial search text from user input
+
+        Returns:
+            SuggestionResponse with up to 5 matching theme pages
+        """
+        max_suggestions = 5
+        query_lower = query.lower().strip()
+
+        if not query_lower:
+            return SuggestionResponse(suggestions=[])
+
+        all_content = content_service.get_all_content()
+        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+
+        prefix_matches = []
+        substring_matches = []
+
+        for page in theme_pages:
+            title_lower = page.title.lower()
+            if title_lower.startswith(query_lower):
+                prefix_matches.append(page)
+            elif query_lower in title_lower:
+                substring_matches.append(page)
+
+        # Sort each group by title length (shorter = more specific)
+        prefix_matches.sort(key=lambda p: len(p.title))
+        substring_matches.sort(key=lambda p: len(p.title))
+
+        # Prefix matches first, then substring matches
+        matched = prefix_matches + substring_matches
+        top = matched[:max_suggestions]
+
+        suggestions = [Suggestion(id=page.id, title=page.title) for page in top]
+        return SuggestionResponse(suggestions=suggestions)
 
     def _log_results(
         self,
