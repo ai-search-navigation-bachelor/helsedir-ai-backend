@@ -35,11 +35,13 @@ Performance tips:
 import argparse
 import sys
 import os
+import re
 import time
 from collections import defaultdict
+from typing import List, Dict, Optional
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from app.services.external.helsedir_api_service import (
     helsedir_api_service,
@@ -47,6 +49,72 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
+from scripts.data.importing.link_utils import extract_content_id_from_href
+
+
+def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
+    """
+    Process links during import to new format.
+
+    For all link types (forelder, root, barn, publikasjon):
+    - Extract ID from href
+    - If exists in DB: use 'id' field (href is omitted)
+    - If not: use 'href' field (id is omitted)
+    - Remove 'strukturId'
+    - Skip invalid links (no valid id or href)
+
+    Rule: Each link must have EITHER 'id' OR 'href', never both, never neither.
+    """
+    if not links:
+        return []
+
+    processed = []
+    for link in links:
+        if not isinstance(link, dict):
+            # Preserve non-dict entries unchanged
+            print(f"  ⚠️  Warning: Non-dict link encountered: {link}")
+            processed.append(link)
+            continue
+
+        rel = link.get('rel', '')
+        new_link = {
+            'rel': rel,
+            'type': link.get('type', ''),
+        }
+
+        if link.get('tittel'):
+            new_link['tittel'] = link['tittel']
+
+        # Get href and normalize "None" string and empty strings to None
+        href = link.get('href')
+        if href == 'None' or href == '' or (isinstance(href, str) and href.strip() == ''):
+            href = None
+
+        # Check if link already has 'id' field from API
+        existing_id = link.get('id')
+
+        # Determine if this is internal or external link
+        if existing_id:
+            # Link already has an ID - this is an internal link
+            new_link['id'] = existing_id
+            # Don't include href for internal links
+        elif href:
+            # Try to extract ID from href
+            extracted_id = extract_content_id_from_href(href)
+            if extracted_id and extracted_id in existing_ids:
+                # Can be converted to internal link
+                new_link['id'] = extracted_id
+            else:
+                # External link - keep href
+                new_link['href'] = href
+        else:
+            # No id and no valid href - skip this invalid link
+            print(f"  ⚠️  Skipping invalid link (no id or href): rel={rel}, type={link.get('type')}, title={link.get('tittel', '')[:50]}")
+            continue
+
+        processed.append(new_link)
+
+    return processed
 
 # Info types to fetch from API (exclude temaside as it only exists locally)
 API_INFO_TYPES = [t for t in ALLOWED_INFO_TYPES if t != "temaside"]
@@ -430,14 +498,33 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
 
 def save_to_database(content_items: dict, verbose: bool = True) -> int:
-    """Save content items to database."""
+    """Save content items to database with processed links."""
     if not content_items:
         return 0
 
     contents = list(content_items.values())
 
+    # Get existing content IDs for link resolution
     if verbose:
-        print(f"\nSaving {len(contents)} items to database...")
+        print(f"\nLoading existing content IDs for link resolution...")
+    existing_ids = set(database_service.get_all_content_ids())
+    if verbose:
+        print(f"  Found {len(existing_ids)} existing content items")
+
+    # Add IDs from current batch to existing_ids (for resolving links within same batch)
+    batch_ids = {content.get('id') for content in contents if content.get('id')}
+    all_ids = existing_ids.union(batch_ids)
+
+    if verbose:
+        print(f"  Including {len(batch_ids)} IDs from current batch")
+        print(f"Processing links for {len(contents)} items...")
+
+    for content in contents:
+        if 'links' in content and content['links']:
+            content['links'] = process_links_at_import(content['links'], all_ids)
+
+    if verbose:
+        print(f"Saving {len(contents)} items to database...")
 
     saved = database_service.cache_content_batch(contents)
 

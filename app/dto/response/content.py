@@ -2,7 +2,7 @@
 Content response DTOs.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import List, Optional
 
 
@@ -11,8 +11,24 @@ class ContentLinkResponse(BaseModel):
     rel: str  # forelder, barn, root, publikasjon
     type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, etc.
     tittel: Optional[str] = None
-    href: str
-    strukturId: Optional[str] = None
+    # For internal links (in our database): use id
+    # For external links (not in database): use href
+    id: Optional[str] = None
+    href: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_id_or_href(self):
+        """Ensure exactly one of 'id' or 'href' is provided (and not empty/whitespace)."""
+        # Treat empty/whitespace-only strings as missing
+        has_id = self.id is not None and self.id.strip() != ""
+        has_href = self.href is not None and self.href.strip() != ""
+
+        if not has_id and not has_href:
+            raise ValueError("ContentLinkResponse must have either 'id' or 'href'")
+        if has_id and has_href:
+            raise ValueError("ContentLinkResponse cannot have both 'id' and 'href'")
+
+        return self
 
 
 class LinkedContentItem(BaseModel):
