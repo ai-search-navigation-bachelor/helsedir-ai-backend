@@ -22,9 +22,10 @@ class ContentLink(BaseModel):
 
     @model_validator(mode='after')
     def validate_id_or_href(self):
-        """Ensure exactly one of 'id' or 'href' is provided."""
-        has_id = self.id is not None
-        has_href = self.href is not None
+        """Ensure exactly one of 'id' or 'href' is provided (and not empty/whitespace)."""
+        # Treat empty/whitespace-only strings as missing
+        has_id = self.id is not None and self.id.strip() != ""
+        has_href = self.href is not None and self.href.strip() != ""
 
         if not has_id and not has_href:
             raise ValueError("ContentLink must have either 'id' or 'href'")
