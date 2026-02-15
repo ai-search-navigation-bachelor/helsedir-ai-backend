@@ -21,8 +21,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 import sys
-# Add project root to path (scripts/data -> scripts -> project_root)
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add project root to path (scripts/data/generation -> scripts/data -> scripts -> project_root)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from app.services.repositories.base import db_pool
 
@@ -32,8 +32,8 @@ BASE_URL = "https://www.helsedirektoratet.no"
 
 def load_theme_pages() -> List[dict]:
     """Load theme pages from JSON."""
-    # Path: scripts/data/link_theme_pages.py -> project_root/data/theme_pages.json
-    json_path = Path(__file__).parent.parent.parent / "data" / "theme_pages.json"
+    # Path: scripts/data/generation/link_theme_pages.py -> project_root/data/theme_pages.json
+    json_path = Path(__file__).parent.parent.parent.parent / "data" / "theme_pages.json"
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 

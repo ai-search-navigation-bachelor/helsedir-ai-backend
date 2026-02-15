@@ -41,7 +41,7 @@ from collections import defaultdict
 from typing import List, Dict, Optional
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from app.services.external.helsedir_api_service import (
     helsedir_api_service,
@@ -49,7 +49,7 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
-from scripts.data.link_utils import extract_content_id_from_href
+from scripts.data.importing.link_utils import extract_content_id_from_href
 
 
 def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:

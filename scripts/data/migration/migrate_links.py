@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 # Add project root to path
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.services.repositories.base import db_pool
-from scripts.data.link_utils import extract_content_id_from_href
+from scripts.data.importing.link_utils import extract_content_id_from_href
 
 
 def get_all_content_ids() -> set:

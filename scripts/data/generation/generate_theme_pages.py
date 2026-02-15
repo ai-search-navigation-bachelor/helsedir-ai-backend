@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from urllib.parse import unquote
 
 # Add project root to path for importing theme paths
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from data.theme_paths import ALL_THEME_PATHS
 
 
