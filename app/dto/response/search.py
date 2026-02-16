@@ -95,3 +95,14 @@ class ThemePageResponse(BaseModel):
     """Response model for theme page listing endpoint."""
     results: List[ThemePageResult]
     total: int
+
+
+class Suggestion(BaseModel):
+    """Single autocomplete suggestion."""
+    id: str
+    title: str
+
+
+class SuggestionResponse(BaseModel):
+    """Response model for autocomplete suggestions endpoint."""
+    suggestions: List[Suggestion]

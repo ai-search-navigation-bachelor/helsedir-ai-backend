@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.dto.request.search import SearchRequest, CategorizedSearchRequest, CategorySearchRequest
-from app.dto.response.search import SearchResponse, CategorizedSearchResponse
+from app.dto.response.search import SearchResponse, CategorizedSearchResponse, SuggestionResponse
 from app.controllers.search_controller import search_controller
 from app.config import settings
 
@@ -39,6 +39,23 @@ async def search(background_tasks: BackgroundTasks, request: SearchRequest = Dep
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@router.get("/suggestions", response_model=SuggestionResponse)
+async def suggestions(query: str = Query(..., min_length=1, description="Partial search text")):
+    """
+    Get autocomplete suggestions based on theme pages.
+
+    Returns up to 5 theme page titles matching the query.
+    Designed for search bar autocomplete with ~1.5s debounce on frontend.
+
+    Query params:
+        - query: Partial search text (required, min 1 char)
+    """
+    try:
+        return search_controller.get_suggestions(query=query)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Suggestions failed: {str(e)}")
 
 
 @router.get("/categorized", response_model=CategorizedSearchResponse)

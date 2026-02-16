@@ -47,7 +47,8 @@ class ContentService:
                         rel=link.get("rel", ""),
                         type=link.get("type", ""),
                         tittel=link.get("tittel"),
-                        href=link.get("href", ""),
+                        id=link.get("id"),  # Map 'id' field (for internal links)
+                        href=link.get("href"),  # Don't default to "" - let validator catch missing values
                         strukturId=link.get("strukturId"),
                     ))
                 except ValidationError as e:

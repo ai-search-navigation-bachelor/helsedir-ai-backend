@@ -154,9 +154,33 @@ helsedir-ai-backend/
 │       └── ranking_model.py       # XGBoost LTR
 │
 ├── scripts/
-│   ├── setup/
-│   │   └── init_database.sql      # Database schema
-│   └── ...
+│   ├── ml/                        # ML workflow (long running)
+│   │   ├── 1_generate_queries.py  # Generate queries with LLM (~3h)
+│   │   ├── 2_finetune_gpl.py      # Fine-tune E5 model (~30-60min)
+│   │   └── 3_generate_embeddings.py # Generate embeddings (~15-30min)
+│   │
+│   ├── data/
+│   │   ├── importing/             # Import from Helsedir API
+│   │   │   ├── import_content.py
+│   │   │   ├── backfill_anbefaling_details.py
+│   │   │   └── link_utils.py      # Shared utilities
+│   │   ├── migration/             # Database migrations
+│   │   │   └── migrate_links.py
+│   │   ├── generation/            # Generate static data
+│   │   │   ├── generate_theme_pages.py
+│   │   │   ├── populate_theme_pages.py
+│   │   │   └── link_theme_pages.py
+│   │   └── maintenance/           # Database cleanup
+│   │       └── reduce_content.py
+│   │
+│   ├── test/
+│   │   ├── api/                   # API tests
+│   │   ├── ml/                    # ML & embedding tests
+│   │   ├── search/                # Search & ranking tests
+│   │   └── data/                  # Data & DB tests
+│   │
+│   └── setup/
+│       └── init_database.sql      # Database schema
 │
 ├── models/                        # Trained model files
 ├── .env.example                   # Environment template
@@ -227,6 +251,30 @@ SEARCH_EXACT_PHRASE_TITLE_WEIGHT=10.0
 SEARCH_FULL_TITLE_COVERAGE_WEIGHT=7.0
 SEARCH_KEYWORD_TITLE_WEIGHT=3.0
 ```
+
+## Scripts Organization
+
+Scripts are organized by function in `scripts/`:
+
+**ML Workflow** (`scripts/ml/`):
+- Numbered 1-2-3 to show execution order
+- `1_generate_queries.py` - Generate synthetic queries using Groq LLM
+- `2_finetune_gpl.py` - Fine-tune E5 model with GPL (Generative Pseudo Labeling)
+- `3_generate_embeddings.py` - Generate embeddings with fine-tuned model
+
+**Data Management** (`scripts/data/`):
+- `importing/` - Import content from Helsedir API
+- `migration/` - Database schema and data migrations
+- `generation/` - Generate theme pages and static data
+- `maintenance/` - Database cleanup utilities
+
+**Testing** (`scripts/test/`):
+- `api/` - API endpoint tests
+- `ml/` - ML model and embedding tests
+- `search/` - Search and ranking tests
+- `data/` - Data import and validation tests
+
+Each subdirectory contains a README.md with usage examples.
 
 ## Design Patterns
 

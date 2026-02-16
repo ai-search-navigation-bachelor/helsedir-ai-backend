@@ -200,10 +200,10 @@ def main():
     from app.services.data.database_service import database_service
     from app.ml.embedding_model import HealthContentEmbedding
 
-    # Import enrich_content_with_links from generate_embeddings.py
+    # Import enrich_content_with_links from 3_generate_embeddings.py (same directory)
     import sys
     from pathlib import Path
-    embeddings_script = Path(__file__).parent / "generate_embeddings.py"
+    embeddings_script = Path(__file__).parent / "3_generate_embeddings.py"
 
     # Load enrich_content_with_links function
     import importlib.util
@@ -400,8 +400,8 @@ def main():
     print(f"  Average per document: {avg_queries:.1f}")
 
     print(f"\nNext steps:")
-    print(f"  1. Train model: python scripts/train/finetune_gpl.py")
-    print(f"  2. Generate embeddings: python scripts/data/generate_embeddings.py")
+    print(f"  1. Train model: python scripts/ml/2_finetune_gpl.py")
+    print(f"  2. Generate embeddings: python scripts/ml/3_generate_embeddings.py")
 
 
 if __name__ == "__main__":

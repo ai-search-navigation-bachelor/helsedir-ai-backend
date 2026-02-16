@@ -3,7 +3,7 @@ Repository for content operations.
 """
 
 import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 import mysql.connector
 
 from app.services.repositories.base import db_pool
@@ -296,6 +296,43 @@ class ContentRepository:
             return []
         finally:
             cursor.close()
+            conn.close()
+
+    def check_content_exists_batch(self, content_ids: List[str]) -> Set[str]:
+        """
+        Check which content IDs exist in the database (batch operation).
+
+        Args:
+            content_ids: List of content IDs to check
+
+        Returns:
+            Set of content IDs that exist in database
+        """
+        if not content_ids:
+            return set()
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return set()
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+
+            # Use IN clause for batch lookup
+            placeholders = ','.join(['%s'] * len(content_ids))
+            query = f"SELECT id FROM content WHERE id IN ({placeholders})"
+            cursor.execute(query, tuple(content_ids))
+            results = cursor.fetchall()
+
+            return {row[0] for row in results}
+
+        except mysql.connector.Error as e:
+            print(f"Error checking content existence: {e}")
+            return set()
+        finally:
+            if cursor:
+                cursor.close()
             conn.close()
 
     def get_content_stats_by_type(self) -> List[Dict[str, Any]]:

@@ -667,12 +667,12 @@ def main():
     print("=" * 60)
     print(f"""
 1. Regenerate embeddings with the GPL-trained model:
-   python scripts/data/generate_embeddings.py --model-name {args.output_dir}
+   python scripts/ml/3_generate_embeddings.py --model-name {args.output_dir}
 
 2. Test search quality - relevant documents should now score higher
 
 3. If needed, train for more epochs or generate more queries:
-   python scripts/train/finetune_gpl.py --epochs 2 --queries-per-doc 5
+   python scripts/ml/2_finetune_gpl.py --epochs 2 --queries-per-doc 5
 """)
 
 
