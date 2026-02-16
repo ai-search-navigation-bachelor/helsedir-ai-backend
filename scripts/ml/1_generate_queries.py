@@ -12,9 +12,9 @@ Features:
 - Uses same passage format as embeddings (includes linked content)
 
 Usage:
-    python scripts/data/generate_queries.py                     # Generate 10 queries per doc
-    python scripts/data/generate_queries.py --queries-per-doc 15 # Generate 15 queries per doc
-    python scripts/data/generate_queries.py --force              # Regenerate all queries
+    python scripts/ml/1_generate_queries.py                     # Generate 10 queries per doc
+    python scripts/ml/1_generate_queries.py --queries-per-doc 15 # Generate 15 queries per doc
+    python scripts/ml/1_generate_queries.py --force              # Regenerate all queries
 
 Requirements:
     GROQ_API_KEY in .env (free from https://console.groq.com/keys)
