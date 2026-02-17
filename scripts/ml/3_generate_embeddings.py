@@ -9,10 +9,10 @@ Fetches linked content (barn, forelder, root, publikasjon) from Helsedirektorate
 to enrich all documents with related content.
 
 Usage:
-    python scripts/data/generate_embeddings.py                                    # Use fine-tuned model
-    python scripts/data/generate_embeddings.py --batch-size 16                    # Adjust batch size
-    python scripts/data/generate_embeddings.py --no-fetch-links                   # Skip API calls (faster)
-    python scripts/data/generate_embeddings.py --model-name intfloat/multilingual-e5-base  # Use base model
+    python scripts/ml/3_generate_embeddings.py                                    # Use fine-tuned model
+    python scripts/ml/3_generate_embeddings.py --batch-size 16                    # Adjust batch size
+    python scripts/ml/3_generate_embeddings.py --no-fetch-links                   # Skip API calls (faster)
+    python scripts/ml/3_generate_embeddings.py --model-name intfloat/multilingual-e5-base  # Use base model
 """
 
 import argparse
