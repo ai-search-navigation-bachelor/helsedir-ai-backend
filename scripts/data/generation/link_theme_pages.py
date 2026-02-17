@@ -133,7 +133,8 @@ def load_content_cache():
                 id_cache[parts[-1]] = content
 
             if content.get('path'):
-                path_cache[content['path']] = content
+                normalized = content['path'].rstrip('/') or '/'
+                path_cache[normalized] = content
 
         print(f"Loaded {len(id_cache)} items into ID cache, {len(path_cache)} into path cache")
         return id_cache, path_cache
@@ -273,7 +274,7 @@ def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: 
     matched_content_ids = []
 
     for link_url in sorted(links):
-        link_path = urlparse(link_url).path
+        link_path = urlparse(link_url).path.rstrip('/') or '/'
 
         # First: try direct path match (no HTTP request)
         content = path_cache.get(link_path)

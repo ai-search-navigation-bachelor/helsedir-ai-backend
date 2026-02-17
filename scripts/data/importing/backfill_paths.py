@@ -85,7 +85,7 @@ def fetch_path(content_id: str):
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
     api_url = detailed.get("url", "")
     if api_url and "helsedirektoratet.no" in api_url:
-        return content_id, urlparse(api_url).path
+        return content_id, urlparse(api_url).path.rstrip('/') or '/'
     return content_id, None
 
 

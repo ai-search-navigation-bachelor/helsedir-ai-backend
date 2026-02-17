@@ -538,7 +538,7 @@ def save_to_database(content_items: dict, verbose: bool = True) -> int:
         if not content.get('path'):
             api_url = content.get('url', '')
             if api_url and 'helsedirektoratet.no' in api_url:
-                content['path'] = urlparse(api_url).path
+                content['path'] = urlparse(api_url).path.rstrip('/') or '/'
 
     if verbose:
         print(f"Saving {len(contents)} items to database...")
