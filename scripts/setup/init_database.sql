@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS content (
     embedding BLOB,
 
     -- Theme page fields (only used when info_type='temaside')
-    path VARCHAR(500),
+    -- Also stores helsedirektoratet.no path for regular content (from API url field)
+    path VARCHAR(1000),
 
     INDEX idx_info_type (info_type),
     INDEX idx_path (path(255)),
