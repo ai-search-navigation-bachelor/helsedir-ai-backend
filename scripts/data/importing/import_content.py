@@ -39,6 +39,7 @@ import os
 import re
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
 
 # Add project root to path
@@ -310,20 +311,26 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
                     print(f"    Fetching details for {len(new_items)} items...", end=" ", flush=True)
 
                 failed_count = 0
-                for content_id, item in new_items:
-                    try:
-                        detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-                        item["links"] = detailed.get("links")
-                        if detailed.get("koder") is not None:
-                            item["koder"] = detailed.get("koder")
-                        if detailed.get("maalgruppe") is not None:
-                            item["maalgruppe"] = detailed.get("maalgruppe")
-                        time.sleep(0.1)
-                    except Exception as err:
-                        failed_count += 1
-                        if verbose:
-                            print(f"\n      WARN: Failed to fetch details for {content_id}: {err}", flush=True)
-                        continue
+
+                def _fetch_detail(args):
+                    content_id, item = args
+                    detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
+                    item["links"] = detailed.get("links")
+                    if detailed.get("koder") is not None:
+                        item["koder"] = detailed.get("koder")
+                    if detailed.get("maalgruppe") is not None:
+                        item["maalgruppe"] = detailed.get("maalgruppe")
+
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(_fetch_detail, arg): arg[0] for arg in new_items}
+                    for future in as_completed(futures):
+                        content_id = futures[future]
+                        try:
+                            future.result()
+                        except Exception as err:
+                            failed_count += 1
+                            if verbose:
+                                print(f"\n      WARN: Failed to fetch details for {content_id}: {err}", flush=True)
 
                 if verbose:
                     status = "done" if failed_count == 0 else f"done ({failed_count} failed)"
@@ -447,36 +454,34 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
                 if verbose:
                     skip_msg = f" (skipped {skipped_this_term} existing)" if skipped_this_term > 0 else ""
-                    print(f"    Fetching details for {len(items_to_fetch)} items{skip_msg}:", flush=True)
+                    print(f"    Fetching details for {len(items_to_fetch)} items{skip_msg}...", end=" ", flush=True)
 
-                for j, (content_id, item) in enumerate(items_to_fetch):
-                    try:
-                        if verbose:
-                            print(f"      [{j+1}/{len(items_to_fetch)}] ID: {content_id}", flush=True)
+                fetch_failed = 0
 
-                        detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
+                def _fetch_detail_search(args):
+                    content_id, item = args
+                    detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
+                    item["links"] = detailed.get("links")
+                    if detailed.get("koder") is not None:
+                        item["koder"] = detailed.get("koder")
+                    if detailed.get("maalgruppe") is not None:
+                        item["maalgruppe"] = detailed.get("maalgruppe")
 
-                        if verbose:
-                            print(f"        Response keys: {list(detailed.keys()) if detailed else 'None'}", flush=True)
-                            print(f"        links type: {type(detailed.get('links'))}, value: {detailed.get('links')}", flush=True)
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(_fetch_detail_search, arg): arg[0] for arg in items_to_fetch}
+                    for future in as_completed(futures):
+                        content_id = futures[future]
+                        try:
+                            future.result()
+                            total_detail_fetches += 1
+                        except Exception as e:
+                            fetch_failed += 1
+                            if verbose:
+                                print(f"\n        FAILED {content_id}: {type(e).__name__}: {e}", flush=True)
 
-                        # Use detailed response as authoritative source
-                        item["links"] = detailed.get("links")
-                        links_count = len(detailed.get("links") or [])
-
-                        if detailed.get("koder") is not None:
-                            item["koder"] = detailed.get("koder")
-                        if detailed.get("maalgruppe") is not None:
-                            item["maalgruppe"] = detailed.get("maalgruppe")
-                        total_detail_fetches += 1
-
-                        if verbose:
-                            print(f"        -> Saved with {links_count} links", flush=True)
-
-                        time.sleep(0.1)  # Rate limiting
-                    except Exception as e:
-                        if verbose:
-                            print(f"        FAILED: {type(e).__name__}: {e}", flush=True)
+                if verbose:
+                    status = "done" if fetch_failed == 0 else f"done ({fetch_failed} failed)"
+                    print(status, flush=True)
 
             # Check if we've reached target AFTER fetching details
             if target > 0 and len(all_content) >= target:
