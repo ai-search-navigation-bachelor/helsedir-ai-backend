@@ -103,40 +103,44 @@ def extract_links_from_theme_page(html: str, theme_path: str) -> Set[str]:
     return links
 
 
-def load_content_cache() -> Dict[str, dict]:
+def load_content_cache():
     """
     Load all content from database into memory for fast lookups.
-    Returns dict mapping pageID suffix to full content record.
+
+    Returns:
+        Tuple of (id_cache, path_cache):
+        - id_cache: maps pageID suffix to content record
+        - path_cache: maps helsedirektoratet.no path to content record
     """
     print("\nLoading content cache from database...")
     conn = db_pool.get_connection()
     if not conn:
         print("ERROR: Could not connect to database")
-        return {}
+        return {}, {}
 
     cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM content WHERE info_type != 'temaside'")
+        cursor.execute("SELECT id, tittel, path FROM content WHERE info_type != 'temaside'")
         all_content = cursor.fetchall()
 
-        # Build lookup dict: pageID -> content
-        cache = {}
+        id_cache = {}
+        path_cache = {}
         for content in all_content:
             content_id = content['id']
-            # Extract the last part after dashes (the pageID)
-            # e.g., "0006-retningslinje-abc123" -> "abc123"
             parts = content_id.split('-')
             if len(parts) >= 2:
-                page_id_suffix = parts[-1]
-                cache[page_id_suffix] = content
+                id_cache[parts[-1]] = content
 
-        print(f"Loaded {len(cache)} content items into cache")
-        return cache
+            if content.get('path'):
+                path_cache[content['path']] = content
+
+        print(f"Loaded {len(id_cache)} items into ID cache, {len(path_cache)} into path cache")
+        return id_cache, path_cache
 
     except Exception as e:
         print(f"ERROR loading content cache: {e}")
-        return {}
+        return {}, {}
     finally:
         if cursor:
             cursor.close()
@@ -231,97 +235,92 @@ def link_content_batch(theme_page_id: str, content_ids: List[str]) -> int:
         conn.close()
 
 
-def process_theme_page(theme_page: dict, content_cache: Dict[str, dict], verbose: bool = True) -> int:
+def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: Dict[str, dict], verbose: bool = True) -> Dict:
     """
-    Process a single theme page: fetch, extract links, match content (optimized).
+    Process a single theme page: fetch, extract links, match content.
 
     Args:
         theme_page: Theme page dict
-        content_cache: In-memory cache of all content (for fast lookups)
+        id_cache: Maps pageID suffix to content record
+        path_cache: Maps helsedirektoratet.no path to content record
         verbose: Print detailed progress
 
     Returns:
-        Number of content items linked
+        Dict with keys: linked, path_matches, pageid_matches, not_found, fetch_error
     """
+    result = {"linked": 0, "path_matches": 0, "pageid_matches": 0, "not_found": 0, "fetch_error": False}
+
     theme_id = theme_page['id']
     theme_path = theme_page['path']
     theme_title = theme_page['tittel']
 
     if verbose:
-        print(f"\n{'='*60}")
-        print(f"Processing: {theme_title}")
-        print(f"Path: {theme_path}")
-        print(f"ID: {theme_id}")
+        print(f"  Fetching...", end=" ", flush=True)
 
-    # Fetch theme page HTML
-    theme_url = BASE_URL + theme_path
-    if verbose:
-        print(f"\nFetching: {theme_url}")
-
-    html = fetch_page_html(theme_url)
+    html = fetch_page_html(BASE_URL + theme_path)
     if not html:
-        print("  ERROR: Could not fetch page")
-        return 0
+        print("ERROR: could not fetch page")
+        result["fetch_error"] = True
+        return result
 
-    # Extract links from theme page
     links = extract_links_from_theme_page(html, theme_path)
     if verbose:
-        print(f"Found {len(links)} links on theme page")
+        print(f"{len(links)} links found")
 
     if not links:
-        return 0
+        return result
 
-    # Collect all matched content IDs (for batch insert)
     matched_content_ids = []
 
-    # Process each link
-    for i, link_url in enumerate(sorted(links), 1):
-        if verbose:
-            print(f"\n  [{i}/{len(links)}] {link_url}")
+    for link_url in sorted(links):
+        link_path = urlparse(link_url).path
 
-        # Fetch linked page
+        # First: try direct path match (no HTTP request)
+        content = path_cache.get(link_path)
+        if content:
+            matched_content_ids.append(content['id'])
+            result["path_matches"] += 1
+            if verbose:
+                print(f"    ✓ [path]   {link_path}")
+            continue
+
+        # Fallback: fetch page and look for pageID meta tag
         link_html = fetch_page_html(link_url)
         if not link_html:
+            result["not_found"] += 1
+            if verbose:
+                print(f"    ✗ [fetch]  {link_path}")
             continue
 
-        # Extract pageID
         page_id = extract_page_id_from_html(link_html)
         if not page_id:
+            result["not_found"] += 1
             if verbose:
-                print("    No pageID found")
+                print(f"    ✗ [no id]  {link_path}")
             continue
 
-        if verbose:
-            print(f"    pageID: {page_id}")
-
-        # Find matching content using in-memory cache (fast!)
-        content = find_content_by_page_id(page_id, content_cache)
+        content = find_content_by_page_id(page_id, id_cache)
         if not content:
+            result["not_found"] += 1
             if verbose:
-                print("    ✗ No matching content in cache")
+                print(f"    ✗ [no db]  {link_path}")
             continue
 
-        content_id = content['id']
-        content_title = content['tittel']
+        matched_content_ids.append(content['id'])
+        result["pageid_matches"] += 1
         if verbose:
-            print(f"    ✓ Found: {content_id}")
-            print(f"      Title: {content_title[:60]}...")
-
-        matched_content_ids.append(content_id)
-
-        # Rate limiting
+            print(f"    ✓ [pageid] {link_path}")
         time.sleep(0.2)
 
-    # Batch insert all links at once (optimized!)
     if matched_content_ids:
-        linked_count = link_content_batch(theme_id, matched_content_ids)
-        if verbose:
-            print(f"\n✓ Batch linked {linked_count} content items to theme page")
-        return linked_count
-    else:
-        if verbose:
-            print(f"\n✗ No content items matched")
-        return 0
+        result["linked"] = link_content_batch(theme_id, matched_content_ids)
+
+    total = len(links)
+    matched = result["path_matches"] + result["pageid_matches"]
+    if verbose:
+        print(f"  -> Linked {result['linked']}/{total} | path: {result['path_matches']}, pageID: {result['pageid_matches']}, no match: {result['not_found']}")
+
+    return result
 
 
 def has_children(theme_page: dict) -> bool:
@@ -344,8 +343,8 @@ def main():
         return
 
     # Load content cache (optimization: all content in memory)
-    content_cache = load_content_cache()
-    if not content_cache:
+    id_cache, path_cache = load_content_cache()
+    if not id_cache and not path_cache:
         print("\nERROR: Could not load content cache")
         return
 
@@ -361,29 +360,44 @@ def main():
 
     # Process each leaf theme page
     total_linked = 0
+    total_path = 0
+    total_pageid = 0
+    total_not_found = 0
     processed = 0
+    errors = 0
+
     for i, theme_page in enumerate(leaf_theme_pages, 1):
-        print(f"\n\n{'#'*60}")
-        print(f"THEME PAGE {i}/{len(leaf_theme_pages)}")
-        print(f"{'#'*60}")
+        print(f"\n[{i}/{len(leaf_theme_pages)}] {theme_page['tittel']}")
+        print(f"  Path: {theme_page['path']}")
 
         try:
-            linked = process_theme_page(theme_page, content_cache, verbose=True)
-            total_linked += linked
-            processed += 1
+            result = process_theme_page(theme_page, id_cache, path_cache, verbose=True)
+            total_linked += result["linked"]
+            total_path += result["path_matches"]
+            total_pageid += result["pageid_matches"]
+            total_not_found += result["not_found"]
+            if result["fetch_error"]:
+                errors += 1
+            else:
+                processed += 1
         except KeyboardInterrupt:
             print("\n\nInterrupted by user")
             break
         except Exception as e:
-            print(f"\nERROR processing theme page: {e}")
+            print(f"  ERROR: {e}")
+            errors += 1
             continue
 
     print(f"\n\n{'='*60}")
     print(f"SUMMARY")
     print(f"{'='*60}")
-    print(f"Total content items linked: {total_linked}")
-    print(f"Leaf theme pages processed: {processed}/{len(leaf_theme_pages)}")
-    print(f"Parent theme pages skipped: {len(theme_pages) - len(leaf_theme_pages)}")
+    print(f"Processed:        {processed}/{len(leaf_theme_pages)} theme pages")
+    print(f"Errors:           {errors}")
+    print(f"Total linked:     {total_linked}")
+    print(f"  via path:       {total_path}")
+    print(f"  via pageID:     {total_pageid}")
+    print(f"  no match:       {total_not_found}")
+    print(f"Parent pages skipped: {len(theme_pages) - len(leaf_theme_pages)}")
 
 
 if __name__ == "__main__":
