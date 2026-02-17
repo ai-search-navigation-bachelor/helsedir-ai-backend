@@ -12,6 +12,7 @@ Usage with --info-type (fetch specific content type):
 
 Usage with --by-type (fetches directly by info_type, NO search terms used):
     python scripts/data/import_content.py --by-type                # Fetch evenly distributed: 1000 total / 23 API types = ~43 per type
+    python scripts/data/import_content.py --by-type --target 0     # Fetch ALL available items from ALL info types
     python scripts/data/import_content.py --by-type --target 1200  # Fetch 1200 total, evenly distributed (~52 per type)
     python scripts/data/import_content.py --by-type --per-type 30  # Fetch 30 items per type (690 total)
 
@@ -657,13 +658,14 @@ def main():
     # Calculate per-type target when using --by-type
     if args.by_type:
         if args.per_type is not None:
-            # Explicit per-type count
+            # Explicit per-type count (0 = all available)
             per_type_target = args.per_type
             total_target = per_type_target * len(API_INFO_TYPES)
         else:
             # Distribute --target evenly across types (excluding temaside)
+            # target=0 means fetch all available per type
             total_target = target
-            per_type_target = max(1, target // len(API_INFO_TYPES))
+            per_type_target = 0 if target == 0 else max(1, target // len(API_INFO_TYPES))
     else:
         per_type_target = 50  # Not used in search mode
         total_target = target
@@ -680,8 +682,8 @@ def main():
         elif args.by_type:
             print(f"\nMode: By info type (balanced coverage)")
             print(f"Info types from API: {len(API_INFO_TYPES)} (excludes 'temaside')")
-            print(f"Target per type: {per_type_target}")
-            print(f"Total target: ~{total_target}")
+            print(f"Target per type: {'All available' if per_type_target == 0 else per_type_target}")
+            print(f"Total target: {'All available' if per_type_target == 0 else f'~{total_target}'}")
         else:
             print(f"\nMode: Search terms")
             print(f"Search terms: {len(search_terms)}")
