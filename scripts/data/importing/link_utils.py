@@ -7,6 +7,7 @@ across import and migration scripts.
 
 import re
 from typing import Optional
+from urllib.parse import urlparse
 
 
 def extract_content_id_from_href(href: str) -> Optional[str]:
@@ -34,3 +35,21 @@ def extract_content_id_from_href(href: str) -> Optional[str]:
         return match.group(1)
 
     return None
+
+
+def extract_helsedir_path(url: str) -> Optional[str]:
+    """
+    Extract normalized helsedirektoratet.no path from a URL.
+
+    Returns the path with trailing slash stripped (except root "/"),
+    or None if the URL is not a helsedirektoratet.no URL.
+
+    Args:
+        url: The URL to extract the path from
+
+    Returns:
+        Normalized path string, or None if not a helsedirektoratet.no URL
+    """
+    if not url or "helsedirektoratet.no" not in url:
+        return None
+    return urlparse(url).path.rstrip('/') or '/'

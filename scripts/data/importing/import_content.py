@@ -40,7 +40,6 @@ import re
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
 from typing import List, Dict, Optional
 
 # Add project root to path
@@ -52,7 +51,7 @@ from app.services.external.helsedir_api_service import (
 )
 from app.services.data.database_service import database_service
 from app.constants import ALLOWED_INFO_TYPES, CATEGORY_INFO
-from scripts.data.importing.link_utils import extract_content_id_from_href
+from scripts.data.importing.link_utils import extract_content_id_from_href, extract_helsedir_path
 
 
 def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
@@ -526,9 +525,9 @@ def save_to_database(content_items: dict, verbose: bool = True) -> int:
 
         # Extract helsedirektoratet.no path from API url field if not already set
         if not content.get('path'):
-            api_url = content.get('url', '')
-            if api_url and 'helsedirektoratet.no' in api_url:
-                content['path'] = urlparse(api_url).path.rstrip('/') or '/'
+            path = extract_helsedir_path(content.get('url', ''))
+            if path:
+                content['path'] = path
 
     if verbose:
         print(f"Saving {len(contents)} items to database...")

@@ -14,12 +14,12 @@ import argparse
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from app.services.external.helsedir_api_service import helsedir_api_service
 from app.services.repositories.base import db_pool
+from scripts.data.importing.link_utils import extract_helsedir_path
 
 
 def get_content_with_null_path(limit: int = 0):
@@ -89,10 +89,8 @@ def fetch_path(content_id: str):
         (content_id, path) where path is None if not found
     """
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-    api_url = detailed.get("url", "")
-    if api_url and "helsedirektoratet.no" in api_url:
-        return content_id, urlparse(api_url).path.rstrip('/') or '/'
-    return content_id, None
+    path = extract_helsedir_path(detailed.get("url", ""))
+    return content_id, path
 
 
 def main():
