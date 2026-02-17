@@ -119,6 +119,18 @@ def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
 
     return processed
 
+def _enrich_item_from_api(content_id: str, item: dict) -> None:
+    """Fetch detail from API and enrich item in-place with links, koder, maalgruppe, url."""
+    detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
+    item["links"] = detailed.get("links")
+    if detailed.get("koder") is not None:
+        item["koder"] = detailed.get("koder")
+    if detailed.get("maalgruppe") is not None:
+        item["maalgruppe"] = detailed.get("maalgruppe")
+    if detailed.get("url"):
+        item["url"] = detailed.get("url")
+
+
 # Info types to fetch from API (exclude temaside as it only exists locally)
 API_INFO_TYPES = [t for t in ALLOWED_INFO_TYPES if t != "temaside"]
 
@@ -313,19 +325,8 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
 
                 failed_count = 0
 
-                def _fetch_detail(args):
-                    content_id, item = args
-                    detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-                    item["links"] = detailed.get("links")
-                    if detailed.get("koder") is not None:
-                        item["koder"] = detailed.get("koder")
-                    if detailed.get("maalgruppe") is not None:
-                        item["maalgruppe"] = detailed.get("maalgruppe")
-                    if detailed.get("url"):
-                        item["url"] = detailed.get("url")
-
                 with ThreadPoolExecutor(max_workers=10) as executor:
-                    futures = {executor.submit(_fetch_detail, arg): arg[0] for arg in new_items}
+                    futures = {executor.submit(_enrich_item_from_api, cid, item): cid for cid, item in new_items}
                     for future in as_completed(futures):
                         content_id = futures[future]
                         try:
@@ -461,19 +462,8 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
                 fetch_failed = 0
 
-                def _fetch_detail_search(args):
-                    content_id, item = args
-                    detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-                    item["links"] = detailed.get("links")
-                    if detailed.get("koder") is not None:
-                        item["koder"] = detailed.get("koder")
-                    if detailed.get("maalgruppe") is not None:
-                        item["maalgruppe"] = detailed.get("maalgruppe")
-                    if detailed.get("url"):
-                        item["url"] = detailed.get("url")
-
                 with ThreadPoolExecutor(max_workers=10) as executor:
-                    futures = {executor.submit(_fetch_detail_search, arg): arg[0] for arg in items_to_fetch}
+                    futures = {executor.submit(_enrich_item_from_api, cid, item): cid for cid, item in items_to_fetch}
                     for future in as_completed(futures):
                         content_id = futures[future]
                         try:
