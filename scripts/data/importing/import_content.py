@@ -40,6 +40,7 @@ import re
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 from typing import List, Dict, Optional
 
 # Add project root to path
@@ -320,6 +321,8 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
                         item["koder"] = detailed.get("koder")
                     if detailed.get("maalgruppe") is not None:
                         item["maalgruppe"] = detailed.get("maalgruppe")
+                    if detailed.get("url"):
+                        item["url"] = detailed.get("url")
 
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     futures = {executor.submit(_fetch_detail, arg): arg[0] for arg in new_items}
@@ -466,6 +469,8 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
                         item["koder"] = detailed.get("koder")
                     if detailed.get("maalgruppe") is not None:
                         item["maalgruppe"] = detailed.get("maalgruppe")
+                    if detailed.get("url"):
+                        item["url"] = detailed.get("url")
 
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     futures = {executor.submit(_fetch_detail_search, arg): arg[0] for arg in items_to_fetch}
