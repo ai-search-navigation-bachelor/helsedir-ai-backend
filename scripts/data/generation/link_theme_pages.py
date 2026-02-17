@@ -253,10 +253,9 @@ def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: 
 
     theme_id = theme_page['id']
     theme_path = theme_page['path']
-    theme_title = theme_page['tittel']
 
     if verbose:
-        print(f"  Fetching...", end=" ", flush=True)
+        print("  Fetching...", end=" ", flush=True)
 
     html = fetch_page_html(BASE_URL + theme_path)
     if not html:
@@ -317,7 +316,6 @@ def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: 
         result["linked"] = link_content_batch(theme_id, matched_content_ids)
 
     total = len(links)
-    matched = result["path_matches"] + result["pageid_matches"]
     if verbose:
         print(f"  -> Linked {result['linked']}/{total} | path: {result['path_matches']}, pageID: {result['pageid_matches']}, no match: {result['not_found']}")
 
@@ -390,7 +388,7 @@ def main():
             continue
 
     print(f"\n\n{'='*60}")
-    print(f"SUMMARY")
+    print("SUMMARY")
     print(f"{'='*60}")
     print(f"Processed:        {processed}/{len(leaf_theme_pages)} theme pages")
     print(f"Errors:           {errors}")
