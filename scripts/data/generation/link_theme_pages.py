@@ -286,6 +286,8 @@ def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: 
 
         # Fallback: fetch page and look for pageID meta tag
         link_html = fetch_page_html(link_url)
+        time.sleep(0.2)  # Rate limit every HTTP fetch regardless of outcome
+
         if not link_html:
             result["not_found"] += 1
             if verbose:
@@ -310,7 +312,6 @@ def process_theme_page(theme_page: dict, id_cache: Dict[str, dict], path_cache: 
         result["pageid_matches"] += 1
         if verbose:
             print(f"    ✓ [pageid] {link_path}")
-        time.sleep(0.2)
 
     if matched_content_ids:
         result["linked"] = link_content_batch(theme_id, matched_content_ids)
