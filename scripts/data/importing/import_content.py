@@ -225,7 +225,7 @@ EXTENDED_SEARCH_TERMS = [
 ALPHABET_SEARCH_TERMS = list("abcdefghijklmnopqrstuvwxyzæøå")
 
 
-def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50, specific_type: Optional[str] = None, skip_existing: bool = False, existing_ids: Optional[set] = None) -> dict:
+def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target_per_type: int = 50, specific_type: Optional[str] = None, skip_existing: bool = False, existing_ids: Optional[set] = None, workers: int = 10) -> dict:
     """
     Fetch content from Helsedir API by filtering on each info type.
 
@@ -324,7 +324,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
 
                 failed_count = 0
 
-                with ThreadPoolExecutor(max_workers=10) as executor:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
                     futures = {executor.submit(_enrich_item_from_api, cid, item): cid for cid, item in new_items}
                     for future in as_completed(futures):
                         content_id = futures[future]
@@ -362,7 +362,7 @@ def fetch_content_by_type(verbose: bool = True, fetch_links: bool = True, target
     return all_content
 
 
-def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0, skip_existing: bool = False, existing_ids: Optional[set] = None) -> dict:
+def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = True, target: int = 0, skip_existing: bool = False, existing_ids: Optional[set] = None, workers: int = 10) -> dict:
     """
     Fetch content from Helsedir API using search terms.
 
@@ -461,7 +461,7 @@ def fetch_content(search_terms: list, verbose: bool = True, fetch_links: bool = 
 
                 fetch_failed = 0
 
-                with ThreadPoolExecutor(max_workers=10) as executor:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
                     futures = {executor.submit(_enrich_item_from_api, cid, item): cid for cid, item in items_to_fetch}
                     for future in as_completed(futures):
                         content_id = futures[future]
@@ -619,6 +619,12 @@ def main():
         help="Skip fetching details for items already in database (faster re-runs, saves API calls)",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=10,
+        help="Number of parallel workers for detail fetching (default: 10)",
+    )
+    parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Suppress progress output",
@@ -724,7 +730,8 @@ def main():
             target_per_type=limit,
             specific_type=specific_type,
             skip_existing=args.skip_existing,
-            existing_ids=existing_ids
+            existing_ids=existing_ids,
+            workers=args.workers,
         )
     elif args.by_type:
         content_items = fetch_content_by_type(
@@ -732,7 +739,8 @@ def main():
             fetch_links=fetch_links,
             target_per_type=per_type_target,
             skip_existing=args.skip_existing,
-            existing_ids=existing_ids
+            existing_ids=existing_ids,
+            workers=args.workers,
         )
     else:
         content_items = fetch_content(
@@ -741,7 +749,8 @@ def main():
             fetch_links=fetch_links,
             target=target,
             skip_existing=args.skip_existing,
-            existing_ids=existing_ids
+            existing_ids=existing_ids,
+            workers=args.workers,
         )
 
     # Save to database
