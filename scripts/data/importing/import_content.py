@@ -534,6 +534,12 @@ def save_to_database(content_items: dict, verbose: bool = True) -> int:
         if 'links' in content and content['links']:
             content['links'] = process_links_at_import(content['links'], all_ids)
 
+        # Extract helsedirektoratet.no path from API url field if not already set
+        if not content.get('path'):
+            api_url = content.get('url', '')
+            if api_url and 'helsedirektoratet.no' in api_url:
+                content['path'] = urlparse(api_url).path
+
     if verbose:
         print(f"Saving {len(contents)} items to database...")
 
