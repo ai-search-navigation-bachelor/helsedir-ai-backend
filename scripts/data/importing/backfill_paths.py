@@ -27,18 +27,22 @@ def get_content_with_null_path(limit: int = 0):
     conn = db_pool.get_connection()
     if not conn:
         return []
+    cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
         query = "SELECT id FROM content WHERE path IS NULL AND info_type != 'temaside'"
+        params = ()
         if limit > 0:
-            query += f" LIMIT {limit}"
-        cursor.execute(query)
+            query += " LIMIT %s"
+            params = (limit,)
+        cursor.execute(query, params)
         return [row['id'] for row in cursor.fetchall()]
     except Exception as e:
         print(f"ERROR fetching NULL-path content: {e}")
         return []
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 
@@ -58,6 +62,7 @@ def batch_update_paths(updates: list) -> int:
     if not conn:
         print("ERROR: Could not get DB connection for batch update")
         return 0
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.executemany(
@@ -71,7 +76,8 @@ def batch_update_paths(updates: list) -> int:
         conn.rollback()
         return 0
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 
