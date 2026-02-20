@@ -20,6 +20,7 @@ class ContentService:
     def __init__(self):
         self.content: List[ContentItem] = []
         self.content_by_id: dict = {}
+        self.content_by_path: dict = {}
         self.load_content()
 
     def _parse_json_field(self, value, default=None):
@@ -98,6 +99,7 @@ class ContentService:
                 title=item.get("tittel") or "",
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
+                path=item.get("path"),
                 target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
                 links=links,
                 anbefaling_fields=anbefaling_fields,
@@ -105,6 +107,9 @@ class ContentService:
             self.content.append(content_item)
 
         self.content_by_id = {item.id: item for item in self.content}
+        self.content_by_path = {
+            item.path: item for item in self.content if item.path
+        }
         print(f"Loaded {len(self.content)} content items from database cache")
 
     def load_from_api(self, query_text: Optional[str] = None, max_items: int = 100):
@@ -146,12 +151,16 @@ class ContentService:
                     title=item.get("tittel", ""),
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
+                    path=item.get("path"),
                     target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
                     links=links,
                 )
                 self.content.append(content_item)
 
             self.content_by_id = {item.id: item for item in self.content}
+            self.content_by_path = {
+                item.path: item for item in self.content if item.path
+            }
             print(f"Loaded {len(self.content)} content items from API")
 
         except HelseDirectorateAPIError as e:
