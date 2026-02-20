@@ -176,6 +176,10 @@ class ContentService:
         """Get a specific content item by ID."""
         return self.content_by_id.get(content_id)
 
+    def get_content_by_path(self, path: str) -> Optional[ContentItem]:
+        """Get a specific content item by path."""
+        return self.content_by_path.get(path)
+
     def reload_content(self):
         """Reload content from database cache."""
         self.load_content()
