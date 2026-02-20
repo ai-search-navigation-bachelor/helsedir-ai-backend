@@ -52,6 +52,7 @@ class ContentItem(BaseModel):
     title: str
     body: str
     content_type: str
+    path: Optional[str] = None
     target_groups: List[str] = []
     links: List[ContentLink] = []
 
