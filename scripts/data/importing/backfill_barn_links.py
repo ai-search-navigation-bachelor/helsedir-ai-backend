@@ -22,8 +22,7 @@ import asyncio
 import json
 import sys
 import os
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -41,7 +40,7 @@ def get_all_content_ids() -> Set[str]:
     """Return all content IDs currently in the database."""
     conn = db_pool.get_connection()
     if not conn:
-        return set()
+        raise RuntimeError("Database connection unavailable: db_pool.get_connection() returned None")
     cursor = None
     try:
         cursor = conn.cursor()
@@ -57,7 +56,7 @@ def get_all_content_with_links() -> List[Dict]:
     """Return all content rows that have a non-null links field."""
     conn = db_pool.get_connection()
     if not conn:
-        return []
+        raise RuntimeError("Database connection unavailable: db_pool.get_connection() returned None")
     cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
@@ -124,6 +123,7 @@ def save_content_batch(items: List[Dict]) -> int:
     except Exception as e:
         print(f"  ERROR saving batch: {e}")
         conn.rollback()
+        saved = 0
     finally:
         if cursor:
             cursor.close()
@@ -270,29 +270,77 @@ async def fetch_hrefs_async(hrefs: List[str], workers: int) -> Dict[str, Dict]:
     return {href: data for href, data in results if data is not None}
 
 
+_MIGRATION_BATCH_SIZE = 100
+
+
 def run_link_migration(all_content: List[Dict], existing_ids: Set[str], dry_run: bool) -> int:
     """
     Update links in the database: replace href → id for any link
     whose target content is now in existing_ids.
     Returns number of content rows updated.
+
+    Uses a single shared connection and commits every _MIGRATION_BATCH_SIZE rows.
+    Per-row errors are logged and skipped so one bad row doesn't abort the migration.
     """
     updated = 0
-    for row in all_content:
-        raw_links = row.get("links")
-        if not raw_links:
-            continue
 
-        try:
-            links = json.loads(raw_links) if isinstance(raw_links, str) else raw_links
-        except (json.JSONDecodeError, TypeError):
-            continue
+    if dry_run:
+        for row in all_content:
+            raw_links = row.get("links")
+            if not raw_links:
+                continue
+            try:
+                links = json.loads(raw_links) if isinstance(raw_links, str) else raw_links
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if resolve_links(links, existing_ids) != links:
+                updated += 1
+        return updated
 
-        resolved = resolve_links(links, existing_ids)
+    conn = db_pool.get_connection()
+    if not conn:
+        print("  ERROR: database connection unavailable, skipping link migration")
+        return 0
 
-        if resolved != links:
-            updated += 1
-            if not dry_run:
-                update_links_for_content(row["id"], resolved)
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        pending = 0
+        for row in all_content:
+            raw_links = row.get("links")
+            if not raw_links:
+                continue
+            try:
+                links = json.loads(raw_links) if isinstance(raw_links, str) else raw_links
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            resolved = resolve_links(links, existing_ids)
+            if resolved == links:
+                continue
+
+            try:
+                cursor.execute(
+                    "UPDATE content SET links = %s WHERE id = %s",
+                    (json.dumps(resolved, ensure_ascii=False), row["id"]),
+                )
+                updated += 1
+                pending += 1
+                if pending >= _MIGRATION_BATCH_SIZE:
+                    conn.commit()
+                    pending = 0
+            except Exception as e:
+                print(f"  WARN: failed to update links for {row['id']}: {e}")
+
+        if pending:
+            conn.commit()
+    except Exception as e:
+        print(f"  ERROR during link migration: {e}")
+        conn.rollback()
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
 
     return updated
 
