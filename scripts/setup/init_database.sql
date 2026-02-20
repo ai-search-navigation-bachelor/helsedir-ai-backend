@@ -236,8 +236,8 @@ INSERT INTO content_type_config (info_type, searchable, display_name) VALUES
 ('horing',                               0, 'Høring'),
 ('generisk-produkt',                     0, 'Generisk produkt'),
 ('informasjon',                          0, 'Informasjon'),
-('Infobit',                              0, 'Infobit')
-ON DUPLICATE KEY UPDATE display_name = VALUES(display_name);
+('infobit',                              0, 'Infobit')
+ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), searchable = VALUES(searchable);
 
 -- ============================================================
 -- Verification Query
