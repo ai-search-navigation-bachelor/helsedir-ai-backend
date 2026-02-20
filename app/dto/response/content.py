@@ -32,6 +32,10 @@ class ContentLinkResponse(BaseModel):
         return self
 
 
+# Resolve the recursive forward reference for the children field.
+ContentLinkResponse.model_rebuild()
+
+
 class LinkedContentItem(BaseModel):
     """A single linked content item under a theme page."""
     id: str
