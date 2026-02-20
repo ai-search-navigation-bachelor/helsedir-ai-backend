@@ -180,6 +180,66 @@ INSERT INTO position_propensity (position, propensity) VALUES
 ON DUPLICATE KEY UPDATE propensity = VALUES(propensity);
 
 -- ============================================================
+-- Content Type Config Table
+-- ============================================================
+-- Controls which info_type values appear in search results.
+-- Decouples search visibility from code — change searchable=0
+-- to hide a type from search without a deployment.
+-- kapittel is imported for the content hierarchy tree but must
+-- not appear in search results.
+CREATE TABLE IF NOT EXISTS content_type_config (
+    info_type    VARCHAR(50)  PRIMARY KEY,
+    searchable   TINYINT(1)   NOT NULL DEFAULT 1,
+    display_name VARCHAR(100) NOT NULL DEFAULT ''
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO content_type_config (info_type, searchable, display_name) VALUES
+-- Retningslinjer
+('retningslinje',                        1, 'Retningslinje'),
+('nasjonalt-forlop',                     1, 'Nasjonalt forløp'),
+('pakkeforlop-anbefaling',               1, 'Pakkeforløp-anbefaling'),
+('normen-dokument',                      1, 'Normen-dokument'),
+('nasjonal-veileder',                    1, 'Nasjonal veileder'),
+('prioriteringsveileder',                1, 'Prioriteringsveileder'),
+-- Faglige råd
+('anbefaling',                           1, 'Anbefaling'),
+('rad',                                  1, 'Råd'),
+('faglig-rad',                           1, 'Faglig råd'),
+('pico',                                 1, 'PICO'),
+-- Veiledere
+('takst-med-merknad',                    1, 'Takst med merknad'),
+('ehelsestandard',                       1, 'E-helsestandard'),
+('tilskudd',                             1, 'Tilskudd'),
+('veileder',                             1, 'Veileder'),
+('veiledning',                           1, 'Veiledning'),
+-- Rundskriv
+('rundskriv',                            1, 'Rundskriv'),
+-- Lovfortolkning
+('lov-eller-forskriftstekst-med-kommentar', 1, 'Lov/forskrift med kommentar'),
+('regelverk-lov-eller-forskrift',        1, 'Regelverk'),
+('veileder-lov-forskrift',               1, 'Veileder til lov og forskrift'),
+('paragraf-med-kommentar',               1, 'Paragraf med kommentar'),
+-- Statistikk og rapporter
+('rapport',                              1, 'Rapport'),
+('statistikkelement',                    1, 'Statistikkelement'),
+('statistikk',                           1, 'Statistikk'),
+-- Temasider
+('temaside',                             1, 'Temaside'),
+-- Hierarki-typer (i DB for children-tree, men ikke søkbare)
+('kapittel',                             0, 'Kapittel'),
+-- Redaksjonelle/strukturelle typer — ikke søkbare
+('referanse',                            0, 'Referanse'),
+('artikkel',                             0, 'Artikkel'),
+('arrangement',                          0, 'Arrangement'),
+('nyhet',                                0, 'Nyhet'),
+('generisk-normerende-enhet',            0, 'Generisk normerende enhet'),
+('horing',                               0, 'Høring'),
+('generisk-produkt',                     0, 'Generisk produkt'),
+('informasjon',                          0, 'Informasjon'),
+('Infobit',                              0, 'Infobit')
+ON DUPLICATE KEY UPDATE display_name = VALUES(display_name);
+
+-- ============================================================
 -- Verification Query
 -- ============================================================
 SHOW TABLES;
