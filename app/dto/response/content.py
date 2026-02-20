@@ -36,6 +36,7 @@ class LinkedContentItem(BaseModel):
     id: str
     title: str
     info_type: str
+    path: Optional[str] = None
 
 
 class GroupedLinkedContent(BaseModel):

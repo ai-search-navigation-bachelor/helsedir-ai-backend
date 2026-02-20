@@ -49,6 +49,7 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
             id=content_item.get('id', ''),
             title=content_item.get('tittel', ''),
             info_type=info_type,
+            path=content_item.get('path'),
         )
         grouped[info_type].append(linked_item)
 
