@@ -3,9 +3,11 @@ Content route for retrieving content and logging clicks.
 """
 
 import asyncio
+import logging
 import re
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, Dict, List
+
 from collections import defaultdict
 from starlette.concurrency import run_in_threadpool
 from app.dto.response.content import (
@@ -22,6 +24,8 @@ from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
 from app.constants import get_category_display_name
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/content", tags=["content"])
 
 _HELSEDIR_ID_RE = re.compile(r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}[-a-f0-9]+)', re.IGNORECASE)
@@ -31,6 +35,21 @@ def _id_from_href(href: str) -> Optional[str]:
     """Extract the content ID embedded in a Helsedir API href URL."""
     m = _HELSEDIR_ID_RE.search(href)
     return m.group(1) if m else None
+
+
+def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
+    """Build ContentLinkResponse list from a content item's barn sub-links."""
+    return [
+        ContentLinkResponse(
+            rel=gl.rel,
+            type=gl.type,
+            tittel=gl.tittel,
+            id=gl.id,
+            href=gl.href,
+        )
+        for gl in links
+        if gl.rel == "barn"
+    ]
 
 
 async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLinkResponse]:
@@ -52,32 +71,12 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                 # Fast path: in-memory cache
                 child = content_service.get_content_by_id(link.id)
                 if child:
-                    children = [
-                        ContentLinkResponse(
-                            rel=gl.rel,
-                            type=gl.type,
-                            tittel=gl.tittel,
-                            id=gl.id,
-                            href=gl.href,
-                        )
-                        for gl in child.links
-                        if gl.rel == "barn"
-                    ]
+                    children = _children_from_content_links(child.links)
             elif link.href:
                 # Try cache first by extracting the ID from the href URL
                 child = content_service.get_content_by_id(_id_from_href(link.href) or "")
                 if child:
-                    children = [
-                        ContentLinkResponse(
-                            rel=gl.rel,
-                            type=gl.type,
-                            tittel=gl.tittel,
-                            id=gl.id,
-                            href=gl.href,
-                        )
-                        for gl in child.links
-                        if gl.rel == "barn"
-                    ]
+                    children = _children_from_content_links(child.links)
                 else:
                     # Fallback: fetch from Helsedir API
                     try:
@@ -94,8 +93,13 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                             if al.get("rel") == "barn"
                             and (al.get("id") or al.get("href"))
                         ]
-                    except Exception:
-                        pass  # Keep the link itself, just without children
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to fetch children for barn link %s: %s",
+                            link.href,
+                            exc,
+                            exc_info=True,
+                        )
 
         return ContentLinkResponse(
             rel=link.rel,
@@ -103,7 +107,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
             tittel=link.tittel,
             id=link.id,
             href=link.href,
-            children=children or None,
+            children=children,
         )
 
     return list(await asyncio.gather(*[_build_link(link) for link in links]))
@@ -184,8 +188,13 @@ async def get_content(
             search_id=search_id,
             content_id=content_id,
         ))
-    results = await asyncio.gather(*coros)
-    links_response = results[0]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    links_result = results[0]
+    if isinstance(links_result, BaseException):
+        raise links_result
+    links_response = links_result
+    if len(results) > 1 and isinstance(results[1], BaseException):
+        logger.warning("Failed to log click for search_id=%s: %s", search_id, results[1], exc_info=results[1])
 
     # Fetch linked content for theme pages
     linked_content_response = None

@@ -3,10 +3,13 @@ Repository for content operations.
 """
 
 import json
+import logging
 from typing import List, Optional, Dict, Any, Set
 import mysql.connector
 
 from app.services.repositories.base import db_pool
+
+logger = logging.getLogger(__name__)
 
 
 class ContentRepository:
@@ -378,6 +381,7 @@ class ContentRepository:
         except mysql.connector.Error:
             # Table may not exist on older installs — return empty set so caller
             # can decide on a fallback.
+            logger.debug("Could not read allowed info types from DB", exc_info=True)
             return set()
         finally:
             if cursor:

@@ -65,7 +65,7 @@ class ContentService:
         # if the content_type_config table doesn't exist yet.
         db_searchable = content_repository.get_searchable_info_types()
         self.searchable_types = db_searchable if db_searchable else ALLOWED_INFO_TYPES_SET
-        print(f"Searchable info types ({len(self.searchable_types)}): {sorted(self.searchable_types)}")
+        logger.debug("Searchable info types (%d): %s", len(self.searchable_types), sorted(self.searchable_types))
 
         db_content = database_service.get_all_content()
 
