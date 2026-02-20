@@ -359,6 +359,31 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_searchable_info_types(self) -> Set[str]:
+        """
+        Return the set of info_type values marked searchable=1 in content_type_config.
+        Falls back to an empty set if the table doesn't exist yet.
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return set()
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT info_type FROM content_type_config WHERE searchable = 1"
+            )
+            return {row[0] for row in cursor.fetchall()}
+        except mysql.connector.Error:
+            # Table may not exist on older installs — return empty set so caller
+            # can decide on a fallback.
+            return set()
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
     def get_theme_page_content(self, theme_page_id: str) -> List[Dict[str, Any]]:
         """
         Get all content linked to a theme page via the junction table.
