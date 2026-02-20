@@ -9,7 +9,6 @@ import numpy as np
 
 from app.dto.response.search import SearchResult
 from app.services.data.content_service import content_service
-from app.constants import is_allowed_info_type
 
 
 class SemanticSearch:
@@ -157,7 +156,7 @@ class SemanticSearch:
         valid_items = []
         for item in content_service.get_all_content():
             # Filter by info_type
-            if not is_allowed_info_type(item.content_type):
+            if item.content_type not in content_service.searchable_types:
                 continue
 
             # Filter by role

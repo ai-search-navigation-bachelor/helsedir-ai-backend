@@ -46,8 +46,24 @@ class Settings(BaseSettings):
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
-    # LLM API (for GPL training)
+    # LLM API (for GPL training) — up to 4 keys for parallel query generation
     groq_api_key: str = ""
+    groq_api_key_2: str = ""
+    groq_api_key_3: str = ""
+    groq_api_key_4: str = ""
+
+    @property
+    def groq_api_keys(self) -> list[str]:
+        """Return all configured Groq API keys (non-empty)."""
+        return [
+            k for k in [
+                self.groq_api_key,
+                self.groq_api_key_2,
+                self.groq_api_key_3,
+                self.groq_api_key_4,
+            ]
+            if k
+        ]
 
     # MySQL Database
     mysql_host: str = "localhost"
