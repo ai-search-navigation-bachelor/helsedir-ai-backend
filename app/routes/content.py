@@ -205,6 +205,7 @@ async def get_content(
         title=content.title,
         body=content.body,
         content_type=content.content_type,
+        path=content.path,
         target_groups=content.target_groups,
         links=links_response,
         linked_content=linked_content_response,
