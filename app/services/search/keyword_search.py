@@ -63,6 +63,7 @@ class KeywordSearch:
                         id=item.id,
                         title=item.title,
                         info_type=item.content_type,
+                        path=item.path,
                         score=round(norm_score, 3),
                         explanation=explanation,
                     )
