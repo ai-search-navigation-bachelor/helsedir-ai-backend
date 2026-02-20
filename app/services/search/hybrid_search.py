@@ -14,7 +14,6 @@ from app.services.data.database_service import database_service
 from app.services.search.keyword_search import keyword_search
 from app.services.search.semantic_search import semantic_search
 from app.config import settings
-from app.constants import is_allowed_info_type
 
 
 class HybridSearch:
@@ -48,7 +47,7 @@ class HybridSearch:
         scored_items = []
 
         for item in content_service.get_all_content():
-            if not is_allowed_info_type(item.content_type):
+            if item.content_type not in content_service.searchable_types:
                 continue
 
             if role and role not in item.target_groups:

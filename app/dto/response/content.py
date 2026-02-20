@@ -15,6 +15,7 @@ class ContentLinkResponse(BaseModel):
     # For external links (not in database): use href
     id: Optional[str] = None
     href: Optional[str] = None
+    children: Optional[List["ContentLinkResponse"]] = None  # Populated for barn links (1st level only)
 
     @model_validator(mode='after')
     def validate_id_or_href(self):
@@ -29,6 +30,10 @@ class ContentLinkResponse(BaseModel):
             raise ValueError("ContentLinkResponse cannot have both 'id' and 'href'")
 
         return self
+
+
+# Resolve the recursive forward reference for the children field.
+ContentLinkResponse.model_rebuild()
 
 
 class LinkedContentItem(BaseModel):
