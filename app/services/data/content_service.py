@@ -112,6 +112,34 @@ class ContentService:
         }
         print(f"Loaded {len(self.content)} content items from database cache")
 
+        self._enrich_with_theme_page_links()
+
+    def _enrich_with_theme_page_links(self):
+        """Add theme page links to content items that belong to a theme page."""
+        content_to_themes = database_service.get_all_content_to_theme_pages()
+        if not content_to_themes:
+            return
+
+        enriched_count = 0
+        total_links = 0
+        for content_id, theme_pages in content_to_themes.items():
+            content_item = self.content_by_id.get(content_id)
+            if not content_item:
+                continue
+
+            for tp in theme_pages:
+                content_item.links.append(ContentLink(
+                    rel="temaside",
+                    type="temaside",
+                    id=tp["id"],
+                    tittel=tp["tittel"],
+                    path=tp["path"],
+                ))
+                total_links += 1
+            enriched_count += 1
+
+        logger.info(f"Enriched {enriched_count} content items with {total_links} theme page links")
+
     def load_from_api(self, query_text: Optional[str] = None, max_items: int = 100):
         """
         Load content from Helsedirektoratet API and cache in database.

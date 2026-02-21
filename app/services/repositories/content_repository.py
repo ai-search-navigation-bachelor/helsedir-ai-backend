@@ -359,6 +359,51 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_all_content_to_theme_pages(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get all content_id -> theme page mappings in a single batch query.
+
+        Returns:
+            Dict mapping content_id -> list of {id, tittel, path} for each theme page
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return {}
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT tpc.content_id, tp.id AS theme_page_id, tp.tittel, tp.path
+                FROM theme_page_content tpc
+                INNER JOIN content tp ON tpc.theme_page_id = tp.id
+                WHERE tp.info_type = 'temaside'
+                ORDER BY tpc.content_id, tp.tittel
+                """
+            )
+            rows = cursor.fetchall()
+
+            result: Dict[str, List[Dict[str, Any]]] = {}
+            for row in rows:
+                content_id = row["content_id"]
+                if content_id not in result:
+                    result[content_id] = []
+                result[content_id].append({
+                    "id": row["theme_page_id"],
+                    "tittel": row["tittel"],
+                    "path": row["path"],
+                })
+
+            return result
+        except mysql.connector.Error as e:
+            print(f"Error getting content to theme pages: {e}")
+            return {}
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
     def get_theme_page_content(self, theme_page_id: str) -> List[Dict[str, Any]]:
         """
         Get all content linked to a theme page via the junction table.

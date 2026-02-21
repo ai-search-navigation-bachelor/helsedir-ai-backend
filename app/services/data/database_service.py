@@ -59,6 +59,9 @@ class DatabaseService:
     def get_all_content_ids(self) -> List[str]:
         return self._content.get_all_content_ids()
 
+    def get_all_content_to_theme_pages(self) -> Dict[str, List[Dict[str, Any]]]:
+        return self._content.get_all_content_to_theme_pages()
+
     # ==================== Statistics Operations ====================
 
     def record_impression(self, content_id: str) -> bool:
