@@ -6,10 +6,12 @@ Loads content from database cache or Helsedirektoratet API.
 
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Set
 from pydantic import ValidationError
 from app.entities.content import ContentItem, ContentLink, AnbefalingFields
 from app.services.data.database_service import database_service
+from app.services.repositories.content_repository import content_repository
+from app.constants import ALLOWED_INFO_TYPES_SET
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class ContentService:
         self.content: List[ContentItem] = []
         self.content_by_id: dict = {}
         self.content_by_path: dict = {}
+        self.searchable_types: Set[str] = set()
         self.load_content()
 
     def _parse_json_field(self, value, default=None):
@@ -59,6 +62,12 @@ class ContentService:
 
     def load_content(self):
         """Load content from database cache."""
+        # Load searchable info types from DB; fall back to hardcoded constants
+        # if the content_type_config table doesn't exist yet.
+        db_searchable = content_repository.get_searchable_info_types()
+        self.searchable_types = db_searchable if db_searchable else ALLOWED_INFO_TYPES_SET
+        logger.debug("Searchable info types (%d): %s", len(self.searchable_types), sorted(self.searchable_types))
+
         db_content = database_service.get_all_content()
 
         if not db_content:

@@ -9,7 +9,6 @@ from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.config import settings
-from app.constants import is_allowed_info_type
 
 
 class KeywordSearch:
@@ -34,7 +33,7 @@ class KeywordSearch:
 
         results = []
         for item in content_service.get_all_content():
-            if not is_allowed_info_type(item.content_type):
+            if item.content_type not in content_service.searchable_types:
                 continue
 
             if role and role not in item.target_groups:

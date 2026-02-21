@@ -2,8 +2,12 @@
 Content route for retrieving content and logging clicks.
 """
 
+import asyncio
+import logging
+import re
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, Dict, List
+
 from collections import defaultdict
 from starlette.concurrency import run_in_threadpool
 from app.dto.response.content import (
@@ -13,12 +17,101 @@ from app.dto.response.content import (
     LinkedContentItem,
     AnbefalingFieldsResponse,
 )
+from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
+from app.services.external.helsedir_api_service import helsedir_api_service
 from app.constants import get_category_display_name
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/content", tags=["content"])
+
+_HELSEDIR_ID_RE = re.compile(r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}[-a-f0-9]+)', re.IGNORECASE)
+
+
+def _id_from_href(href: str) -> Optional[str]:
+    """Extract the content ID embedded in a Helsedir API href URL."""
+    m = _HELSEDIR_ID_RE.search(href)
+    return m.group(1) if m else None
+
+
+def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
+    """Build ContentLinkResponse list from a content item's barn sub-links."""
+    return [
+        ContentLinkResponse(
+            rel=gl.rel,
+            type=gl.type,
+            tittel=gl.tittel,
+            id=gl.id,
+            href=gl.href,
+        )
+        for gl in links
+        if gl.rel == "barn"
+    ]
+
+
+async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLinkResponse]:
+    """
+    Build links response, populating children for barn links in parallel.
+
+    For each barn link:
+    - id-based → cache lookup (O(1))
+    - href-based → async Helsedir API call
+
+    All links are processed concurrently via asyncio.gather, preserving order.
+    Non-barn links are returned with children=[].
+    """
+    async def _build_link(link: ContentLink) -> ContentLinkResponse:
+        children: List[ContentLinkResponse] = []
+
+        if link.rel == "barn":
+            if link.id:
+                # Fast path: in-memory cache
+                child = content_service.get_content_by_id(link.id)
+                if child:
+                    children = _children_from_content_links(child.links)
+            elif link.href:
+                # Try cache first by extracting the ID from the href URL
+                child = content_service.get_content_by_id(_id_from_href(link.href) or "")
+                if child:
+                    children = _children_from_content_links(child.links)
+                else:
+                    # Fallback: fetch from Helsedir API
+                    try:
+                        data = await helsedir_api_service.get_content_by_href_async(link.href)
+                        children = [
+                            ContentLinkResponse(
+                                rel=al.get("rel", "barn"),
+                                type=al.get("type") or al.get("infoType", ""),
+                                tittel=al.get("tittel"),
+                                id=al.get("id"),
+                                href=al.get("href"),
+                            )
+                            for al in (data.get("links") or [])
+                            if al.get("rel") == "barn"
+                            and (al.get("id") or al.get("href"))
+                        ]
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to fetch children for barn link %s: %s",
+                            link.href,
+                            exc,
+                            exc_info=True,
+                        )
+
+        return ContentLinkResponse(
+            rel=link.rel,
+            type=link.type,
+            tittel=link.tittel,
+            id=link.id,
+            href=link.href,
+            path=link.path,
+            children=children,
+        )
+
+    return list(await asyncio.gather(*[_build_link(link) for link in links]))
 
 
 def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedLinkedContent]]:
@@ -65,19 +158,22 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
     return result if result else None
 
 
-def _build_content_response(content) -> ContentResponse:
-    """Build ContentResponse from a ContentItem."""
-    links_response = [
-        ContentLinkResponse(
-            rel=link.rel,
-            type=link.type,
-            tittel=link.tittel,
-            id=link.id,
-            href=link.href,
-            path=link.path,
-        )
-        for link in content.links
-    ]
+async def _build_content_response(content, search_id: Optional[str] = None) -> ContentResponse:
+    """Build ContentResponse from a ContentItem, with parallel link enrichment and click logging."""
+    coros = [_build_links_with_children(content.links)]
+    if search_id:
+        coros.append(run_in_threadpool(
+            database_service.log_click,
+            search_id=search_id,
+            content_id=content.id,
+        ))
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    links_result = results[0]
+    if isinstance(links_result, BaseException):
+        raise links_result
+    links_response = links_result
+    if len(results) > 1 and isinstance(results[1], BaseException):
+        logger.warning("Failed to log click for search_id=%s: %s", search_id, results[1], exc_info=results[1])
 
     linked_content_response = None
     if content.content_type.lower() == "temaside":
@@ -124,14 +220,7 @@ async def get_content_by_path(
     if not content:
         raise HTTPException(status_code=404, detail=f"Content not found for path: {path}")
 
-    if search_id:
-        await run_in_threadpool(
-            database_service.log_click,
-            search_id=search_id,
-            content_id=content.id,
-        )
-
-    return _build_content_response(content)
+    return await _build_content_response(content, search_id)
 
 
 @router.get("/{content_id}", response_model=ContentResponse)
@@ -150,11 +239,4 @@ async def get_content(
     if not content:
         raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-    if search_id:
-        await run_in_threadpool(
-            database_service.log_click,
-            search_id=search_id,
-            content_id=content_id,
-        )
-
-    return _build_content_response(content)
+    return await _build_content_response(content, search_id)
