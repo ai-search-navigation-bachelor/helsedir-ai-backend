@@ -65,38 +65,8 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
     return result if result else None
 
 
-@router.get("/by-path", response_model=ContentResponse)
-async def get_content_by_path(
-    path: str = Query(..., description="Content path, e.g. /retningslinjer/adhd"),
-    search_id: Optional[str] = Query(None, description="Search ID for click tracking"),
-):
-    """
-    Get content by path and optionally log click.
-
-    Used when the frontend navigates to a path-based URL (e.g. /retningslinjer/adhd)
-    and needs to resolve the content.
-
-    Args:
-        path: The content path from the database
-        search_id: Optional search_id to link this click to a search
-
-    Returns:
-        ContentResponse with full content details
-    """
-    content = content_service.get_content_by_path(path)
-
-    if not content:
-        raise HTTPException(status_code=404, detail=f"Content not found for path: {path}")
-
-    # Log click if search_id is provided
-    if search_id:
-        await run_in_threadpool(
-            database_service.log_click,
-            search_id=search_id,
-            content_id=content.id,
-        )
-
-    # Convert links to response format
+def _build_content_response(content) -> ContentResponse:
+    """Build ContentResponse from a ContentItem."""
     links_response = [
         ContentLinkResponse(
             rel=link.rel,
@@ -104,16 +74,15 @@ async def get_content_by_path(
             tittel=link.tittel,
             id=link.id,
             href=link.href,
+            path=link.path,
         )
         for link in content.links
     ]
 
-    # Fetch linked content for theme pages
     linked_content_response = None
     if content.content_type.lower() == "temaside":
         linked_content_response = _get_theme_page_linked_content(content.id)
 
-    # Map anbefaling-specific fields if present
     anbefaling_fields_response = None
     if content.anbefaling_fields:
         anbefaling_fields_response = AnbefalingFieldsResponse(
@@ -137,6 +106,32 @@ async def get_content_by_path(
         linked_content=linked_content_response,
         anbefaling_fields=anbefaling_fields_response,
     )
+
+
+@router.get("/by-path", response_model=ContentResponse)
+async def get_content_by_path(
+    path: str = Query(..., description="Content path, e.g. /retningslinjer/adhd"),
+    search_id: Optional[str] = Query(None, description="Search ID for click tracking"),
+):
+    """
+    Get content by path and optionally log click.
+
+    Used when the frontend navigates to a path-based URL (e.g. /retningslinjer/adhd)
+    and needs to resolve the content.
+    """
+    content = content_service.get_content_by_path(path)
+
+    if not content:
+        raise HTTPException(status_code=404, detail=f"Content not found for path: {path}")
+
+    if search_id:
+        await run_in_threadpool(
+            database_service.log_click,
+            search_id=search_id,
+            content_id=content.id,
+        )
+
+    return _build_content_response(content)
 
 
 @router.get("/{content_id}", response_model=ContentResponse)
@@ -149,21 +144,12 @@ async def get_content(
 
     If search_id is provided, logs the click for LTR training.
     The position is automatically looked up from search_results_shown.
-
-    Args:
-        content_id: The content ID to retrieve
-        search_id: Optional search_id to link this click to a search
-
-    Returns:
-        ContentResponse with full content details
     """
-    # Get content
     content = content_service.get_content_by_id(content_id)
 
     if not content:
         raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-    # Log click if search_id is provided (run blocking DB call in threadpool)
     if search_id:
         await run_in_threadpool(
             database_service.log_click,
@@ -171,44 +157,4 @@ async def get_content(
             content_id=content_id,
         )
 
-    # Convert links to response format (already processed at import/migration)
-    links_response = [
-        ContentLinkResponse(
-            rel=link.rel,
-            type=link.type,
-            tittel=link.tittel,
-            id=link.id,
-            href=link.href,
-        )
-        for link in content.links
-    ]
-
-    # Fetch linked content for theme pages
-    linked_content_response = None
-    if content.content_type.lower() == "temaside":
-        linked_content_response = _get_theme_page_linked_content(content_id)
-
-    # Map anbefaling-specific fields if present
-    anbefaling_fields_response = None
-    if content.anbefaling_fields:
-        anbefaling_fields_response = AnbefalingFieldsResponse(
-            praktisk=content.anbefaling_fields.praktisk,
-            rasjonale=content.anbefaling_fields.rasjonale,
-            fordeler_ulemper=content.anbefaling_fields.fordeler_ulemper,
-            verdier_preferanser=content.anbefaling_fields.verdier_preferanser,
-            kvalitet_dokumentasjon=content.anbefaling_fields.kvalitet_dokumentasjon,
-            ressurshensyn=content.anbefaling_fields.ressurshensyn,
-            styrke=content.anbefaling_fields.styrke,
-        )
-
-    return ContentResponse(
-        id=content.id,
-        title=content.title,
-        body=content.body,
-        content_type=content.content_type,
-        path=content.path,
-        target_groups=content.target_groups,
-        links=links_response,
-        linked_content=linked_content_response,
-        anbefaling_fields=anbefaling_fields_response,
-    )
+    return _build_content_response(content)
