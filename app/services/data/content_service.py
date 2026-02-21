@@ -125,7 +125,7 @@ class ContentService:
 
     def _enrich_with_theme_page_links(self):
         """Add theme page links to content items that belong to a theme page."""
-        content_to_themes = database_service.get_all_content_to_theme_pages()
+        content_to_themes = content_repository.get_all_content_to_theme_pages()
         if not content_to_themes:
             return
 

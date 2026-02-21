@@ -17,7 +17,7 @@ from app.dto.response.content import (
     LinkedContentItem,
     AnbefalingFieldsResponse,
 )
-from app.entities.content import ContentItem, ContentLink
+from app.entities.content import ContentLink
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
