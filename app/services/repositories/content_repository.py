@@ -397,11 +397,11 @@ class ContentRepository:
                     "tittel": row["tittel"],
                     "path": row["path"],
                 })
-
-            return result
         except mysql.connector.Error as e:
-            print(f"Error getting content to theme pages: {e}")
+            logger.error("Error getting content to theme pages: %s", e)
             return {}
+        else:
+            return result
         finally:
             if cursor:
                 cursor.close()

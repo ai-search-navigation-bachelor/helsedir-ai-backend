@@ -115,13 +115,26 @@ class ContentService:
             )
             self.content.append(content_item)
 
-        self.content_by_id = {item.id: item for item in self.content}
-        self.content_by_path = {
-            item.path: item for item in self.content if item.path
-        }
+        self._rebuild_lookup_dicts()
         print(f"Loaded {len(self.content)} content items from database cache")
 
         self._enrich_with_theme_page_links()
+
+    def _rebuild_lookup_dicts(self):
+        """Build content_by_id and content_by_path lookup dicts from self.content."""
+        self.content_by_id = {item.id: item for item in self.content}
+        self.content_by_path = {}
+        for item in self.content:
+            if not item.path:
+                continue
+            if item.path in self.content_by_path:
+                existing = self.content_by_path[item.path]
+                logger.warning(
+                    "Duplicate content path '%s': keeping id='%s', skipping id='%s'",
+                    item.path, existing.id, item.id,
+                )
+                continue
+            self.content_by_path[item.path] = item
 
     def _enrich_with_theme_page_links(self):
         """Add theme page links to content items that belong to a theme page."""
@@ -194,10 +207,8 @@ class ContentService:
                 )
                 self.content.append(content_item)
 
-            self.content_by_id = {item.id: item for item in self.content}
-            self.content_by_path = {
-                item.path: item for item in self.content if item.path
-            }
+            self._rebuild_lookup_dicts()
+            self._enrich_with_theme_page_links()
             print(f"Loaded {len(self.content)} content items from API")
 
         except HelseDirectorateAPIError as e:
