@@ -123,6 +123,7 @@ class HybridSearch:
                     id=item.id,
                     title=item.title,
                     info_type=item.content_type,
+                    path=item.path,
                     score=round(combined, 3),
                     explanation=explanation,
                 )

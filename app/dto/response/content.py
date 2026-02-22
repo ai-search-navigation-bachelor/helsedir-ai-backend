@@ -8,13 +8,14 @@ from typing import List, Optional
 
 class ContentLinkResponse(BaseModel):
     """Link to related content."""
-    rel: str  # forelder, barn, root, publikasjon
-    type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, etc.
+    rel: str  # forelder, barn, root, publikasjon, temaside
+    type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, temaside, etc.
     tittel: Optional[str] = None
     # For internal links (in our database): use id
     # For external links (not in database): use href
     id: Optional[str] = None
     href: Optional[str] = None
+    path: Optional[str] = None
     children: Optional[List["ContentLinkResponse"]] = None  # Populated for barn links (1st level only)
 
     @model_validator(mode='after')
@@ -41,6 +42,7 @@ class LinkedContentItem(BaseModel):
     id: str
     title: str
     info_type: str
+    path: Optional[str] = None
 
 
 class GroupedLinkedContent(BaseModel):
@@ -67,6 +69,7 @@ class ContentResponse(BaseModel):
     title: str
     body: str
     content_type: str
+    path: Optional[str] = None
     target_groups: List[str] = []
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages

@@ -22,6 +22,7 @@ class ContentService:
     def __init__(self):
         self.content: List[ContentItem] = []
         self.content_by_id: dict = {}
+        self.content_by_path: dict = {}
         self.searchable_types: Set[str] = set()
         self.load_content()
 
@@ -107,14 +108,59 @@ class ContentService:
                 title=item.get("tittel") or "",
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
+                path=item.get("path"),
                 target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
                 links=links,
                 anbefaling_fields=anbefaling_fields,
             )
             self.content.append(content_item)
 
-        self.content_by_id = {item.id: item for item in self.content}
+        self._rebuild_lookup_dicts()
         print(f"Loaded {len(self.content)} content items from database cache")
+
+        self._enrich_with_theme_page_links()
+
+    def _rebuild_lookup_dicts(self):
+        """Build content_by_id and content_by_path lookup dicts from self.content."""
+        self.content_by_id = {item.id: item for item in self.content}
+        self.content_by_path = {}
+        for item in self.content:
+            if not item.path:
+                continue
+            if item.path in self.content_by_path:
+                existing = self.content_by_path[item.path]
+                logger.warning(
+                    "Duplicate content path '%s': keeping id='%s', skipping id='%s'",
+                    item.path, existing.id, item.id,
+                )
+                continue
+            self.content_by_path[item.path] = item
+
+    def _enrich_with_theme_page_links(self):
+        """Add theme page links to content items that belong to a theme page."""
+        content_to_themes = content_repository.get_all_content_to_theme_pages()
+        if not content_to_themes:
+            return
+
+        enriched_count = 0
+        total_links = 0
+        for content_id, theme_pages in content_to_themes.items():
+            content_item = self.content_by_id.get(content_id)
+            if not content_item:
+                continue
+
+            for tp in theme_pages:
+                content_item.links.append(ContentLink(
+                    rel="temaside",
+                    type="temaside",
+                    id=tp["id"],
+                    tittel=tp["tittel"],
+                    path=tp["path"],
+                ))
+                total_links += 1
+            enriched_count += 1
+
+        logger.info(f"Enriched {enriched_count} content items with {total_links} theme page links")
 
     def load_from_api(self, query_text: Optional[str] = None, max_items: int = 100):
         """
@@ -155,12 +201,14 @@ class ContentService:
                     title=item.get("tittel", ""),
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
+                    path=item.get("path"),
                     target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
                     links=links,
                 )
                 self.content.append(content_item)
 
-            self.content_by_id = {item.id: item for item in self.content}
+            self._rebuild_lookup_dicts()
+            self._enrich_with_theme_page_links()
             print(f"Loaded {len(self.content)} content items from API")
 
         except HelseDirectorateAPIError as e:
@@ -175,6 +223,10 @@ class ContentService:
     def get_content_by_id(self, content_id: str) -> Optional[ContentItem]:
         """Get a specific content item by ID."""
         return self.content_by_id.get(content_id)
+
+    def get_content_by_path(self, path: str) -> Optional[ContentItem]:
+        """Get a specific content item by path."""
+        return self.content_by_path.get(path)
 
     def reload_content(self):
         """Reload content from database cache."""
