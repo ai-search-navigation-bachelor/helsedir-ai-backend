@@ -17,7 +17,7 @@ from app.dto.response.content import (
     LinkedContentItem,
     AnbefalingFieldsResponse,
 )
-from app.entities.content import ContentLink
+from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
@@ -158,7 +158,7 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
     return result if result else None
 
 
-async def _build_content_response(content, search_id: Optional[str] = None) -> ContentResponse:
+async def _build_content_response(content: ContentItem, search_id: Optional[str] = None) -> ContentResponse:
     """Build ContentResponse from a ContentItem, with parallel link enrichment and click logging."""
     coros = [_build_links_with_children(content.links)]
     if search_id:
