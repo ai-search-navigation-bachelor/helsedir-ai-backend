@@ -18,6 +18,7 @@ class SearchResult(BaseModel):
     id: str
     title: str
     info_type: str
+    path: Optional[str] = None
     score: float  # Normalized 0-1
     explanation: str
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content

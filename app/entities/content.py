@@ -10,13 +10,14 @@ from typing import Optional, List
 
 class ContentLink(BaseModel):
     """Link to related content."""
-    rel: str  # forelder, barn, root, publikasjon
-    type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, etc.
+    rel: str  # forelder, barn, root, publikasjon, temaside
+    type: str  # kapittel, pakkeforlop-anbefaling, nasjonalt-forlop, temaside, etc.
     tittel: Optional[str] = None
     # For internal links: use id (references content in our database)
     # For external links: use href (points to external URL)
     id: Optional[str] = None
     href: Optional[str] = None
+    path: Optional[str] = None
     # Legacy field - will be removed after migration
     strukturId: Optional[str] = None
 
@@ -52,6 +53,7 @@ class ContentItem(BaseModel):
     title: str
     body: str
     content_type: str
+    path: Optional[str] = None
     target_groups: List[str] = []
     links: List[ContentLink] = []
 
