@@ -181,16 +181,13 @@ class HybridSearch:
         """Build API search results from normalized tuples."""
         results = []
         for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items[:k]:
-            parts = []
-            if use_rrf:
-                parts.append(f"RRF: {combined:.2f}")
-            if kw_norm > 0:
-                parts.append(f"Keyword: {kw_norm:.2f}")
-            if sem_norm > 0:
-                parts.append(f"Semantic: {sem_norm:.2f}")
-            explanation = " + ".join(parts) if parts else "No match"
-            if not use_rrf:
-                explanation += f" = {combined:.2f}"
+            bm25_text = f"{kw_norm:.2f}" if kw_norm > 0 else "0.00"
+            semantic_text = f"{sem_norm:.2f}" if sem_norm > 0 else "0.00"
+            fusion_label = "RRF" if use_rrf else "weighted-sum"
+            explanation = (
+                f"BM25={bm25_text} | Semantic={semantic_text} | "
+                f"{fusion_label} final={combined:.2f}"
+            )
 
             results.append(
                 SearchResult(
