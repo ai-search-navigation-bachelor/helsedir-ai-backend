@@ -86,9 +86,7 @@ class SearchController:
         if all_results is None:
             all_results = []
 
-        # Filter to relevant results. In hybrid search, BM25 hits rank high (0.6–1.0)
-        # while semantic-only filler sits low (0.0–0.4), so the threshold creates a
-        # natural cutoff that reflects genuine relevance for the given query.
+        # Filter low-relevance results after RRF normalization.
         min_score = settings.search_min_score
         all_results = [r for r in all_results if r.score >= min_score]
 
