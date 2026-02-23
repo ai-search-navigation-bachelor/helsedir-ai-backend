@@ -11,13 +11,25 @@ from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
+from app.services.search.bm25_provider import bm25_provider
 from app.services.search.keyword_search import keyword_search
+from app.services.search.rrf_fusion import fuse_ranked_lists
 from app.services.search.semantic_search import semantic_search
 from app.config import settings
 
 
 class HybridSearch:
-    """Hybrid search combining keyword and semantic scores."""
+    """Hybrid search combining BM25 and semantic retrieval with RRF fusion."""
+
+    def __init__(
+        self,
+        rrf_k: int = 60,
+        candidate_multiplier: int = 8,
+        min_candidate_pool: int = 100,
+    ):
+        self.rrf_k = max(1, int(rrf_k))
+        self.candidate_multiplier = max(2, int(candidate_multiplier))
+        self.min_candidate_pool = max(20, int(min_candidate_pool))
 
     def search(
         self,
@@ -28,78 +40,25 @@ class HybridSearch:
         semantic_weight: float = 0.7,
     ) -> List[SearchResult]:
         """
-        Perform hybrid search combining keyword and semantic scores.
+        Perform hybrid search combining BM25 and semantic retrieval via RRF.
 
-        Uses min-max normalization to scale both scores to [0, 1].
+        `keyword_weight` and `semantic_weight` are kept for backward compatibility
+        with existing call sites, but are no longer used.
         """
+        _ = keyword_weight
+        _ = semantic_weight
+
         query_lower = query.lower()
         query_keywords = set(re.findall(r'\w+', query_lower))
 
-        # Check if semantic search is available
-        if not semantic_search.is_available():
-            return keyword_search.search(query, role, k)
+        try:
+            normalized_items = self._score_with_rrf(query, role, query_lower, query_keywords, k)
+        except Exception as e:
+            print(f"Error in RRF fusion: {e}")
+            normalized_items = []
 
-        query_embedding = semantic_search.get_query_embedding(query)
-        if query_embedding is None:
-            return keyword_search.search(query, role, k)
-
-        # Score all content (raw scores)
-        scored_items = []
-
-        for item in content_service.get_all_content():
-            if item.content_type not in content_service.searchable_types:
-                continue
-
-            if role and role not in item.target_groups:
-                continue
-
-            # Keyword score (raw)
-            kw_score = keyword_search.calculate_score(item, query_lower, query_keywords)
-
-            # Semantic score (raw, -1 to 1)
-            if item.id in semantic_search.content_embeddings:
-                doc_embedding = semantic_search.content_embeddings[item.id]
-                sem_score = float(np.dot(query_embedding, doc_embedding))
-            else:
-                sem_score = -1.0
-
-            if kw_score > 0 or sem_score > -1.0:
-                scored_items.append((item, kw_score, sem_score))
-
-        if not scored_items:
+        if not normalized_items:
             return []
-
-        # Normalize weights to ensure they sum to 1 and stay in [0,1]
-        total_weight = keyword_weight + semantic_weight
-        if total_weight > 0:
-            norm_keyword_weight = max(0.0, min(1.0, keyword_weight / total_weight))
-            norm_semantic_weight = max(0.0, min(1.0, semantic_weight / total_weight))
-        else:
-            norm_keyword_weight = 0.3
-            norm_semantic_weight = 0.7
-
-        # Min-max normalization for keyword scores
-        keyword_scores = [kw for _, kw, _ in scored_items]
-        kw_min, kw_max = min(keyword_scores), max(keyword_scores)
-
-        # Normalize and combine
-        normalized_items = []
-        for item, kw_raw, sem_raw in scored_items:
-            if kw_max > kw_min:
-                kw_norm = (kw_raw - kw_min) / (kw_max - kw_min)
-            else:
-                kw_norm = 1.0 if kw_raw > 0 else 0.0
-
-            # Semantic score: normalize from [-1,1] to [0,1]
-            sem_norm = max(0.0, min(1.0, (sem_raw + 1.0) / 2.0))
-
-            # Combined score (using normalized weights)
-            combined_score = norm_keyword_weight * kw_norm + norm_semantic_weight * sem_norm
-
-            normalized_items.append((item, combined_score, kw_raw, sem_raw, kw_norm, sem_norm))
-
-        # Sort by combined score
-        normalized_items.sort(key=lambda x: -x[1])
 
         # Apply ranking model if enabled
         if settings.ml_ranking_enabled:
@@ -107,27 +66,141 @@ class HybridSearch:
                 normalized_items, query, query_keywords, role
             )
 
-        # Create results
+        # RRF scores are small absolute values, so normalize to [0,1] for API response.
+        normalized_items = self._normalize_combined_scores(normalized_items)
+
+        return self._build_results(normalized_items, k, use_rrf=True)
+
+    def _score_with_rrf(
+        self,
+        query: str,
+        role: Optional[str],
+        query_lower: str,
+        query_keywords: set,
+        k: int,
+    ) -> List[tuple]:
+        """Retrieve with BM25 + dense and fuse with RRF."""
+        candidate_pool = max(k * self.candidate_multiplier, self.min_candidate_pool)
+
+        bm25_hits = bm25_provider.search(query, role, k=candidate_pool)
+
+        semantic_hits = []
+        semantic_available = semantic_search.is_available()
+        if semantic_available:
+            semantic_hits = semantic_search.search(query=query, role=role, k=candidate_pool)
+
+        if not bm25_hits and not semantic_hits:
+            return []
+
+        ranked_lists: Dict[str, List[str]] = {}
+        if bm25_hits:
+            ranked_lists["bm25"] = [hit.item.id for hit in bm25_hits]
+        if semantic_hits:
+            ranked_lists["semantic"] = [result.id for result in semantic_hits]
+
+        fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k)
+        if not fused:
+            return []
+
+        bm25_item_by_id = {hit.item.id: hit.item for hit in bm25_hits}
+        bm25_score_by_id = {hit.item.id: hit.score for hit in bm25_hits}
+
+        semantic_raw_by_id = {
+            result.id: max(-1.0, min(1.0, (float(result.score) * 2.0) - 1.0))
+            for result in semantic_hits
+        }
+
+        query_embedding = None
+        if semantic_available:
+            query_embedding = semantic_search.get_query_embedding(query)
+
+        fused_items: List[tuple] = []
+        for fused_result in fused[:candidate_pool]:
+            content_id = fused_result.content_id
+            item = bm25_item_by_id.get(content_id) or content_service.get_content_by_id(content_id)
+            if not item:
+                continue
+
+            if item.content_type not in content_service.searchable_types:
+                continue
+            if role and role not in item.target_groups:
+                continue
+
+            # Keep old keyword feature semantics for reranker compatibility.
+            keyword_feature_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
+
+            sem_raw = semantic_raw_by_id.get(content_id, -1.0)
+            if sem_raw <= -1.0 and query_embedding is not None and content_id in semantic_search.content_embeddings:
+                sem_raw = float(np.dot(query_embedding, semantic_search.content_embeddings[content_id]))
+
+            sem_norm = max(0.0, min(1.0, (sem_raw + 1.0) / 2.0))
+            fused_items.append(
+                (item, fused_result.score, keyword_feature_raw, sem_raw, 0.0, sem_norm)
+            )
+
+        if not fused_items:
+            return []
+
+        # Use BM25 strength for displayed lexical component (kw_norm).
+        bm25_values = [bm25_score_by_id.get(item.id, 0.0) for item, *_ in fused_items]
+        bm25_min, bm25_max = min(bm25_values), max(bm25_values)
+
+        normalized_items = []
+        for item, fused_score, kw_raw, sem_raw, _, sem_norm in fused_items:
+            bm25_raw = bm25_score_by_id.get(item.id, 0.0)
+            if bm25_max > bm25_min:
+                kw_norm = (bm25_raw - bm25_min) / (bm25_max - bm25_min)
+            else:
+                kw_norm = 1.0 if bm25_raw > 0 else 0.0
+
+            normalized_items.append((item, fused_score, kw_raw, sem_raw, kw_norm, sem_norm))
+
+        normalized_items.sort(key=lambda x: -x[1])
+        return normalized_items
+
+    @staticmethod
+    def _normalize_combined_scores(items: List[tuple]) -> List[tuple]:
+        """Normalize combined score field (index 1) to [0,1]."""
+        if not items:
+            return []
+
+        scores = [float(x[1]) for x in items]
+        s_min, s_max = min(scores), max(scores)
+
+        normalized = []
+        for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items:
+            if s_max > s_min:
+                score_norm = (float(combined) - s_min) / (s_max - s_min)
+            else:
+                score_norm = 1.0 if float(combined) > 0 else 0.0
+            normalized.append((item, score_norm, kw_raw, sem_raw, kw_norm, sem_norm))
+        return normalized
+
+    @staticmethod
+    def _build_results(items: List[tuple], k: int, use_rrf: bool = False) -> List[SearchResult]:
+        """Build API search results from normalized tuples."""
         results = []
-        for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in normalized_items[:k]:
+        for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items[:k]:
             parts = []
+            if use_rrf:
+                parts.append(f"RRF: {combined:.2f}")
             if kw_norm > 0:
                 parts.append(f"Keyword: {kw_norm:.2f}")
             if sem_norm > 0:
                 parts.append(f"Semantic: {sem_norm:.2f}")
             explanation = " + ".join(parts) if parts else "No match"
-            explanation += f" = {combined:.2f}"
+            if not use_rrf:
+                explanation += f" = {combined:.2f}"
 
             results.append(
                 SearchResult(
                     id=item.id,
                     title=item.title,
                     info_type=item.content_type,
-                    score=round(combined, 3),
+                    score=round(float(combined), 3),
                     explanation=explanation,
                 )
             )
-
         return results
 
     def _apply_ranking_model(
