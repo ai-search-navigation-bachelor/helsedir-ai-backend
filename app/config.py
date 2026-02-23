@@ -38,6 +38,8 @@ class Settings(BaseSettings):
 
     # Hybrid search settings
     search_rrf_k: int = 60  # RRF fusion constant (higher = more weight to top ranks)
+    search_rrf_weight_bm25: float = 0.3  # RRF weight for BM25 retrieval
+    search_rrf_weight_semantic: float = 0.7  # RRF weight for semantic retrieval
 
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results

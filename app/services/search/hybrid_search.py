@@ -99,7 +99,11 @@ class HybridSearch:
         if semantic_hits:
             ranked_lists["semantic"] = [result.id for result in semantic_hits]
 
-        fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k)
+        rrf_weights = {
+            "bm25": settings.search_rrf_weight_bm25,
+            "semantic": settings.search_rrf_weight_semantic,
+        }
+        fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k, weights=rrf_weights)
         if not fused:
             return []
 
