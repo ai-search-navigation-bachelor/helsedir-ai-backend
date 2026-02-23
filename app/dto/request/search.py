@@ -13,7 +13,7 @@ class SearchRequest(BaseModel):
 
     # Pagination
     offset: int = Field(0, ge=0, description="Number of results to skip")
-    limit: int = Field(500, ge=1, le=1000, description="Number of results per page (default: all)")
+    limit: int = Field(15, ge=1, le=1000, description="Number of results per page")
     search_id: Optional[str] = Field(None, description="Existing search_id for pagination")
 
 

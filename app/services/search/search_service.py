@@ -53,7 +53,7 @@ class SearchService:
         keyword_weight: float = 0.2,
         semantic_weight: float = 0.8,
     ) -> List[SearchResult]:
-        """Perform hybrid search combining keyword and semantic."""
+        """Perform hybrid search combining BM25 and semantic retrieval (RRF fusion)."""
         return self._hybrid.search(query, role, k, keyword_weight, semantic_weight)
 
     # ==================== Utility Methods ====================
