@@ -363,6 +363,7 @@ class SearchController:
                     id=theme_page.id,
                     title=theme_page.title,
                     info_type='temaside',
+                    path=theme_page.path,
                     score=max_score,
                     explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%"
                 ))
@@ -417,6 +418,7 @@ class SearchController:
                     id=content.get('id', ''),
                     title=content.get('tittel', ''),
                     info_type=info_type,
+                    path=content.get('path'),
                     score=1.0,  # Children inherit parent's relevance
                     explanation=f"Under {result.title}"
                 )
