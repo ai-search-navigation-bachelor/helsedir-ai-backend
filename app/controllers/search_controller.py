@@ -77,8 +77,9 @@ class SearchController:
         offset = max(0, offset) if isinstance(offset, int) else 0
         limit = max(1, limit) if isinstance(limit, int) else 10
 
-        # Execute search
-        max_results = 100
+        # Execute search in a dynamic window so deeper pagination can be fetched
+        # without loading an unnecessarily large result set on early pages.
+        max_results = min(2000, max(200, offset + limit + 100))
         all_results = self._execute_search(query, role, method, max_results)
 
         # Coerce None to empty list
@@ -294,11 +295,16 @@ class SearchController:
             has_prev=False,
         )
 
-    def _search_theme_pages_fuzzy(self, query: str, fuzzy_threshold: float = 0.6) -> List[SearchResult]:
+    def _search_theme_pages_fuzzy(
+        self,
+        query: str,
+        fuzzy_threshold: float = 0.72,
+        max_results: Optional[int] = None,
+    ) -> List[SearchResult]:
         """
         Search theme pages using fuzzy keyword matching.
 
-        Uses difflib for fuzzy string matching to handle typos.
+        Uses difflib for typo-tolerant fallback matching.
 
         Args:
             query: Search query
@@ -345,13 +351,15 @@ class SearchController:
                     title=theme_page.title,
                     info_type='temaside',
                     score=max_score,
-                    explanation=f"Fuzzy match: {int(max_score * 100)}%"
+                    explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%"
                 ))
 
         # Sort by score descending
         results.sort(key=lambda x: x.score, reverse=True)
 
-        return results
+        if max_results is None:
+            return results
+        return results[:max(1, int(max_results))]
 
     def _populate_theme_page_children(self, results: List[SearchResult]) -> List[SearchResult]:
         """
@@ -414,40 +422,52 @@ class SearchController:
 
         return results
 
-    def _merge_theme_page_results(
+    def _needs_theme_fuzzy_fallback(
         self,
         regular_results: List[SearchResult],
-        theme_page_results: List[SearchResult]
+    ) -> bool:
+        """
+        Decide whether theme-page fuzzy fallback should run.
+
+        BM25/semantic results are primary. Fallback is used only when:
+        - no theme pages are returned, or
+        - best theme page score is below configured minimum score.
+        """
+        theme_results = [
+            r for r in regular_results
+            if r.info_type and r.info_type.lower() == "temaside"
+        ]
+        if not theme_results:
+            return True
+
+        top_theme_score = max(r.score for r in theme_results)
+        return top_theme_score < settings.search_min_score
+
+    def _merge_theme_fallback_results(
+        self,
+        regular_results: List[SearchResult],
+        fallback_theme_results: List[SearchResult],
+        max_results: Optional[int] = None,
     ) -> List[SearchResult]:
         """
-        Merge theme page results with regular results.
+        Merge fallback theme-page results into regular results.
 
-        Removes duplicates and sorts by score.
-
-        Args:
-            regular_results: Results from regular search
-            theme_page_results: Results from fuzzy theme page search
-
-        Returns:
-            Merged and deduplicated results
+        Existing BM25/semantic results are never overridden by fallback hits.
         """
-        # Create a dict to avoid duplicates (using id as key)
-        merged = {}
+        if not fallback_theme_results:
+            return regular_results
 
-        # Add regular results first
-        for result in regular_results:
-            merged[result.id] = result
+        merged = {result.id: result for result in regular_results}
 
-        # Add theme page results (override if better score)
-        for result in theme_page_results:
-            if result.id not in merged or result.score > merged[result.id].score:
+        for result in fallback_theme_results:
+            if result.id not in merged:
                 merged[result.id] = result
 
-        # Convert back to list and sort by score
         merged_list = list(merged.values())
         merged_list.sort(key=lambda x: x.score, reverse=True)
-
-        return merged_list
+        if max_results is None:
+            return merged_list
+        return merged_list[:max(1, int(max_results))]
 
     def _execute_search(
         self,
@@ -456,7 +476,11 @@ class SearchController:
         method: str,
         max_results: int
     ) -> List[SearchResult]:
-        """Execute the appropriate search method and include fuzzy theme page matching."""
+        """
+        Execute the appropriate search method.
+
+        Theme pages are BM25/semantic-first with controlled fuzzy fallback.
+        """
         # Execute regular search
         if method == "semantic":
             regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
@@ -468,12 +492,23 @@ class SearchController:
         # Coerce None to empty list
         if regular_results is None:
             regular_results = []
+        else:
+            regular_results = regular_results[:max(1, int(max_results))]
 
-        # Search theme pages with fuzzy matching
-        theme_page_results = self._search_theme_pages_fuzzy(query, fuzzy_threshold=0.6)
+        if not self._needs_theme_fuzzy_fallback(regular_results):
+            return regular_results
 
-        # Merge results
-        merged_results = self._merge_theme_page_results(regular_results, theme_page_results)
+        # Controlled fallback for typo tolerance on theme pages only.
+        theme_page_results = self._search_theme_pages_fuzzy(
+            query=query,
+            fuzzy_threshold=0.72,
+            max_results=max_results,
+        )
+        merged_results = self._merge_theme_fallback_results(
+            regular_results,
+            theme_page_results,
+            max_results=max_results,
+        )
 
         return merged_results
 
