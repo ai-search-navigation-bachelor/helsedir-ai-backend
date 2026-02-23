@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     search_full_title_coverage_weight: float = 7.0  # All title words in query
     search_keyword_title_weight: float = 3.0
 
+    # Hybrid search settings
+    search_rrf_k: int = 60  # RRF fusion constant (higher = more weight to top ranks)
+
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results
     search_category_preview_count: int = 3  # Number of results in category preview

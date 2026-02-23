@@ -2,8 +2,10 @@
 Hybrid search combining keyword and semantic search.
 """
 
+import logging
 import re
-from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
+from typing import List, Optional, Dict
 
 import numpy as np
 
@@ -11,11 +13,25 @@ from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
-from app.services.search.bm25_provider import bm25_provider
+from app.services.search.bm25_search import bm25_search
 from app.services.search.keyword_search import keyword_search
 from app.services.search.rrf_fusion import fuse_ranked_lists
 from app.services.search.semantic_search import semantic_search
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class HybridCandidate:
+    """Intermediate search candidate carrying scores from each retrieval stage."""
+
+    item: ContentItem
+    combined_score: float
+    keyword_raw: float
+    semantic_raw: float
+    keyword_norm: float
+    semantic_norm: float
 
 
 class HybridSearch:
@@ -23,11 +39,10 @@ class HybridSearch:
 
     def __init__(
         self,
-        rrf_k: int = 60,
         candidate_multiplier: int = 8,
         min_candidate_pool: int = 100,
     ):
-        self.rrf_k = max(1, int(rrf_k))
+        self.rrf_k = max(1, settings.search_rrf_k)
         self.candidate_multiplier = max(2, int(candidate_multiplier))
         self.min_candidate_pool = max(20, int(min_candidate_pool))
 
@@ -36,40 +51,26 @@ class HybridSearch:
         query: str,
         role: Optional[str] = None,
         k: int = 10,
-        keyword_weight: float = 0.3,
-        semantic_weight: float = 0.7,
     ) -> List[SearchResult]:
-        """
-        Perform hybrid search combining BM25 and semantic retrieval via RRF.
-
-        `keyword_weight` and `semantic_weight` are kept for backward compatibility
-        with existing call sites, but are no longer used.
-        """
-        _ = keyword_weight
-        _ = semantic_weight
-
+        """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
         query_keywords = set(re.findall(r'\w+', query_lower))
 
         try:
-            normalized_items = self._score_with_rrf(query, role, query_lower, query_keywords, k)
-        except Exception as e:
-            print(f"Error in RRF fusion: {e}")
-            normalized_items = []
+            candidates = self._score_with_rrf(query, role, query_lower, query_keywords, k)
+        except Exception:
+            logger.exception("Error in RRF fusion")
+            candidates = []
 
-        if not normalized_items:
+        if not candidates:
             return []
 
-        # Apply ranking model if enabled
         if settings.ml_ranking_enabled:
-            normalized_items = self._apply_ranking_model(
-                normalized_items, query, query_keywords, role
-            )
+            candidates = self._apply_ranking_model(candidates, query, query_keywords, role)
 
-        # RRF scores are small absolute values, so normalize to [0,1] for API response.
-        normalized_items = self._normalize_combined_scores(normalized_items)
+        candidates = self._normalize_combined_scores(candidates)
 
-        return self._build_results(normalized_items, k, use_rrf=True)
+        return self._build_results(candidates, k)
 
     def _score_with_rrf(
         self,
@@ -78,11 +79,11 @@ class HybridSearch:
         query_lower: str,
         query_keywords: set,
         k: int,
-    ) -> List[tuple]:
+    ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
         candidate_pool = max(k * self.candidate_multiplier, self.min_candidate_pool)
 
-        bm25_hits = bm25_provider.search(query, role, k=candidate_pool)
+        bm25_hits = bm25_search.search(query, role, k=candidate_pool)
 
         semantic_hits = []
         semantic_available = semantic_search.is_available()
@@ -105,16 +106,15 @@ class HybridSearch:
         bm25_item_by_id = {hit.item.id: hit.item for hit in bm25_hits}
         bm25_score_by_id = {hit.item.id: hit.score for hit in bm25_hits}
 
-        semantic_raw_by_id = {
-            result.id: max(-1.0, min(1.0, (float(result.score) * 2.0) - 1.0))
-            for result in semantic_hits
-        }
+        # Semantic search returns scores in [0,1]. Keep as-is for display (sem_norm).
+        # For LTR features we need [-1,1] range (sem_raw).
+        semantic_norm_by_id = {result.id: float(result.score) for result in semantic_hits}
 
         query_embedding = None
         if semantic_available:
             query_embedding = semantic_search.get_query_embedding(query)
 
-        fused_items: List[tuple] = []
+        candidates: List[HybridCandidate] = []
         for fused_result in fused[:candidate_pool]:
             content_id = fused_result.content_id
             item = bm25_item_by_id.get(content_id) or content_service.get_content_by_id(content_id)
@@ -127,74 +127,72 @@ class HybridSearch:
                 continue
 
             # Keep old keyword feature semantics for reranker compatibility.
-            keyword_feature_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
+            keyword_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
 
-            sem_raw = semantic_raw_by_id.get(content_id, -1.0)
-            if sem_raw <= -1.0 and query_embedding is not None and content_id in semantic_search.content_embeddings:
-                sem_raw = float(np.dot(query_embedding, semantic_search.content_embeddings[content_id]))
+            sem_norm = semantic_norm_by_id.get(content_id, 0.0)
+            if sem_norm <= 0.0 and query_embedding is not None and content_id in semantic_search.content_embeddings:
+                dot = float(np.dot(query_embedding, semantic_search.content_embeddings[content_id]))
+                sem_norm = max(0.0, min(1.0, (dot + 1.0) / 2.0))
 
-            sem_norm = max(0.0, min(1.0, (sem_raw + 1.0) / 2.0))
-            fused_items.append(
-                (item, fused_result.score, keyword_feature_raw, sem_raw, 0.0, sem_norm)
-            )
+            candidates.append(HybridCandidate(
+                item=item,
+                combined_score=fused_result.score,
+                keyword_raw=keyword_raw,
+                semantic_raw=(sem_norm * 2.0) - 1.0,
+                keyword_norm=0.0,
+                semantic_norm=sem_norm,
+            ))
 
-        if not fused_items:
+        if not candidates:
             return []
 
-        # Use BM25 strength for displayed lexical component (kw_norm).
-        bm25_values = [bm25_score_by_id.get(item.id, 0.0) for item, *_ in fused_items]
+        # Normalize BM25 scores for display.
+        bm25_values = [bm25_score_by_id.get(c.item.id, 0.0) for c in candidates]
         bm25_min, bm25_max = min(bm25_values), max(bm25_values)
 
-        normalized_items = []
-        for item, fused_score, kw_raw, sem_raw, _, sem_norm in fused_items:
-            bm25_raw = bm25_score_by_id.get(item.id, 0.0)
+        for c in candidates:
+            bm25_raw = bm25_score_by_id.get(c.item.id, 0.0)
             if bm25_max > bm25_min:
-                kw_norm = (bm25_raw - bm25_min) / (bm25_max - bm25_min)
+                c.keyword_norm = (bm25_raw - bm25_min) / (bm25_max - bm25_min)
             else:
-                kw_norm = 1.0 if bm25_raw > 0 else 0.0
+                c.keyword_norm = 1.0 if bm25_raw > 0 else 0.0
 
-            normalized_items.append((item, fused_score, kw_raw, sem_raw, kw_norm, sem_norm))
-
-        normalized_items.sort(key=lambda x: -x[1])
-        return normalized_items
+        candidates.sort(key=lambda c: -c.combined_score)
+        return candidates
 
     @staticmethod
-    def _normalize_combined_scores(items: List[tuple]) -> List[tuple]:
-        """Normalize combined score field (index 1) to [0,1]."""
-        if not items:
+    def _normalize_combined_scores(candidates: List[HybridCandidate]) -> List[HybridCandidate]:
+        """Normalize combined score field to [0,1]."""
+        if not candidates:
             return []
 
-        scores = [float(x[1]) for x in items]
+        scores = [c.combined_score for c in candidates]
         s_min, s_max = min(scores), max(scores)
 
-        normalized = []
-        for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items:
+        for c in candidates:
             if s_max > s_min:
-                score_norm = (float(combined) - s_min) / (s_max - s_min)
+                c.combined_score = (c.combined_score - s_min) / (s_max - s_min)
             else:
-                score_norm = 1.0 if float(combined) > 0 else 0.0
-            normalized.append((item, score_norm, kw_raw, sem_raw, kw_norm, sem_norm))
-        return normalized
+                c.combined_score = 1.0 if c.combined_score > 0 else 0.0
+
+        return candidates
 
     @staticmethod
-    def _build_results(items: List[tuple], k: int, use_rrf: bool = False) -> List[SearchResult]:
-        """Build API search results from normalized tuples."""
+    def _build_results(candidates: List[HybridCandidate], k: int) -> List[SearchResult]:
+        """Build API search results from candidates."""
         results = []
-        for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items[:k]:
-            bm25_text = f"{kw_norm:.2f}" if kw_norm > 0 else "0.00"
-            semantic_text = f"{sem_norm:.2f}" if sem_norm > 0 else "0.00"
-            fusion_label = "RRF" if use_rrf else "weighted-sum"
+        for c in candidates[:k]:
             explanation = (
-                f"BM25={bm25_text} | Semantic={semantic_text} | "
-                f"{fusion_label} final={combined:.2f}"
+                f"BM25={c.keyword_norm:.2f} | Semantic={c.semantic_norm:.2f} | "
+                f"RRF final={c.combined_score:.2f}"
             )
 
             results.append(
                 SearchResult(
-                    id=item.id,
-                    title=item.title,
-                    info_type=item.content_type,
-                    score=round(float(combined), 3),
+                    id=c.item.id,
+                    title=c.item.title,
+                    info_type=c.item.content_type,
+                    score=round(c.combined_score, 3),
                     explanation=explanation,
                 )
             )
@@ -202,11 +200,11 @@ class HybridSearch:
 
     def _apply_ranking_model(
         self,
-        items: List[tuple],
+        candidates: List[HybridCandidate],
         query: str,
         query_keywords: set,
         role: Optional[str]
-    ) -> List[tuple]:
+    ) -> List[HybridCandidate]:
         """Apply ranking model to re-rank results."""
         try:
             from app.services.search.ml_service import ml_service
@@ -214,17 +212,17 @@ class HybridSearch:
             if not ml_service.is_ranking_available():
                 ml_service.load_ranking_model()
                 if not ml_service.is_ranking_available():
-                    return items
+                    return candidates
 
             # Use windowed CTR (30 days) to match training data
             ctr_data = database_service.get_content_ctr_windowed(days=30)
 
-            # Extract RAW features for each item
+            # Extract RAW features for each candidate
             features_list = []
-            for item, combined, kw_raw, sem_raw, kw_norm, sem_norm in items:
+            for c in candidates:
                 features = self._extract_ranking_features(
-                    item, query, query_keywords, role,
-                    kw_raw, sem_raw, ctr_data.get(item.id, 0.0)
+                    c.item, query, query_keywords, role,
+                    c.keyword_raw, c.semantic_raw, ctr_data.get(c.item.id, 0.0)
                 )
                 features_list.append(features)
 
@@ -241,16 +239,15 @@ class HybridSearch:
             ranking_scores = ml_service.get_ranking_scores(features_list)
 
             # Replace combined score with ranking score and re-sort
-            re_ranked = []
-            for i, (item, _, kw_raw, sem_raw, kw_norm, sem_norm) in enumerate(items):
-                re_ranked.append((item, ranking_scores[i], kw_raw, sem_raw, kw_norm, sem_norm))
+            for i, c in enumerate(candidates):
+                c.combined_score = ranking_scores[i]
 
-            re_ranked.sort(key=lambda x: -x[1])
-            return re_ranked
+            candidates.sort(key=lambda c: -c.combined_score)
+            return candidates
 
-        except Exception as e:
-            print(f"Error applying ranking model: {e}")
-            return items
+        except Exception:
+            logger.exception("Error applying ranking model")
+            return candidates
 
     def _extract_ranking_features(
         self,
@@ -329,11 +326,11 @@ class HybridSearch:
             "title_keyword_proportion": title_keyword_prop,
             "type_match": type_match,
             "role_match": role_match,
-            "code_match_count": 0.0,  # TODO: implement code matching
-            "lis_match": 0.0,  # TODO: implement LIS matching
+            "code_match_count": 0.0,
+            "lis_match": 0.0,
             "maalgruppe_match": maalgruppe_match,
             "smoothed_ctr": ctr,
-            "position": 0.0,  # Position unknown during re-ranking
+            "position": 0.0,
         }
 
 
