@@ -36,6 +36,9 @@ class SearchResponse(BaseModel):
     has_next: bool
     has_prev: bool
 
+    # Category distribution across all fetched results (not just current page)
+    category_counts: Dict[str, int] = Field(default_factory=dict)
+
 
 # =============================================================================
 # Categorized Search Response

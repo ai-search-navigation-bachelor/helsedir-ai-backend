@@ -77,16 +77,28 @@ class SearchController:
         offset = max(0, offset) if isinstance(offset, int) else 0
         limit = max(1, limit) if isinstance(limit, int) else 10
 
-        # Execute search in a dynamic window so deeper pagination can be fetched
-        # without loading an unnecessarily large result set on early pages.
-        max_results = min(2000, max(200, offset + limit + 100))
+        # Fetch a fixed pool so that total and category_counts are stable across
+        # all pagination requests for the same query.
+        max_results = 500
         all_results = self._execute_search(query, role, method, max_results)
 
         # Coerce None to empty list
         if all_results is None:
             all_results = []
 
+        # Filter to relevant results. In hybrid search, BM25 hits rank high (0.6–1.0)
+        # while semantic-only filler sits low (0.0–0.4), so the threshold creates a
+        # natural cutoff that reflects genuine relevance for the given query.
+        min_score = settings.search_min_score
+        all_results = [r for r in all_results if r.score >= min_score]
+
         total = len(all_results)
+
+        # Compute category distribution from all relevant results (before pagination)
+        category_counts: Dict[str, int] = defaultdict(int)
+        for r in all_results:
+            category = r.info_type.lower() if r.info_type else "unknown"
+            category_counts[category] += 1
 
         # Clamp offset to not exceed result length
         offset = min(offset, max(0, total))
@@ -115,6 +127,7 @@ class SearchController:
             limit=limit,
             has_next=offset + limit < total,
             has_prev=offset > 0,
+            category_counts=dict(category_counts),
         )
 
     async def search_categorized(
