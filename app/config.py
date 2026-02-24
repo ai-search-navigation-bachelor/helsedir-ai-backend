@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
@@ -80,7 +81,8 @@ class Settings(BaseSettings):
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
-    mysql_pool_size: int = 20
+    # Per-worker pool size; multiply by worker count when sizing against max_connections
+    mysql_pool_size: int = Field(default=10, le=32)
     mysql_root_password: str = ""
 
 
