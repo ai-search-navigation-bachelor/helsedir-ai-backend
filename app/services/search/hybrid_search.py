@@ -4,6 +4,7 @@ Hybrid search combining keyword and semantic search.
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
@@ -39,12 +40,14 @@ class HybridSearch:
 
     def __init__(
         self,
-        candidate_multiplier: int = 8,
+        candidate_multiplier: int = 3,
         min_candidate_pool: int = 100,
+        max_candidate_pool: int = 1000,
     ):
         self.rrf_k = max(1, settings.search_rrf_k)
         self.candidate_multiplier = max(2, int(candidate_multiplier))
         self.min_candidate_pool = max(20, int(min_candidate_pool))
+        self.max_candidate_pool = max(100, int(max_candidate_pool))
 
     def search(
         self,
@@ -81,18 +84,28 @@ class HybridSearch:
         k: int,
     ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
-        candidate_pool = max(k * self.candidate_multiplier, self.min_candidate_pool)
+        t_start = time.perf_counter()
 
+        candidate_pool = min(
+            max(k * self.candidate_multiplier, self.min_candidate_pool),
+            self.max_candidate_pool,
+        )
+
+        t0 = time.perf_counter()
         bm25_hits = bm25_search.search(query, role, k=candidate_pool)
+        t_bm25 = time.perf_counter() - t0
 
         semantic_hits = []
         semantic_available = semantic_search.is_available()
+        t0 = time.perf_counter()
         if semantic_available:
             semantic_hits = semantic_search.search(query=query, role=role, k=candidate_pool)
+        t_semantic = time.perf_counter() - t0
 
         if not bm25_hits and not semantic_hits:
             return []
 
+        t0 = time.perf_counter()
         ranked_lists: Dict[str, List[str]] = {}
         if bm25_hits:
             ranked_lists["bm25"] = [hit.item.id for hit in bm25_hits]
@@ -104,6 +117,7 @@ class HybridSearch:
             "semantic": settings.search_rrf_weight_semantic,
         }
         fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k, weights=rrf_weights)
+        t_rrf = time.perf_counter() - t0
         if not fused:
             return []
 
@@ -118,6 +132,7 @@ class HybridSearch:
         if semantic_available:
             query_embedding = semantic_search.get_query_embedding(query)
 
+        t0 = time.perf_counter()
         candidates: List[HybridCandidate] = []
         for fused_result in fused[:candidate_pool]:
             content_id = fused_result.content_id
@@ -146,6 +161,7 @@ class HybridSearch:
                 keyword_norm=0.0,
                 semantic_norm=sem_norm,
             ))
+        t_candidates = time.perf_counter() - t0
 
         if not candidates:
             return []
@@ -162,6 +178,15 @@ class HybridSearch:
                 c.keyword_norm = 1.0 if bm25_raw > 0 else 0.0
 
         candidates.sort(key=lambda c: -c.combined_score)
+
+        t_total = time.perf_counter() - t_start
+        logger.info(
+            "Hybrid search timings: BM25=%.0fms  Semantic=%.0fms  RRF=%.0fms  "
+            "Candidates(%d)=%.0fms  Total=%.0fms",
+            t_bm25 * 1000, t_semantic * 1000, t_rrf * 1000,
+            len(candidates), t_candidates * 1000, t_total * 1000,
+        )
+
         return candidates
 
     @staticmethod
