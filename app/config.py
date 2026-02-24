@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
@@ -36,6 +37,15 @@ class Settings(BaseSettings):
     search_full_title_coverage_weight: float = 7.0  # All title words in query
     search_keyword_title_weight: float = 3.0
 
+    # Hybrid search settings
+    search_rrf_k: int = 60  # RRF fusion constant (higher = more weight to top ranks)
+    search_rrf_weight_bm25: float = 0.3  # RRF weight for BM25 retrieval
+    search_rrf_weight_semantic: float = 0.7  # RRF weight for semantic retrieval
+
+    # Content type score boosts (multiplied on combined_score after RRF fusion)
+    search_boost_temaside: float = 1.15
+    search_boost_retningslinje: float = 1.10
+
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results
     search_category_preview_count: int = 3  # Number of results in category preview
@@ -71,6 +81,8 @@ class Settings(BaseSettings):
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
+    # Per-worker pool size; multiply by worker count when sizing against max_connections
+    mysql_pool_size: int = Field(default=10, le=32)
     mysql_root_password: str = ""
 
 

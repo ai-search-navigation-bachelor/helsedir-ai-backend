@@ -2,11 +2,13 @@
 Repository for search logging operations.
 """
 
+import logging
 from typing import List, Optional, Dict, Any
 import mysql.connector
 
 from app.services.repositories.base import db_pool
-from app.services.repositories.stats_repository import stats_repository
+
+logger = logging.getLogger(__name__)
 
 
 class SearchRepository:
@@ -120,33 +122,43 @@ class SearchRepository:
                     """
                     INSERT INTO search_results_shown (
                         search_id, content_id, position, score,
-                        semantic_similarity, keyword_score_total,
-                        exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
-                        type_match, role_match, code_match_count, lis_match, maalgruppe_match
+                        semantic_score, bm25_score, rrf_score,
+                        type_match, role_match, maalgruppe_match
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         search_id,
                         content_id,
                         result.get("position"),
                         result.get("score"),
-                        result.get("semantic_similarity"),
-                        result.get("keyword_score_total"),
-                        result.get("exact_title_proportion"),
-                        result.get("full_coverage_proportion"),
-                        result.get("title_keyword_proportion"),
+                        result.get("semantic_score"),
+                        result.get("bm25_score"),
+                        result.get("rrf_score"),
                         result.get("type_match"),
                         result.get("role_match"),
-                        result.get("code_match_count", 0),
-                        result.get("lis_match", 0),
                         result.get("maalgruppe_match", 0),
                     ),
                 )
 
-            # Also update content_stats impressions
-            content_ids = [r.get("content_id") for r in results if r.get("content_id")]
-            stats_repository.record_impressions_batch(content_ids)
+            # Also update content_stats impressions (inline to avoid nested connection)
+            seen_ids = set()
+            for r in results:
+                content_id = r.get("content_id")
+                if not content_id or content_id in seen_ids:
+                    continue
+                seen_ids.add(content_id)
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO content_stats (content_id, impressions, clicks)
+                        VALUES (%s, 1, 0)
+                        ON DUPLICATE KEY UPDATE impressions = impressions + 1
+                        """,
+                        (content_id,),
+                    )
+                except mysql.connector.Error as e:
+                    logger.warning("Failed to update content_stats for %s: %s", content_id, e)
 
             conn.commit()
             return True
@@ -199,8 +211,15 @@ class SearchRepository:
                 (search_id, content_id, position),
             )
 
-            # Also update content_stats clicks
-            stats_repository.record_click(content_id)
+            # Also update content_stats clicks (inline to avoid nested connection)
+            cursor.execute(
+                """
+                INSERT INTO content_stats (content_id, impressions, clicks)
+                VALUES (%s, 0, 1)
+                ON DUPLICATE KEY UPDATE clicks = clicks + 1
+                """,
+                (content_id,),
+            )
 
             conn.commit()
             return True

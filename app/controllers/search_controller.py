@@ -7,8 +7,9 @@ Handles business logic for search operations with pagination and ML feature logg
 import uuid
 import re
 import logging
+import time
 import difflib
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from collections import defaultdict
 from fastapi import BackgroundTasks
 
@@ -23,7 +24,6 @@ from app.dto.response.search import (
     SuggestionResponse,
 )
 from app.services.search.search_service import search_service
-from app.services.search.feature_extractor import feature_extractor
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
 from app.services.repositories.content_repository import content_repository
@@ -40,8 +40,16 @@ logger = logging.getLogger(__name__)
 class SearchController:
     """Controller for search operations."""
 
+    # Cache search results for 30 seconds so concurrent category-filtered
+    # requests (same query) don't re-run the full pipeline.
+    _CACHE_TTL_SECONDS = 30.0
+
     def __init__(self):
         self.search_service = search_service
+        self._search_cache: Dict[
+            Tuple[str, Optional[str], str, int],
+            Tuple[float, List["SearchResult"]],
+        ] = {}
 
     async def search(
         self,
@@ -51,7 +59,9 @@ class SearchController:
         offset: int = 0,
         limit: int = 10,
         search_id: Optional[str] = None,
+        category: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
+        log: bool = True,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -63,6 +73,7 @@ class SearchController:
             offset: Number of results to skip
             limit: Number of results per page
             search_id: Existing search_id for pagination (None = new search)
+            category: Optional category (info_type) to filter results by
             background_tasks: FastAPI background tasks for async logging
 
         Returns:
@@ -86,19 +97,24 @@ class SearchController:
         if all_results is None:
             all_results = []
 
-        # Filter to relevant results. In hybrid search, BM25 hits rank high (0.6–1.0)
-        # while semantic-only filler sits low (0.0–0.4), so the threshold creates a
-        # natural cutoff that reflects genuine relevance for the given query.
+        # Filter low-relevance results after RRF normalization.
         min_score = settings.search_min_score
         all_results = [r for r in all_results if r.score >= min_score]
 
         total = len(all_results)
 
-        # Compute category distribution from all relevant results (before pagination)
+        # Compute category distribution from all relevant results (before filtering)
         category_counts: Dict[str, int] = defaultdict(int)
         for r in all_results:
-            category = r.info_type.lower() if r.info_type else "unknown"
-            category_counts[category] += 1
+            cat = r.info_type.lower() if r.info_type else "unknown"
+            category_counts[cat] += 1
+
+        # Filter by category if specified (after computing counts so tabs stay accurate)
+        # Supports comma-separated values, e.g. "retningslinje,nasjonalt-forlop"
+        if category:
+            category_set = {c.strip().lower() for c in category.split(",") if c.strip()}
+            all_results = [r for r in all_results if r.info_type and r.info_type.lower() in category_set]
+            total = len(all_results)
 
         # Clamp offset to not exceed result length
         offset = min(offset, max(0, total))
@@ -112,11 +128,12 @@ class SearchController:
         # Handle search_id (new search vs pagination)
         search_id = self._handle_search_id(search_id, query, role)
 
-        # Extract ML features and log results (in background)
-        if background_tasks:
-            background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
-        else:
-            self._log_results(search_id, query, role, page_results, offset)
+        # Extract ML features and log results (skip for prefetch requests)
+        if log:
+            if background_tasks:
+                background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
+            else:
+                self._log_results(search_id, query, role, page_results, offset)
 
         return SearchResponse(
             results=page_results,
@@ -492,10 +509,31 @@ class SearchController:
         max_results: int
     ) -> List[SearchResult]:
         """
-        Execute the appropriate search method.
+        Execute the appropriate search method with short-lived caching.
+
+        The frontend fires multiple concurrent requests for the same query
+        (one per category tab). This cache avoids re-running the full
+        BM25 + semantic + RRF pipeline for each one.
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
+        cache_key = (query.strip().lower(), role, method, max_results)
+        now = time.monotonic()
+
+        # Check cache
+        if cache_key in self._search_cache:
+            cached_time, cached_results = self._search_cache[cache_key]
+            if now - cached_time < self._CACHE_TTL_SECONDS:
+                return cached_results
+
+        # Evict stale entries (keep cache bounded)
+        stale_keys = [
+            k for k, (t, _) in self._search_cache.items()
+            if now - t >= self._CACHE_TTL_SECONDS
+        ]
+        for k in stale_keys:
+            del self._search_cache[k]
+
         # Execute regular search
         if method == "semantic":
             regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
@@ -510,22 +548,23 @@ class SearchController:
         else:
             regular_results = regular_results[:max(1, int(max_results))]
 
-        if not self._needs_theme_fuzzy_fallback(regular_results):
-            return regular_results
+        if self._needs_theme_fuzzy_fallback(regular_results):
+            # Controlled fallback for typo tolerance on theme pages only.
+            theme_page_results = self._search_theme_pages_fuzzy(
+                query=query,
+                fuzzy_threshold=0.72,
+                max_results=max_results,
+            )
+            regular_results = self._merge_theme_fallback_results(
+                regular_results,
+                theme_page_results,
+                max_results=max_results,
+            )
 
-        # Controlled fallback for typo tolerance on theme pages only.
-        theme_page_results = self._search_theme_pages_fuzzy(
-            query=query,
-            fuzzy_threshold=0.72,
-            max_results=max_results,
-        )
-        merged_results = self._merge_theme_fallback_results(
-            regular_results,
-            theme_page_results,
-            max_results=max_results,
-        )
+        # Store in cache
+        self._search_cache[cache_key] = (now, regular_results)
 
-        return merged_results
+        return regular_results
 
     def _handle_search_id(
         self,
@@ -639,6 +678,34 @@ class SearchController:
         suggestions = [Suggestion(id=page.id, title=page.title) for page in top]
         return SuggestionResponse(suggestions=suggestions)
 
+    @staticmethod
+    def _compute_type_match(info_type: Optional[str]) -> float:
+        """Content type authority score."""
+        content_type_map = {
+            "retningslinje": 0.9,
+            "veileder": 0.8,
+            "fagprosedyre": 0.75,
+            "faktaark": 0.6,
+            "artikkel": 0.5,
+        }
+        return content_type_map.get(
+            info_type.lower() if info_type else None,
+            0.5,
+        )
+
+    @staticmethod
+    def _compute_role_match(role: Optional[str], target_groups: Optional[list]) -> float:
+        """Role match score."""
+        target_groups = target_groups or []
+        if role and target_groups:
+            if role in target_groups:
+                return 1.0 / len(target_groups)
+        elif not role and not target_groups:
+            return 0.5
+        elif not target_groups:
+            return 0.3
+        return 0.0
+
     def _log_results(
         self,
         search_id: str,
@@ -647,7 +714,7 @@ class SearchController:
         results: List[SearchResult],
         offset: int,
     ) -> None:
-        """Extract ML features and log results to database."""
+        """Log results with pipeline scores to database."""
         # Get already logged content_ids to avoid duplicates
         already_logged = database_service.get_logged_content_ids_for_search(search_id)
 
@@ -660,59 +727,30 @@ class SearchController:
         # Get max position to continue from
         max_position = database_service.get_max_position_for_search(search_id)
 
-        query_keywords = set(re.findall(r'\w+', query.lower()))
-
-        # Default feature values to avoid NULLs
-        default_features = {
-            "semantic_similarity": 0.0,
-            "keyword_score_total": 0.0,
-            "exact_title_proportion": 0.0,
-            "full_coverage_proportion": 0.0,
-            "title_keyword_proportion": 0.0,
-            "type_match": 0.5,
-            "role_match": 0.0,
-            "code_match_count": 0,
-            "lis_match": 0,
-            "maalgruppe_match": 0,
-        }
-
         results_to_log = []
         for local_index, result in enumerate(new_results):
             position = max_position + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
-            features = default_features.copy()
+            # Metadata features from content item (lightweight)
+            type_match = 0.5
+            role_match = 0.0
+            maalgruppe_match = 0
             if content_item:
-                try:
-                    extracted = feature_extractor.extract_features(
-                        content_item, query, query_keywords, role
-                    )
-                    if extracted:
-                        # Merge extracted features with defaults
-                        for key in default_features:
-                            if key in extracted and extracted[key] is not None:
-                                features[key] = extracted[key]
-                except Exception as e:
-                    # Log failure with context but keep default features
-                    logger.exception(
-                        "Feature extraction failed for content_id=%s, query=%s, role=%s: %s",
-                        result.id, query, role, e
-                    )
+                type_match = self._compute_type_match(content_item.info_type)
+                role_match = self._compute_role_match(role, content_item.target_groups)
+                maalgruppe_match = 1 if role and role in (content_item.target_groups or []) else 0
 
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
                 "score": result.score,
-                "semantic_similarity": features["semantic_similarity"],
-                "keyword_score_total": features["keyword_score_total"],
-                "exact_title_proportion": features["exact_title_proportion"],
-                "full_coverage_proportion": features["full_coverage_proportion"],
-                "title_keyword_proportion": features["title_keyword_proportion"],
-                "type_match": features["type_match"],
-                "role_match": features["role_match"],
-                "code_match_count": features["code_match_count"],
-                "lis_match": features["lis_match"],
-                "maalgruppe_match": features["maalgruppe_match"],
+                "semantic_score": result.semantic_score or 0.0,
+                "bm25_score": result.bm25_score or 0.0,
+                "rrf_score": result.rrf_score or 0.0,
+                "type_match": type_match,
+                "role_match": role_match,
+                "maalgruppe_match": maalgruppe_match,
             })
 
         database_service.log_search_results(search_id, results_to_log)

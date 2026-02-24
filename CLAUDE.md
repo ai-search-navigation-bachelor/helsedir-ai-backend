@@ -54,7 +54,6 @@ app/
 - `keyword_search.py` - Title-based keyword scoring
 - `semantic_search.py` - E5 embedding-based search
 - `hybrid_search.py` - Combined keyword + semantic search
-- `feature_extractor.py` - ML feature extraction for logging
 - `ml_service.py` - Ranking model inference
 
 ### Search Scoring (Title-Only)
@@ -75,19 +74,15 @@ SEARCH_KEYWORD_TITLE_WEIGHT=3.0
 
 XGBoost LambdaMART model trained on click data.
 
-**Features (12):**
-1. `semantic_similarity` - Cosine similarity from E5 embeddings
-2. `keyword_score_total` - Normalized keyword score (0-1)
-3. `exact_title_proportion` - Proportion from exact title match
-4. `full_coverage_proportion` - Proportion from full title coverage
-5. `title_keyword_proportion` - Proportion from title keyword matches
-6. `type_match` - Content type authority (retningslinje=0.9, veileder=0.8, etc.)
-7. `role_match` - User role match with target groups
-8. `code_match_count` - Number of matched codes (ICD/ICPC/SNOMED/LIS)
-9. `lis_match` - LIS code match
-10. `maalgruppe_match` - Target group match
-11. `smoothed_ctr` - Windowed CTR (last 30 days)
-12. `position` - Shown position (for IPS weighting)
+**Features (8):**
+1. `semantic_score` - Normalized semantic similarity (0-1)
+2. `bm25_score` - Normalized BM25 score (0-1)
+3. `rrf_score` - RRF fusion score (0-1)
+4. `type_match` - Content type authority (retningslinje=0.9, veileder=0.8, etc.)
+5. `role_match` - User role match with target groups
+6. `maalgruppe_match` - Target group match
+7. `smoothed_ctr` - Windowed CTR (last 30 days, runtime-only)
+8. `position` - Shown position (for IPS weighting)
 
 **Training:**
 - Groups by `search_id` (LTR requires grouping)
@@ -133,7 +128,6 @@ helsedir-ai-backend/
 │   │   │   ├── keyword_search.py
 │   │   │   ├── semantic_search.py
 │   │   │   ├── hybrid_search.py
-│   │   │   ├── feature_extractor.py
 │   │   │   └── ml_service.py
 │   │   │
 │   │   ├── analytics/             # Logging

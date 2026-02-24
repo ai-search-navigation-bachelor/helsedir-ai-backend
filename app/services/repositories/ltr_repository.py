@@ -110,15 +110,11 @@ class LtrRepository:
                     srs.search_id,
                     srs.content_id,
                     srs.position,
-                    srs.semantic_similarity,
-                    srs.keyword_score_total,
-                    srs.exact_title_proportion,
-                    srs.full_coverage_proportion,
-                    srs.title_keyword_proportion,
+                    srs.semantic_score,
+                    srs.bm25_score,
+                    srs.rrf_score,
                     srs.type_match,
                     srs.role_match,
-                    srs.code_match_count,
-                    srs.lis_match,
                     srs.maalgruppe_match,
                     CASE WHEN EXISTS(
                         SELECT 1 FROM click_logs cl

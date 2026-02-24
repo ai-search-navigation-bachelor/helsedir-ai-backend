@@ -10,7 +10,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import numpy as np
 
@@ -39,7 +39,7 @@ class BM25Search:
         self.b = b
         self.title_weight = max(1, int(title_weight))
 
-        self._index_signature: Tuple[str, ...] = ()
+        self._index_signature: Optional[frozenset] = None
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
         self._avg_doc_length: float = 1.0
@@ -52,14 +52,18 @@ class BM25Search:
             return []
         return re.findall(r"\w+", text.lower())
 
+    @staticmethod
+    def _compute_signature(items) -> FrozenSet[str]:
+        return frozenset(item.id for item in items)
+
     def _needs_rebuild(self) -> bool:
-        current_ids = tuple(item.id for item in content_service.get_all_content())
-        return current_ids != self._index_signature
+        current = content_service.get_all_content()
+        return self._compute_signature(current) != self._index_signature
 
     def _build_index(self) -> None:
         items = content_service.get_all_content()
         self._items = list(items)
-        self._index_signature = tuple(item.id for item in self._items)
+        self._index_signature = self._compute_signature(self._items)
 
         n_docs = len(self._items)
         if n_docs == 0:
@@ -107,6 +111,11 @@ class BM25Search:
     def _ensure_index(self) -> None:
         if self._needs_rebuild():
             self._build_index()
+
+    def prebuild(self) -> int:
+        """Build the BM25 index eagerly. Returns number of indexed items."""
+        self._ensure_index()
+        return len(self._items)
 
     def search(
         self,
