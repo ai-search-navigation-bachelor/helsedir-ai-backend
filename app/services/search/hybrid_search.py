@@ -33,6 +33,7 @@ class HybridCandidate:
     semantic_raw: float
     keyword_norm: float
     semantic_norm: float
+    rrf_raw: float = 0.0  # Original RRF score, preserved when ML ranking overwrites combined_score
 
 
 class HybridSearch:
@@ -160,6 +161,7 @@ class HybridSearch:
                 semantic_raw=(sem_norm * 2.0) - 1.0,
                 keyword_norm=0.0,
                 semantic_norm=sem_norm,
+                rrf_raw=fused_result.score,
             ))
         t_candidates = time.perf_counter() - t0
 
@@ -235,7 +237,7 @@ class HybridSearch:
                     explanation=explanation,
                     bm25_score=c.keyword_norm,
                     semantic_score=c.semantic_norm,
-                    rrf_score=c.combined_score,
+                    rrf_score=c.rrf_raw,
                 )
             )
         return results
@@ -318,7 +320,7 @@ class HybridSearch:
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
-            "rrf_score": candidate.combined_score,
+            "rrf_score": candidate.rrf_raw,
             "type_match": type_match,
             "role_match": role_match,
             "maalgruppe_match": maalgruppe_match,
