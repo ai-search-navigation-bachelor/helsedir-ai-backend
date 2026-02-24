@@ -354,8 +354,13 @@ class HealthContentReranker:
             return []
 
         if self.model is None:
-            # Safe fallback if model isn't available yet:
-            scored = [(c, float(c.semantic_score)) for c in candidates]
+            # Safe fallback: blend semantic and RRF scores to preserve hybrid ordering
+            _FALLBACK_ALPHA = 0.6
+            scored = [
+                (c, _FALLBACK_ALPHA * float(c.semantic_score)
+                     + (1 - _FALLBACK_ALPHA) * float(c.rrf_score or 0.0))
+                for c in candidates
+            ]
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
