@@ -421,7 +421,7 @@ def main():
                 or "(unknown)"
                 for item in items_to_save
             )
-            print(f"\n  By info_type:")
+            print("\n  By info_type:")
             for info_type, count in type_counts.most_common():
                 print(f"    {info_type}: {count}")
 
