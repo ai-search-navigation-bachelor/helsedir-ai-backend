@@ -37,6 +37,12 @@ async def startup_event():
     print(f"Database: {settings.mysql_database} @ {settings.mysql_host}:{settings.mysql_port}")
     print(f"ML models directory: {settings.ml_models_dir}")
 
+    # Pre-build BM25 index so first search is fast
+    print("\nPre-building BM25 index...")
+    from app.services.search.bm25_search import bm25_search
+    bm25_search._ensure_index()
+    print(f"✓ BM25 index built ({len(bm25_search._items)} items)")
+
     # Pre-load embeddings if enabled
     if settings.ml_embedding_enabled:
         print("\nPre-loading embeddings...")
