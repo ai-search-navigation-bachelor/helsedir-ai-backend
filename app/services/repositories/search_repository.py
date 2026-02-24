@@ -119,26 +119,21 @@ class SearchRepository:
                     """
                     INSERT INTO search_results_shown (
                         search_id, content_id, position, score,
-                        semantic_similarity, keyword_score_total,
-                        exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
-                        type_match, role_match, code_match_count, lis_match, maalgruppe_match
+                        semantic_score, bm25_score, rrf_score,
+                        type_match, role_match, maalgruppe_match
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         search_id,
                         content_id,
                         result.get("position"),
                         result.get("score"),
-                        result.get("semantic_similarity"),
-                        result.get("keyword_score_total"),
-                        result.get("exact_title_proportion"),
-                        result.get("full_coverage_proportion"),
-                        result.get("title_keyword_proportion"),
+                        result.get("semantic_score"),
+                        result.get("bm25_score"),
+                        result.get("rrf_score"),
                         result.get("type_match"),
                         result.get("role_match"),
-                        result.get("code_match_count", 0),
-                        result.get("lis_match", 0),
                         result.get("maalgruppe_match", 0),
                     ),
                 )

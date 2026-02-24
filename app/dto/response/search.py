@@ -23,6 +23,11 @@ class SearchResult(BaseModel):
     explanation: str
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
 
+    # Internal pipeline scores — carried through for logging, excluded from API response
+    bm25_score: Optional[float] = Field(default=None, exclude=True)
+    semantic_score: Optional[float] = Field(default=None, exclude=True)
+    rrf_score: Optional[float] = Field(default=None, exclude=True)
+
 
 class SearchResponse(BaseModel):
     """Response model for search endpoint with pagination."""

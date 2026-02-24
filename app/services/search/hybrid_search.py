@@ -69,7 +69,7 @@ class HybridSearch:
             return []
 
         if settings.ml_ranking_enabled:
-            candidates = self._apply_ranking_model(candidates, query, query_keywords, role)
+            candidates = self._apply_ranking_model(candidates, role)
 
         candidates = self._normalize_combined_scores(candidates)
 
@@ -223,6 +223,9 @@ class HybridSearch:
                     info_type=c.item.content_type,
                     score=round(c.combined_score, 3),
                     explanation=explanation,
+                    bm25_score=c.keyword_norm,
+                    semantic_score=c.semantic_norm,
+                    rrf_score=c.combined_score,
                 )
             )
         return results
@@ -230,9 +233,7 @@ class HybridSearch:
     def _apply_ranking_model(
         self,
         candidates: List[HybridCandidate],
-        query: str,
-        query_keywords: set,
-        role: Optional[str]
+        role: Optional[str],
     ) -> List[HybridCandidate]:
         """Apply ranking model to re-rank results."""
         try:
@@ -246,23 +247,13 @@ class HybridSearch:
             # Use windowed CTR (30 days) to match training data
             ctr_data = database_service.get_content_ctr_windowed(days=30)
 
-            # Extract RAW features for each candidate
+            # Extract features for each candidate
             features_list = []
             for c in candidates:
                 features = self._extract_ranking_features(
-                    c.item, query, query_keywords, role,
-                    c.keyword_raw, c.semantic_raw, ctr_data.get(c.item.id, 0.0)
+                    c, role, ctr_data.get(c.item.id, 0.0)
                 )
                 features_list.append(features)
-
-            # Normalize keyword_score_total
-            max_kw_score = max(
-                (f["keyword_score_total"] for f in features_list),
-                default=1.0
-            )
-            if max_kw_score > 0:
-                for features in features_list:
-                    features["keyword_score_total"] = features["keyword_score_total"] / max_kw_score
 
             # Get ranking scores from model
             ranking_scores = ml_service.get_ranking_scores(features_list)
@@ -280,45 +271,12 @@ class HybridSearch:
 
     def _extract_ranking_features(
         self,
-        item: ContentItem,
-        query: str,
-        query_keywords: set,
+        candidate: HybridCandidate,
         role: Optional[str],
-        keyword_score: float,
-        semantic_score: float,
-        ctr: float
+        ctr: float,
     ) -> Dict[str, float]:
-        """Extract features for ranking model."""
-        query_lower = query.lower()
-        title_lower = item.title.lower()
-
-        # Calculate individual keyword score components for proportions
-        exact_title_score = 0.0
-        full_coverage_score = 0.0
-        title_keyword_score = 0.0
-
-        if query_lower in title_lower:
-            exact_title_score = settings.search_exact_phrase_title_weight
-
-        title_keywords = set(re.findall(r'\w+', title_lower))
-        if title_keywords and title_keywords.issubset(query_keywords):
-            full_coverage_score = settings.search_full_title_coverage_weight
-
-        title_matches = query_keywords & title_keywords
-        if title_matches:
-            title_keyword_score = len(title_matches) * settings.search_keyword_title_weight
-
-        total_keyword_score = exact_title_score + full_coverage_score + title_keyword_score
-
-        # Calculate proportions
-        if total_keyword_score > 0:
-            exact_title_prop = exact_title_score / total_keyword_score
-            full_coverage_prop = full_coverage_score / total_keyword_score
-            title_keyword_prop = title_keyword_score / total_keyword_score
-        else:
-            exact_title_prop = 0.0
-            full_coverage_prop = 0.0
-            title_keyword_prop = 0.0
+        """Extract features for ranking model from a HybridCandidate."""
+        item = candidate.item
 
         # Content type encoding
         content_type_map = {
@@ -348,15 +306,11 @@ class HybridSearch:
         maalgruppe_match = 1.0 if role and role in target_groups else 0.0
 
         return {
-            "semantic_similarity": semantic_score,
-            "keyword_score_total": keyword_score,
-            "exact_title_proportion": exact_title_prop,
-            "full_coverage_proportion": full_coverage_prop,
-            "title_keyword_proportion": title_keyword_prop,
+            "semantic_score": candidate.semantic_norm,
+            "bm25_score": candidate.keyword_norm,
+            "rrf_score": candidate.combined_score,
             "type_match": type_match,
             "role_match": role_match,
-            "code_match_count": 0.0,
-            "lis_match": 0.0,
             "maalgruppe_match": maalgruppe_match,
             "smoothed_ctr": ctr,
             "position": 0.0,

@@ -678,6 +678,34 @@ class SearchController:
         suggestions = [Suggestion(id=page.id, title=page.title) for page in top]
         return SuggestionResponse(suggestions=suggestions)
 
+    @staticmethod
+    def _compute_type_match(info_type: Optional[str]) -> float:
+        """Content type authority score."""
+        content_type_map = {
+            "retningslinje": 0.9,
+            "veileder": 0.8,
+            "fagprosedyre": 0.75,
+            "faktaark": 0.6,
+            "artikkel": 0.5,
+        }
+        return content_type_map.get(
+            info_type.lower() if info_type else None,
+            0.5,
+        )
+
+    @staticmethod
+    def _compute_role_match(role: Optional[str], target_groups: Optional[list]) -> float:
+        """Role match score."""
+        target_groups = target_groups or []
+        if role and target_groups:
+            if role in target_groups:
+                return 1.0 / len(target_groups)
+        elif not role and not target_groups:
+            return 0.5
+        elif not target_groups:
+            return 0.3
+        return 0.0
+
     def _log_results(
         self,
         search_id: str,
@@ -686,7 +714,7 @@ class SearchController:
         results: List[SearchResult],
         offset: int,
     ) -> None:
-        """Extract ML features and log results to database."""
+        """Log results with pipeline scores to database."""
         # Get already logged content_ids to avoid duplicates
         already_logged = database_service.get_logged_content_ids_for_search(search_id)
 
