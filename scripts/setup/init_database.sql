@@ -106,20 +106,14 @@ CREATE TABLE IF NOT EXISTS search_results_shown (
     position INT NOT NULL,
     score FLOAT,
 
-    -- Semantic signal
-    semantic_similarity FLOAT,
-
-    -- Keyword signals (RAW scores - normalized during training)
-    keyword_score_total FLOAT,
-    exact_title_proportion FLOAT,
-    full_coverage_proportion FLOAT,
-    title_keyword_proportion FLOAT,
+    -- Retrieval scores
+    semantic_score FLOAT,
+    bm25_score FLOAT,
+    rrf_score FLOAT,
 
     -- Metadata signals
     type_match FLOAT,
     role_match FLOAT,
-    code_match_count INT DEFAULT 0,
-    lis_match TINYINT DEFAULT 0,
     maalgruppe_match TINYINT DEFAULT 0,
 
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
