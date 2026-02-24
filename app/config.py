@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     search_rrf_weight_bm25: float = 0.3  # RRF weight for BM25 retrieval
     search_rrf_weight_semantic: float = 0.7  # RRF weight for semantic retrieval
 
+    # Content type score boosts (multiplied on combined_score after RRF fusion)
+    search_boost_temaside: float = 1.15
+    search_boost_retningslinje: float = 1.10
+
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results
     search_category_preview_count: int = 3  # Number of results in category preview

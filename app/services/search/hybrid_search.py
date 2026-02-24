@@ -177,6 +177,16 @@ class HybridSearch:
             else:
                 c.keyword_norm = 1.0 if bm25_raw > 0 else 0.0
 
+        # Apply content type boosts
+        type_boosts = {
+            "temaside": settings.search_boost_temaside,
+            "retningslinje": settings.search_boost_retningslinje,
+        }
+        for c in candidates:
+            boost = type_boosts.get(c.item.content_type.lower(), 1.0)
+            if boost != 1.0:
+                c.combined_score *= boost
+
         candidates.sort(key=lambda c: -c.combined_score)
 
         t_total = time.perf_counter() - t_start
