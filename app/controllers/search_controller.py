@@ -24,7 +24,6 @@ from app.dto.response.search import (
     SuggestionResponse,
 )
 from app.services.search.search_service import search_service
-from app.services.search.feature_extractor import feature_extractor
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
 from app.services.repositories.content_repository import content_repository
@@ -700,59 +699,30 @@ class SearchController:
         # Get max position to continue from
         max_position = database_service.get_max_position_for_search(search_id)
 
-        query_keywords = set(re.findall(r'\w+', query.lower()))
-
-        # Default feature values to avoid NULLs
-        default_features = {
-            "semantic_similarity": 0.0,
-            "keyword_score_total": 0.0,
-            "exact_title_proportion": 0.0,
-            "full_coverage_proportion": 0.0,
-            "title_keyword_proportion": 0.0,
-            "type_match": 0.5,
-            "role_match": 0.0,
-            "code_match_count": 0,
-            "lis_match": 0,
-            "maalgruppe_match": 0,
-        }
-
         results_to_log = []
         for local_index, result in enumerate(new_results):
             position = max_position + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
-            features = default_features.copy()
+            # Metadata features from content item (lightweight)
+            type_match = 0.5
+            role_match = 0.0
+            maalgruppe_match = 0
             if content_item:
-                try:
-                    extracted = feature_extractor.extract_features(
-                        content_item, query, query_keywords, role
-                    )
-                    if extracted:
-                        # Merge extracted features with defaults
-                        for key in default_features:
-                            if key in extracted and extracted[key] is not None:
-                                features[key] = extracted[key]
-                except Exception as e:
-                    # Log failure with context but keep default features
-                    logger.exception(
-                        "Feature extraction failed for content_id=%s, query=%s, role=%s: %s",
-                        result.id, query, role, e
-                    )
+                type_match = self._compute_type_match(content_item.info_type)
+                role_match = self._compute_role_match(role, content_item.target_groups)
+                maalgruppe_match = 1 if role and role in (content_item.target_groups or []) else 0
 
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
                 "score": result.score,
-                "semantic_similarity": features["semantic_similarity"],
-                "keyword_score_total": features["keyword_score_total"],
-                "exact_title_proportion": features["exact_title_proportion"],
-                "full_coverage_proportion": features["full_coverage_proportion"],
-                "title_keyword_proportion": features["title_keyword_proportion"],
-                "type_match": features["type_match"],
-                "role_match": features["role_match"],
-                "code_match_count": features["code_match_count"],
-                "lis_match": features["lis_match"],
-                "maalgruppe_match": features["maalgruppe_match"],
+                "semantic_score": result.semantic_score or 0.0,
+                "bm25_score": result.bm25_score or 0.0,
+                "rrf_score": result.rrf_score or 0.0,
+                "type_match": type_match,
+                "role_match": role_match,
+                "maalgruppe_match": maalgruppe_match,
             })
 
         database_service.log_search_results(search_id, results_to_log)
