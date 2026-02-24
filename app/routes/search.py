@@ -8,7 +8,11 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 
 @router.get("", response_model=SearchResponse)
-async def search(background_tasks: BackgroundTasks, request: SearchRequest = Depends()):
+async def search(
+    background_tasks: BackgroundTasks,
+    request: SearchRequest = Depends(),
+    log: bool = Query(True, include_in_schema=False),
+):
     """
     Search for content with pagination.
 
@@ -22,7 +26,7 @@ async def search(background_tasks: BackgroundTasks, request: SearchRequest = Dep
         - query: Search text (required)
         - role: User role for filtering (optional)
         - offset: Results to skip (default: 0)
-        - limit: Results per page (default: 10, max: 50)
+        - limit: Results per page (default: 15, max: 1000)
         - search_id: Existing search_id for pagination (optional)
     """
     try:
@@ -33,7 +37,9 @@ async def search(background_tasks: BackgroundTasks, request: SearchRequest = Dep
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
+            category=request.category,
             background_tasks=background_tasks,
+            log=log,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

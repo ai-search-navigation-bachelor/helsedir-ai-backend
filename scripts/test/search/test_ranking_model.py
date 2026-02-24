@@ -41,22 +41,17 @@ try:
     candidate = RerankCandidate(
         content_id="test-123",
         position=1,
-        semantic_similarity=0.85,
-        title_keyword_score=5.0,
-        body_keyword_score=2.0,
-        exact_phrase_title=1.0,
-        exact_phrase_body=0.0,
+        semantic_score=0.85,
+        bm25_score=0.72,
+        rrf_score=0.80,
         type_match=1.0,
         role_match=1.0,
-        code_match_count=2.0,
-        lis_match=0.0,
         maalgruppe_match=1.0,
         smoothed_ctr=0.05,
-        log_impressions=4.5,
     )
     print("✓ Successfully created RerankCandidate")
     print(f"  Content ID: {candidate.content_id}")
-    print(f"  Semantic similarity: {candidate.semantic_similarity}")
+    print(f"  Semantic score: {candidate.semantic_score}")
     print(f"  Position: {candidate.position}")
 except Exception as e:
     print(f"✗ Candidate creation failed: {e}")

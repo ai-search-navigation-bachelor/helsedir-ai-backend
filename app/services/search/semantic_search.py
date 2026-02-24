@@ -146,26 +146,25 @@ class SemanticSearch:
         # Vectorized similarity calculation using cached matrix (fast!)
         similarities = np.dot(self._embeddings_matrix, query_embedding)  # Shape: (n_docs,)
 
-        # Build id -> similarity mapping for filtering
-        id_to_similarity = {
-            content_id: float(sim)
-            for content_id, sim in zip(self._content_ids, similarities)
-        }
+        # Pre-select top candidates using argpartition to avoid scanning all items
+        candidate_pool = min(max(200, k * 20), len(self._content_ids))
+        if candidate_pool < len(self._content_ids):
+            top_indices = np.argpartition(similarities, -candidate_pool)[-candidate_pool:]
+        else:
+            top_indices = np.arange(len(self._content_ids))
 
-        # Filter content items by role and info_type
+        # Filter only valid content items from the candidate pool
         valid_items = []
-        for item in content_service.get_all_content():
-            # Filter by info_type
+        for idx in top_indices:
+            content_id = self._content_ids[idx]
+            item = content_service.get_content_by_id(content_id)
+            if not item:
+                continue
             if item.content_type not in content_service.searchable_types:
                 continue
-
-            # Filter by role
             if role and role not in item.target_groups:
                 continue
-
-            # Check if embedding exists
-            if item.id in id_to_similarity:
-                valid_items.append((item, id_to_similarity[item.id]))
+            valid_items.append((item, float(similarities[idx])))
 
         if not valid_items:
             return []

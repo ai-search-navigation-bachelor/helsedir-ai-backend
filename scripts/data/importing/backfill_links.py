@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-Backfill content for all barn links in the database.
+Backfill content for all barn and forelder links in the database.
 
 For every content item in the database, this script:
-1. Reads each barn link that still has href (not yet resolved to id)
+1. Reads each barn/forelder link that still has href (not yet resolved to id)
 2. Fetches the linked content from Helsedir API (in parallel)
 3. Saves it to the database (as e.g. kapittel, anbefaling, etc.)
-4. Re-runs link migration so parent links are updated: href → id
+4. Re-runs link migration so links are updated: href → id
 
-After this script, content_service will find all barn-linked content in
+After this script, content_service will find all linked content in
 the in-memory cache and never need a runtime API call to populate children.
 
 Usage:
-    python scripts/data/importing/backfill_barn_links.py
-    python scripts/data/importing/backfill_barn_links.py --dry-run   # Preview only
-    python scripts/data/importing/backfill_barn_links.py --workers 20
+    python scripts/data/importing/backfill_links.py
+    python scripts/data/importing/backfill_links.py --dry-run   # Preview only
+    python scripts/data/importing/backfill_links.py --workers 20
 """
 
 import argparse
@@ -22,6 +22,7 @@ import asyncio
 import json
 import sys
 import os
+from collections import Counter
 from typing import Dict, List, Set
 
 # Add project root to path
@@ -196,10 +197,13 @@ def resolve_links(links: List[Dict], existing_ids: Set[str]) -> List[Dict]:
 # Core logic
 # ─────────────────────────────────────────────
 
-def collect_missing_barn_hrefs(all_content: List[Dict], existing_ids: Set[str]) -> Dict[str, str]:
+_BACKFILL_RELS = {"barn", "forelder"}
+
+
+def collect_missing_hrefs(all_content: List[Dict], existing_ids: Set[str]) -> Dict[str, str]:
     """
     Scan all content links and return a mapping of href → extracted_id
-    for barn links that:
+    for barn/forelder links that:
       - have href (not yet resolved to id), AND
       - the extracted ID is not already in the database.
     """
@@ -218,7 +222,7 @@ def collect_missing_barn_hrefs(all_content: List[Dict], existing_ids: Set[str]) 
         for link in links:
             if not isinstance(link, dict):
                 continue
-            if link.get("rel") != "barn":
+            if link.get("rel") not in _BACKFILL_RELS:
                 continue
             if link.get("id"):
                 continue  # already resolved
@@ -351,7 +355,7 @@ def run_link_migration(all_content: List[Dict], existing_ids: Set[str], dry_run:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Backfill content for all barn links in the database"
+        description="Backfill content for all barn and forelder links in the database"
     )
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview what would be fetched/updated without writing to DB")
@@ -360,7 +364,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("BACKFILL BARN LINKS")
+    print("BACKFILL BARN & FORELDER LINKS")
     print("=" * 60)
     if args.dry_run:
         print("DRY RUN — no changes will be written\n")
@@ -372,13 +376,13 @@ def main():
     print(f"  {len(all_content)} content rows with links")
     print(f"  {len(existing_ids)} unique content IDs in DB")
 
-    # 2. Find missing barn content
-    print("\nScanning barn links...")
-    missing = collect_missing_barn_hrefs(all_content, existing_ids)
-    print(f"  {len(missing)} unique barn hrefs not yet in database")
+    # 2. Find missing barn/forelder content
+    print("\nScanning barn and forelder links...")
+    missing = collect_missing_hrefs(all_content, existing_ids)
+    print(f"  {len(missing)} unique barn/forelder hrefs not yet in database")
 
     if not missing:
-        print("\nNothing to fetch — all barn links are already in the database.")
+        print("\nNothing to fetch — all barn/forelder links are already in the database.")
     else:
         print(f"\nFetching {len(missing)} items from Helsedir API ({args.workers} concurrent)...")
 
@@ -409,11 +413,23 @@ def main():
             saved = save_content_batch(items_to_save)
             print(f"  Saved: {saved} items to database")
 
+            # Print breakdown by info_type
+            type_counts = Counter(
+                item.get("info_type")
+                or item.get("infoType")
+                or (item.get("tekniskeData") or {}).get("infoType")
+                or "(unknown)"
+                for item in items_to_save
+            )
+            print("\n  By info_type:")
+            for info_type, count in type_counts.most_common():
+                print(f"    {info_type}: {count}")
+
             # Update existing_ids with newly saved content
             existing_ids = get_all_content_ids()
 
-    # 3. Re-run link migration (update parent links: href → id)
-    print("\nUpdating parent links (href → id)...")
+    # 3. Re-run link migration (update all links: href → id)
+    print("\nUpdating links (href → id)...")
     # Reload content since links may have changed
     all_content = get_all_content_with_links()
     updated = run_link_migration(all_content, existing_ids, args.dry_run)
@@ -425,7 +441,7 @@ def main():
     print()
     print("Next steps:")
     print("  1. Restart the backend to reload the in-memory content cache")
-    print("  2. Barn-linked content will now be served without API calls")
+    print("  2. Linked content (barn/forelder) will now be served without API calls")
 
 
 if __name__ == "__main__":

@@ -99,7 +99,7 @@ def main():
         # 3. Hybrid search
         hybrid_results = search_service.search_hybrid(query, k=args.k)
         if hybrid_results and semantic_results:
-            print_results("HYBRID SEARCH (40% keyword + 60% semantic)", hybrid_results, args.k)
+            print_results("HYBRID SEARCH (BM25 + semantic via RRF)", hybrid_results, args.k)
 
         # Compare rankings
         if keyword_results and semantic_results:

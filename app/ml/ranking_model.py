@@ -14,7 +14,7 @@ Why this version is better:
   - content_stats (global clicks/impressions)
 
 Runtime usage:
-1) Generate candidates (vector search / hybrid), compute per-result features.
+1) Generate candidates (BM25 + semantic + RRF fusion), scores carried on SearchResult.
 2) Call reranker.rerank(...) to sort candidates.
 3) Log shown results + clicks (already in your system).
 
@@ -25,7 +25,7 @@ Training usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -44,23 +44,15 @@ from app.services.data.database_service import database_service
 # ---------------------------------------------------------------------
 
 RERANK_FEATURES: List[str] = [
-    # Semantic signal
-    "semantic_similarity",          # cosine similarity (-1 to 1, typically 0-1)
-
-    # Keyword signals - absolute magnitude
-    "keyword_score_total",          # total keyword score normalized (0-1)
-
-    # Keyword signals - proportions (title-only)
-    "exact_title_proportion",       # exact phrase in title / total
-    "full_coverage_proportion",     # full title coverage / total
-    "title_keyword_proportion",     # title keyword matches / total
+    # Retrieval scores
+    "semantic_score",               # normalized semantic similarity (0-1)
+    "bm25_score",                   # normalized BM25 score (0-1)
+    "rrf_score",                    # RRF fusion score (0-1)
 
     # Metadata / intent alignment
-    "type_match",                   # 0/1  (info_type matches query intent)
-    "role_match",                   # 0/1  (role matches allowed roles)
-    "code_match_count",             # int  (# matched codes: ICD/ICPC/SNOMED/LIS)
-    "lis_match",                    # 0/1
-    "maalgruppe_match",             # 0/1
+    "type_match",                   # content type authority (0-1)
+    "role_match",                   # role match score (0-1)
+    "maalgruppe_match",             # target group match (0/1)
 
     # Popularity prior (windowed CTR - last 30 days)
     "smoothed_ctr",                 # smoothed CTR in [0..1]
@@ -146,22 +138,14 @@ class RerankCandidate:
     content_id: str
     position: int
 
-    # Semantic signal
-    semantic_similarity: float = 0.0
-
-    # Keyword signals - absolute magnitude
-    keyword_score_total: float = 0.0
-
-    # Keyword signals - proportions (title-only)
-    exact_title_proportion: float = 0.0
-    full_coverage_proportion: float = 0.0
-    title_keyword_proportion: float = 0.0
+    # Retrieval scores
+    semantic_score: float = 0.0
+    bm25_score: float = 0.0
+    rrf_score: float = 0.0
 
     # Metadata alignment
     type_match: float = 0.0
     role_match: float = 0.0
-    code_match_count: float = 0.0
-    lis_match: float = 0.0
     maalgruppe_match: float = 0.0
 
     # Popularity (windowed CTR)
@@ -210,9 +194,8 @@ class HealthContentReranker:
           - get_ltr_training_rows(days_back) -> list[dict]
             Each row should include:
               search_id, content_id, position, clicked,
-              semantic_similarity, keyword_score_total,
-              exact_title_proportion, full_coverage_proportion, title_keyword_proportion,
-              type_match, role_match, code_match_count, lis_match, maalgruppe_match
+              semantic_score, bm25_score, rrf_score,
+              type_match, role_match, maalgruppe_match
           - get_content_ctr_windowed(days) -> dict[content_id] = smoothed_ctr
           - (optional) get_position_propensities() -> dict[position] = propensity float
 
@@ -258,7 +241,7 @@ class HealthContentReranker:
             # Sort by position (stable)
             items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
 
-            # First pass: build feature dicts and find max keyword_score_total
+            # First pass: build feature dicts
             feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
             weights: List[float] = []
@@ -280,17 +263,13 @@ class HealthContentReranker:
                 # popularity prior (using windowed CTR for recency)
                 ctr = ctr_windowed.get(cid, 0.05)  # Default prior if no data
 
-                # build feature dict from logged row (preferred) + priors
+                # build feature dict from logged row + priors
                 feat_dict = {
-                    "semantic_similarity": _f(rr.get("semantic_similarity"), _f(rr.get("candidate_score"), 0.0)),
-                    "keyword_score_total": _f(rr.get("keyword_score_total"), 0.0),  # RAW - normalized below
-                    "exact_title_proportion": _f(rr.get("exact_title_proportion"), 0.0),
-                    "full_coverage_proportion": _f(rr.get("full_coverage_proportion"), 0.0),
-                    "title_keyword_proportion": _f(rr.get("title_keyword_proportion"), 0.0),
+                    "semantic_score": _f(rr.get("semantic_score"), 0.0),
+                    "bm25_score": _f(rr.get("bm25_score"), 0.0),
+                    "rrf_score": _f(rr.get("rrf_score"), 0.0),
                     "type_match": _f(rr.get("type_match"), 0.0),
                     "role_match": _f(rr.get("role_match"), 0.0),
-                    "code_match_count": _f(rr.get("code_match_count"), 0.0),
-                    "lis_match": _f(rr.get("lis_match"), 0.0),
                     "maalgruppe_match": _f(rr.get("maalgruppe_match"), 0.0),
                     "smoothed_ctr": ctr,
                     "position": float(pos),
@@ -307,12 +286,6 @@ class HealthContentReranker:
                 continue
             if require_any_click and not any_click:
                 continue
-
-            # Normalize keyword_score_total by max in this search group
-            max_kw = max((fd["keyword_score_total"] for fd in feat_dicts), default=1.0)
-            if max_kw > 0:
-                for fd in feat_dicts:
-                    fd["keyword_score_total"] = fd["keyword_score_total"] / max_kw
 
             # Second pass: build feature vectors
             feats: List[List[float]] = []
@@ -381,8 +354,13 @@ class HealthContentReranker:
             return []
 
         if self.model is None:
-            # Safe fallback if model isn't available yet:
-            scored = [(c, float(c.semantic_similarity)) for c in candidates]
+            # Safe fallback: blend semantic and RRF scores to preserve hybrid ordering
+            _FALLBACK_ALPHA = 0.6
+            scored = [
+                (c, _FALLBACK_ALPHA * float(c.semantic_score)
+                     + (1 - _FALLBACK_ALPHA) * float(c.rrf_score or 0.0))
+                for c in candidates
+            ]
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
@@ -395,15 +373,11 @@ class HealthContentReranker:
             c.smoothed_ctr = ctr_data.get(c.content_id, 0.05)  # Windowed CTR
 
             feat_dict = {
-                "semantic_similarity": _f(c.semantic_similarity),
-                "keyword_score_total": _f(c.keyword_score_total),
-                "exact_title_proportion": _f(c.exact_title_proportion),
-                "full_coverage_proportion": _f(c.full_coverage_proportion),
-                "title_keyword_proportion": _f(c.title_keyword_proportion),
+                "semantic_score": _f(c.semantic_score),
+                "bm25_score": _f(c.bm25_score),
+                "rrf_score": _f(c.rrf_score),
                 "type_match": _f(c.type_match),
                 "role_match": _f(c.role_match),
-                "code_match_count": _f(c.code_match_count),
-                "lis_match": _f(c.lis_match),
                 "maalgruppe_match": _f(c.maalgruppe_match),
                 "smoothed_ctr": _f(c.smoothed_ctr),
                 "position": float(int(c.position) if c.position else 0),
@@ -471,32 +445,24 @@ class HealthContentReranker:
 
 def extract_features_for_candidate(
     *,
-    semantic_similarity: float,
-    keyword_score_total: float = 0.0,
-    exact_title_proportion: float = 0.0,
-    full_coverage_proportion: float = 0.0,
-    title_keyword_proportion: float = 0.0,
-    type_match: bool = False,
-    role_match: bool = False,
-    code_match_count: int = 0,
-    lis_match: bool = False,
-    maalgruppe_match: bool = False,
+    semantic_score: float = 0.0,
+    bm25_score: float = 0.0,
+    rrf_score: float = 0.0,
+    type_match: float = 0.0,
+    role_match: float = 0.0,
+    maalgruppe_match: float = 0.0,
 ) -> Dict[str, float]:
     """
     Optional helper if your pipeline builds dict features first.
     (RerankCandidate is preferred.)
     """
     return {
-        "semantic_similarity": float(semantic_similarity),
-        "keyword_score_total": float(keyword_score_total),
-        "exact_title_proportion": float(exact_title_proportion),
-        "full_coverage_proportion": float(full_coverage_proportion),
-        "title_keyword_proportion": float(title_keyword_proportion),
-        "type_match": float(bool(type_match)),
-        "role_match": float(bool(role_match)),
-        "code_match_count": float(int(code_match_count)),
-        "lis_match": float(bool(lis_match)),
-        "maalgruppe_match": float(bool(maalgruppe_match)),
+        "semantic_score": float(semantic_score),
+        "bm25_score": float(bm25_score),
+        "rrf_score": float(rrf_score),
+        "type_match": float(type_match),
+        "role_match": float(role_match),
+        "maalgruppe_match": float(maalgruppe_match),
     }
 
 
