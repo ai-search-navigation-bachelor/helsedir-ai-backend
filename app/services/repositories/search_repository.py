@@ -6,7 +6,6 @@ from typing import List, Optional, Dict, Any
 import mysql.connector
 
 from app.services.repositories.base import db_pool
-from app.services.repositories.stats_repository import stats_repository
 
 
 class SearchRepository:
@@ -144,9 +143,20 @@ class SearchRepository:
                     ),
                 )
 
-            # Also update content_stats impressions
+            # Also update content_stats impressions (inline to avoid nested connection)
             content_ids = [r.get("content_id") for r in results if r.get("content_id")]
-            stats_repository.record_impressions_batch(content_ids)
+            for content_id in content_ids:
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO content_stats (content_id, impressions, clicks)
+                        VALUES (%s, 1, 0)
+                        ON DUPLICATE KEY UPDATE impressions = impressions + 1
+                        """,
+                        (content_id,),
+                    )
+                except mysql.connector.Error:
+                    continue
 
             conn.commit()
             return True
@@ -199,8 +209,15 @@ class SearchRepository:
                 (search_id, content_id, position),
             )
 
-            # Also update content_stats clicks
-            stats_repository.record_click(content_id)
+            # Also update content_stats clicks (inline to avoid nested connection)
+            cursor.execute(
+                """
+                INSERT INTO content_stats (content_id, impressions, clicks)
+                VALUES (%s, 0, 1)
+                ON DUPLICATE KEY UPDATE clicks = clicks + 1
+                """,
+                (content_id,),
+            )
 
             conn.commit()
             return True
