@@ -60,8 +60,12 @@ class HealthContentEmbedding:
                 "pip install sentence-transformers"
             )
 
-        print(f"Loading embedding model: {self.model_name}...")
-        self.model = SentenceTransformer(self.model_name, backend="onnx", device=self.device)
+        print(f"Loading embedding model: {self.model_name} (device={self.device})...")
+        # Use ONNX backend for CPU (faster inference), default backend for CUDA
+        if self.device and self.device.startswith("cuda"):
+            self.model = SentenceTransformer(self.model_name, device=self.device)
+        else:
+            self.model = SentenceTransformer(self.model_name, backend="onnx", device=self.device)
         self._is_loaded = True
         print(f"Model loaded. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
 
