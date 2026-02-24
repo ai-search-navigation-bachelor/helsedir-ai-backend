@@ -205,7 +205,7 @@ INSERT INTO content_type_config (info_type, searchable, display_name) VALUES
 ('anbefaling',                           1, 'Anbefaling'),
 ('rad',                                  1, 'Råd'),
 ('faglig-rad',                           1, 'Faglig råd'),
-('pico',                                 1, 'PICO'),
+('pico',                                 0, 'PICO'),
 -- Veiledere
 ('takst-med-merknad',                    1, 'Takst med merknad'),
 ('ehelsestandard',                       1, 'E-helsestandard'),
