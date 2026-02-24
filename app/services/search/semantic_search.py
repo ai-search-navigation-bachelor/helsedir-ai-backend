@@ -146,9 +146,17 @@ class SemanticSearch:
         # Vectorized similarity calculation using cached matrix (fast!)
         similarities = np.dot(self._embeddings_matrix, query_embedding)  # Shape: (n_docs,)
 
-        # Filter only content items that have embeddings (6K vs 19K)
+        # Pre-select top candidates using argpartition to avoid scanning all items
+        candidate_pool = min(max(200, k * 20), len(self._content_ids))
+        if candidate_pool < len(self._content_ids):
+            top_indices = np.argpartition(similarities, -candidate_pool)[-candidate_pool:]
+        else:
+            top_indices = np.arange(len(self._content_ids))
+
+        # Filter only valid content items from the candidate pool
         valid_items = []
-        for idx, content_id in enumerate(self._content_ids):
+        for idx in top_indices:
+            content_id = self._content_ids[idx]
             item = content_service.get_content_by_id(content_id)
             if not item:
                 continue
