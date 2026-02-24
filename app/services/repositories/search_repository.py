@@ -2,10 +2,13 @@
 Repository for search logging operations.
 """
 
+import logging
 from typing import List, Optional, Dict, Any
 import mysql.connector
 
 from app.services.repositories.base import db_pool
+
+logger = logging.getLogger(__name__)
 
 
 class SearchRepository:
@@ -139,8 +142,12 @@ class SearchRepository:
                 )
 
             # Also update content_stats impressions (inline to avoid nested connection)
-            content_ids = [r.get("content_id") for r in results if r.get("content_id")]
-            for content_id in content_ids:
+            seen_ids = set()
+            for r in results:
+                content_id = r.get("content_id")
+                if not content_id or content_id in seen_ids:
+                    continue
+                seen_ids.add(content_id)
                 try:
                     cursor.execute(
                         """
@@ -150,8 +157,8 @@ class SearchRepository:
                         """,
                         (content_id,),
                     )
-                except mysql.connector.Error:
-                    continue
+                except mysql.connector.Error as e:
+                    logger.warning("Failed to update content_stats for %s: %s", content_id, e)
 
             conn.commit()
             return True
