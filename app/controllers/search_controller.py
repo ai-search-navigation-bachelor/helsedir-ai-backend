@@ -62,6 +62,7 @@ class SearchController:
         search_id: Optional[str] = None,
         category: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
+        log: bool = True,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -128,11 +129,12 @@ class SearchController:
         # Handle search_id (new search vs pagination)
         search_id = self._handle_search_id(search_id, query, role)
 
-        # Extract ML features and log results (in background)
-        if background_tasks:
-            background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
-        else:
-            self._log_results(search_id, query, role, page_results, offset)
+        # Extract ML features and log results (skip for prefetch requests)
+        if log:
+            if background_tasks:
+                background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
+            else:
+                self._log_results(search_id, query, role, page_results, offset)
 
         return SearchResponse(
             results=page_results,

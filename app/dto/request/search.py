@@ -17,6 +17,9 @@ class SearchRequest(BaseModel):
     limit: int = Field(15, ge=1, le=1000, description="Number of results per page")
     search_id: Optional[str] = Field(None, description="Existing search_id for pagination")
 
+    # Logging control
+    log: bool = Field(True, description="Log results as shown (set false for prefetch)")
+
 
 class CategorizedSearchRequest(BaseModel):
     """Request model for categorized search endpoint."""

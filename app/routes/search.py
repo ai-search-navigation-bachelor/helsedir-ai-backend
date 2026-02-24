@@ -35,6 +35,7 @@ async def search(background_tasks: BackgroundTasks, request: SearchRequest = Dep
             search_id=request.search_id,
             category=request.category,
             background_tasks=background_tasks,
+            log=request.log,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
