@@ -39,7 +39,7 @@ class BM25Search:
         self.b = b
         self.title_weight = max(1, int(title_weight))
 
-        self._index_signature: Tuple[str, ...] = ()
+        self._index_count: int = 0
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
         self._avg_doc_length: float = 1.0
@@ -53,13 +53,12 @@ class BM25Search:
         return re.findall(r"\w+", text.lower())
 
     def _needs_rebuild(self) -> bool:
-        current_ids = tuple(item.id for item in content_service.get_all_content())
-        return current_ids != self._index_signature
+        return len(content_service.get_all_content()) != self._index_count
 
     def _build_index(self) -> None:
         items = content_service.get_all_content()
         self._items = list(items)
-        self._index_signature = tuple(item.id for item in self._items)
+        self._index_count = len(self._items)
 
         n_docs = len(self._items)
         if n_docs == 0:
