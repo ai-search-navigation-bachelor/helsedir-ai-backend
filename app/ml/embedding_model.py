@@ -61,7 +61,7 @@ class HealthContentEmbedding:
             )
 
         print(f"Loading embedding model: {self.model_name}...")
-        self.model = SentenceTransformer(self.model_name, device=self.device)
+        self.model = SentenceTransformer(self.model_name, backend="onnx", device=self.device)
         self._is_loaded = True
         print(f"Model loaded. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
 
