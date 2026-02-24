@@ -51,6 +51,7 @@ class SearchController:
         offset: int = 0,
         limit: int = 10,
         search_id: Optional[str] = None,
+        category: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> SearchResponse:
         """
@@ -63,6 +64,7 @@ class SearchController:
             offset: Number of results to skip
             limit: Number of results per page
             search_id: Existing search_id for pagination (None = new search)
+            category: Optional category (info_type) to filter results by
             background_tasks: FastAPI background tasks for async logging
 
         Returns:
@@ -92,11 +94,18 @@ class SearchController:
 
         total = len(all_results)
 
-        # Compute category distribution from all relevant results (before pagination)
+        # Compute category distribution from all relevant results (before filtering)
         category_counts: Dict[str, int] = defaultdict(int)
         for r in all_results:
-            category = r.info_type.lower() if r.info_type else "unknown"
-            category_counts[category] += 1
+            cat = r.info_type.lower() if r.info_type else "unknown"
+            category_counts[cat] += 1
+
+        # Filter by category if specified (after computing counts so tabs stay accurate)
+        # Supports comma-separated values, e.g. "retningslinje,nasjonalt-forlop"
+        if category:
+            category_set = {c.strip().lower() for c in category.split(",") if c.strip()}
+            all_results = [r for r in all_results if r.info_type and r.info_type.lower() in category_set]
+            total = len(all_results)
 
         # Clamp offset to not exceed result length
         offset = min(offset, max(0, total))

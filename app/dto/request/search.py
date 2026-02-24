@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
     """Request model for search endpoint with pagination."""
     query: str = Field(..., min_length=1, description="Search query")
     role: Optional[str] = Field(None, description="User role for filtering")
+    category: Optional[str] = Field(None, description="Filter results by category (info_type)")
 
     # Pagination
     offset: int = Field(0, ge=0, description="Number of results to skip")

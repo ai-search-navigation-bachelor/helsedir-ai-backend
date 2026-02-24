@@ -33,6 +33,7 @@ async def search(background_tasks: BackgroundTasks, request: SearchRequest = Dep
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
+            category=request.category,
             background_tasks=background_tasks,
         )
     except ValueError as e:
