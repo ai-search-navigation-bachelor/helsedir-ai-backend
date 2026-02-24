@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
+    mysql_pool_size: int = 20
     mysql_root_password: str = ""
 
 

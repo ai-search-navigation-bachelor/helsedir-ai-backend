@@ -26,7 +26,7 @@ class DatabasePool:
         try:
             self._pool = pooling.MySQLConnectionPool(
                 pool_name="helsedir_pool",
-                pool_size=5,
+                pool_size=settings.mysql_pool_size,
                 host=settings.mysql_host,
                 port=settings.mysql_port,
                 user=settings.mysql_user,
