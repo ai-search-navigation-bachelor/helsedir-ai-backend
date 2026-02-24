@@ -7,8 +7,9 @@ Handles business logic for search operations with pagination and ML feature logg
 import uuid
 import re
 import logging
+import time
 import difflib
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from collections import defaultdict
 from fastapi import BackgroundTasks
 
@@ -40,8 +41,16 @@ logger = logging.getLogger(__name__)
 class SearchController:
     """Controller for search operations."""
 
+    # Cache search results for 30 seconds so concurrent category-filtered
+    # requests (same query) don't re-run the full pipeline.
+    _CACHE_TTL_SECONDS = 30.0
+
     def __init__(self):
         self.search_service = search_service
+        self._search_cache: Dict[
+            Tuple[str, Optional[str], str, int],
+            Tuple[float, List["SearchResult"]],
+        ] = {}
 
     async def search(
         self,
@@ -499,10 +508,31 @@ class SearchController:
         max_results: int
     ) -> List[SearchResult]:
         """
-        Execute the appropriate search method.
+        Execute the appropriate search method with short-lived caching.
+
+        The frontend fires multiple concurrent requests for the same query
+        (one per category tab). This cache avoids re-running the full
+        BM25 + semantic + RRF pipeline for each one.
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
+        cache_key = (query.strip().lower(), role, method, max_results)
+        now = time.monotonic()
+
+        # Check cache
+        if cache_key in self._search_cache:
+            cached_time, cached_results = self._search_cache[cache_key]
+            if now - cached_time < self._CACHE_TTL_SECONDS:
+                return cached_results
+
+        # Evict stale entries (keep cache bounded)
+        stale_keys = [
+            k for k, (t, _) in self._search_cache.items()
+            if now - t >= self._CACHE_TTL_SECONDS
+        ]
+        for k in stale_keys:
+            del self._search_cache[k]
+
         # Execute regular search
         if method == "semantic":
             regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
@@ -517,22 +547,23 @@ class SearchController:
         else:
             regular_results = regular_results[:max(1, int(max_results))]
 
-        if not self._needs_theme_fuzzy_fallback(regular_results):
-            return regular_results
+        if self._needs_theme_fuzzy_fallback(regular_results):
+            # Controlled fallback for typo tolerance on theme pages only.
+            theme_page_results = self._search_theme_pages_fuzzy(
+                query=query,
+                fuzzy_threshold=0.72,
+                max_results=max_results,
+            )
+            regular_results = self._merge_theme_fallback_results(
+                regular_results,
+                theme_page_results,
+                max_results=max_results,
+            )
 
-        # Controlled fallback for typo tolerance on theme pages only.
-        theme_page_results = self._search_theme_pages_fuzzy(
-            query=query,
-            fuzzy_threshold=0.72,
-            max_results=max_results,
-        )
-        merged_results = self._merge_theme_fallback_results(
-            regular_results,
-            theme_page_results,
-            max_results=max_results,
-        )
+        # Store in cache
+        self._search_cache[cache_key] = (now, regular_results)
 
-        return merged_results
+        return regular_results
 
     def _handle_search_id(
         self,
