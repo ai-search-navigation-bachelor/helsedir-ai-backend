@@ -233,6 +233,7 @@ class HybridSearch:
                     id=c.item.id,
                     title=c.item.title,
                     info_type=c.item.content_type,
+                    path=c.item.path,
                     score=round(c.combined_score, 3),
                     explanation=explanation,
                     bm25_score=c.keyword_norm,
