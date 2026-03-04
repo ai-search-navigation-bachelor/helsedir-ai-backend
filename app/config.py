@@ -80,8 +80,8 @@ class Settings(BaseSettings):
         ]
 
     # MySQL Database
-    mysql_host: str = "localhost"
-    mysql_port: int = 3306
+    mysql_host: str = "127.0.0.1"
+    mysql_port: int = 3307
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"
