@@ -83,6 +83,22 @@ Svar KUN med JSON-array av 10 desimaltall: [score1, score2, ...]"""
 # Data helpers
 # ---------------------------------------------------------------------------
 
+def get_searchable_types() -> set:
+    """Fetch info_types marked as searchable in content_type_config."""
+    conn = db_pool.get_connection()
+    if not conn:
+        return set()
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT info_type FROM content_type_config WHERE searchable = 1")
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+
 def get_all_content() -> List[Dict]:
     """Fetch all content with links from database."""
     conn = db_pool.get_connection()
@@ -480,13 +496,20 @@ def main():
     lookup = build_content_lookup(all_content)
     logger.info("Loaded %d content items", len(all_content))
 
+    # Get searchable types from DB
+    searchable_types = get_searchable_types()
+    if not searchable_types:
+        print("ERROR: Could not load searchable types from content_type_config")
+        sys.exit(1)
+    logger.info("Searchable types: %s", sorted(searchable_types))
+
     # Filter to items that need processing
     items_to_process = []
-    skipped_kapittel = 0
+    skipped_non_searchable = 0
     skipped_existing = 0
     for item in all_content:
-        if item.get("info_type") == "kapittel":
-            skipped_kapittel += 1
+        if item.get("info_type", "").lower() not in searchable_types:
+            skipped_non_searchable += 1
             continue
 
         if args.skip_existing:
@@ -503,7 +526,7 @@ def main():
 
         items_to_process.append(item)
 
-    logger.info("Skipped %d kapittel items, %d with existing tags", skipped_kapittel, skipped_existing)
+    logger.info("Skipped %d non-searchable items, %d with existing tags", skipped_non_searchable, skipped_existing)
 
     if not items_to_process:
         print("Nothing to process. All items already have tags (use without --skip-existing to regenerate).")
