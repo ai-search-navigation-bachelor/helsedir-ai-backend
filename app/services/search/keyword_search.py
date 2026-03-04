@@ -2,8 +2,7 @@
 Keyword-based search functionality, modelled after Helsedirektoratet's current search.
 
 Scoring combines:
-- Which fields have hits (title > body)
-- Content type authority (retningslinje > veileder > temaside > other)
+- Title-based lexical matching only
 - Norwegian stop word filtering
 - Norwegian Snowball stemming for morphological matching
 - Basic Norwegian medical synonyms
@@ -63,21 +62,6 @@ SYNONYMS: Dict[str, List[str]] = {
     "deprimert": ["depresjon"],
 }
 
-# ---------------------------------------------------------------------------
-# Content type authority boosts (applied as multiplier after field scoring)
-# ---------------------------------------------------------------------------
-TYPE_BOOST: Dict[str, float] = {
-    "retningslinje": 1.3,
-    "veileder": 1.2,
-    "temaside": 1.15,
-    "pakkeforlop": 1.1,
-}
-
-# Body field score weights (~50 % of title weights)
-_BODY_EXACT_WEIGHT: float = 5.0
-_BODY_KEYWORD_WEIGHT: float = 1.5
-
-
 def _tokenize(text: str) -> Set[str]:
     """Tokenize text: lowercase, remove stop words, apply Snowball stemming."""
     words = re.findall(r"\w+", text.lower())
@@ -94,14 +78,30 @@ def _expand_query(raw_query_lower: str, stemmed_keywords: Set[str]) -> Set[str]:
     return expanded
 
 
+def _normalize_query_keywords(query_keywords: Set[str]) -> Set[str]:
+    """Normalize query keywords so scorer input is deterministic across callers."""
+    if not query_keywords:
+        return set()
+
+    lowered_tokens = {
+        token.strip().lower()
+        for token in query_keywords
+        if token and token.strip()
+    }
+    stemmed_keywords: Set[str] = set()
+    for token in lowered_tokens:
+        stemmed_keywords.update(_tokenize(token))
+
+    raw_query_lower = " ".join(sorted(lowered_tokens))
+    return _expand_query(raw_query_lower, stemmed_keywords)
+
+
 class KeywordSearch:
     """
     Keyword search modelled after Helsedirektoratet's current solution.
 
     Scoring priority:
     1. Title hits (exact phrase > keyword matches > full coverage)
-    2. Body hits (exact phrase > keyword matches)
-    3. Content type authority boost (retningslinje/veileder/temaside/pakkeforlop)
 
     Norwegian stop words are filtered out; Snowball stemming normalises word forms;
     a small synonym table expands the query for common medical terms.
@@ -168,7 +168,8 @@ class KeywordSearch:
         query_lower: str,
         query_keywords: Set[str],
     ) -> Tuple[float, Dict[str, Any]]:
-        """Score an item against the query using title + body + content type boost."""
+        """Score an item against the query using title-only signals."""
+        normalized_query_keywords = _normalize_query_keywords(query_keywords)
         score = 0.0
         breakdown: Dict[str, Any] = {}
 
@@ -181,7 +182,7 @@ class KeywordSearch:
             score += pts
             breakdown["exact_title"] = pts
 
-        title_matches = query_keywords & title_stemmed
+        title_matches = normalized_query_keywords & title_stemmed
         if title_matches:
             pts = len(title_matches) * settings.search_keyword_title_weight
             score += pts
@@ -191,37 +192,10 @@ class KeywordSearch:
                 "points": pts,
             }
 
-        if title_stemmed and title_stemmed.issubset(query_keywords):
+        if title_stemmed and title_stemmed.issubset(normalized_query_keywords):
             pts = settings.search_full_title_coverage_weight
             score += pts
             breakdown["full_title_coverage"] = pts
-
-        # --- Body scoring ---
-        body = item.body or ""
-        if body:
-            body_lower = body.lower()
-            body_stemmed = _tokenize(body_lower)
-
-            if query_lower in body_lower:
-                pts = _BODY_EXACT_WEIGHT
-                score += pts
-                breakdown["exact_body"] = pts
-
-            body_matches = query_keywords & body_stemmed
-            if body_matches:
-                pts = len(body_matches) * _BODY_KEYWORD_WEIGHT
-                score += pts
-                breakdown["body_keywords"] = {
-                    "count": len(body_matches),
-                    "matches": list(body_matches)[:5],
-                    "points": pts,
-                }
-
-        # --- Content type authority boost ---
-        boost = TYPE_BOOST.get(item.content_type, 1.0)
-        if boost != 1.0 and score > 0:
-            score *= boost
-            breakdown["type_boost"] = {"type": item.content_type, "multiplier": boost}
 
         return score, breakdown
 
@@ -239,14 +213,6 @@ class KeywordSearch:
         if "title_keywords" in breakdown:
             kw = breakdown["title_keywords"]
             parts.append(f"Title words: {', '.join(kw['matches'][:3])} (+{kw['points']:.1f})")
-        if "exact_body" in breakdown:
-            parts.append(f"Exact body match (+{breakdown['exact_body']:.1f})")
-        if "body_keywords" in breakdown:
-            kw = breakdown["body_keywords"]
-            parts.append(f"Body words: {kw['count']} (+{kw['points']:.1f})")
-        if "type_boost" in breakdown:
-            tb = breakdown["type_boost"]
-            parts.append(f"Type boost {tb['type']} (×{tb['multiplier']})")
         if role:
             parts.append(f"Role: {role}")
 

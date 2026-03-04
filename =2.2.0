@@ -1,8 +1,0 @@
-Collecting snowballstemmer
-  Downloading snowballstemmer-3.0.1-py3-none-any.whl.metadata (7.9 kB)
-Downloading snowballstemmer-3.0.1-py3-none-any.whl (103 kB)
-Installing collected packages: snowballstemmer
-Successfully installed snowballstemmer-3.0.1
-
-[notice] A new release of pip is available: 25.3 -> 26.0.1
-[notice] To update, run: python.exe -m pip install --upgrade pip

@@ -39,6 +39,12 @@ async def search(
         - search_id: Existing search_id for pagination (optional)
     """
     try:
+        if method is not None:
+            method = method.strip().lower()
+            valid_methods = {"keyword", "semantic", "hybrid"}
+            if method not in valid_methods:
+                raise ValueError(f"Invalid search method: {method}. Must be one of {valid_methods}")
+
         effective_temaside_boost = (
             temaside_boost if temaside_boost is not None else search_boost_temaside
         )
@@ -51,7 +57,7 @@ async def search(
         return await search_controller.search(
             query=request.query,
             role=request.role,
-            method=method or settings.search_method,
+            method=method or "hybrid",
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
