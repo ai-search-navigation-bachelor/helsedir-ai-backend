@@ -1,11 +1,6 @@
-"""
-BM25 lexical retrieval over cached content.
+"""BM25 lexical retrieval over cached content."""
 
-This module implements a lightweight BM25 retriever without external
-dependencies. It indexes the in-memory content cache and supports role/type
-filtering compatible with existing search behavior.
-"""
-
+import logging
 import math
 import re
 from collections import Counter, defaultdict
@@ -14,8 +9,12 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import numpy as np
 
+from app.config import settings
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
+from app.services.search.bm25_hierarchy import BM25HierarchyConfig, BM25HierarchyIndex
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,6 +24,8 @@ class BM25Hit:
     item: ContentItem
     score: float
     rank: int
+    direct_score: float = 0.0
+    inherited_score: float = 0.0
 
 
 class BM25Search:
@@ -34,12 +35,29 @@ class BM25Search:
     Title tokens are up-weighted by repeating title text during indexing.
     """
 
-    def __init__(self, k1: float = 1.2, b: float = 0.75, title_weight: int = 3):
+    def __init__(
+        self,
+        k1: float = 1.2,
+        b: float = 0.75,
+        title_weight: Optional[int] = None,
+    ):
         self.k1 = k1
         self.b = b
-        self.title_weight = max(1, int(title_weight))
+        effective_title_weight = settings.search_bm25_title_weight if title_weight is None else title_weight
+        self.title_weight = max(1, int(effective_title_weight))
 
-        self._index_signature: Optional[frozenset] = None
+        hierarchy_config = BM25HierarchyConfig(
+            enabled=bool(settings.search_bm25_hierarchy_enabled),
+            max_depth=max(1, int(settings.search_bm25_hierarchy_max_depth)),
+            decay=max(0.0, min(1.0, float(settings.search_bm25_hierarchy_decay))),
+            source_top_k=max(1, int(settings.search_bm25_hierarchy_source_top_k)),
+            top_children=max(1, int(settings.search_bm25_hierarchy_top_children)),
+            tail_weight=max(0.0, float(settings.search_bm25_hierarchy_tail_weight)),
+            weight=max(0.0, float(settings.search_bm25_hierarchy_weight)),
+            min_contribution=max(0.0, float(settings.search_bm25_hierarchy_min_contribution)),
+        )
+        self._hierarchy = BM25HierarchyIndex(hierarchy_config)
+        self._index_signature: Optional[FrozenSet[Tuple[str, str]]] = None
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
         self._avg_doc_length: float = 1.0
@@ -52,18 +70,14 @@ class BM25Search:
             return []
         return re.findall(r"\w+", text.lower())
 
-    @staticmethod
-    def _compute_signature(items) -> FrozenSet[str]:
-        return frozenset(item.id for item in items)
-
     def _needs_rebuild(self) -> bool:
         current = content_service.get_all_content()
-        return self._compute_signature(current) != self._index_signature
+        return BM25HierarchyIndex.compute_signature(current) != self._index_signature
 
     def _build_index(self) -> None:
         items = content_service.get_all_content()
         self._items = list(items)
-        self._index_signature = self._compute_signature(self._items)
+        self._index_signature = BM25HierarchyIndex.compute_signature(self._items)
 
         n_docs = len(self._items)
         if n_docs == 0:
@@ -107,6 +121,7 @@ class BM25Search:
         self._avg_doc_length = avg_dl
         self._idf = idf
         self._postings = dict(postings)
+        self._hierarchy.build(self._items)
 
     def _ensure_index(self) -> None:
         if self._needs_rebuild():
@@ -136,7 +151,7 @@ class BM25Search:
             return []
 
         query_tf = Counter(query_terms)
-        scores = np.zeros(len(self._items), dtype=np.float32)
+        direct_scores = np.zeros(len(self._items), dtype=np.float32)
 
         for term, q_weight in query_tf.items():
             postings = self._postings.get(term)
@@ -152,13 +167,20 @@ class BM25Search:
                 denom = tf + self.k1 * (1.0 - self.b + self.b * (dl / self._avg_doc_length))
                 if denom <= 0.0:
                     continue
-                scores[doc_idx] += float(q_weight) * term_idf * ((tf * (self.k1 + 1.0)) / denom)
+                direct_scores[doc_idx] += (
+                    float(q_weight) * term_idf * ((tf * (self.k1 + 1.0)) / denom)
+                )
 
-        if not np.any(scores > 0):
+        if not np.any(direct_scores > 0):
             return []
 
+        inherited_scores = self._hierarchy.propagate(direct_scores)
+
+        final_scores = direct_scores + inherited_scores
+
         hits: List[Tuple[ContentItem, float]] = []
-        for idx, score in enumerate(scores):
+        hit_details: Dict[str, Tuple[float, float]] = {}
+        for idx, score in enumerate(final_scores):
             if score <= 0.0:
                 continue
 
@@ -169,16 +191,40 @@ class BM25Search:
                 continue
 
             hits.append((item, float(score)))
+            hit_details[item.id] = (
+                float(direct_scores[idx]),
+                float(inherited_scores[idx]),
+            )
 
         if not hits:
             return []
 
         hits.sort(key=lambda x: (-x[1], x[0].id))
         top_hits = hits[: max(1, int(k))]
-        return [
-            BM25Hit(item=item, score=score, rank=i)
-            for i, (item, score) in enumerate(top_hits, start=1)
-        ]
+        out = []
+        for i, (item, score) in enumerate(top_hits, start=1):
+            direct, inherited = hit_details.get(item.id, (0.0, 0.0))
+            out.append(
+                BM25Hit(
+                    item=item,
+                    score=score,
+                    rank=i,
+                    direct_score=direct,
+                    inherited_score=inherited,
+                )
+            )
+
+        if logger.isEnabledFor(logging.INFO):
+            inherited_only = sum(
+                1 for hit in out if hit.direct_score <= 0.0 and hit.inherited_score > 0.0
+            )
+            logger.info(
+                "BM25 hits=%d inherited_only=%d hierarchy=%s",
+                len(out),
+                inherited_only,
+                self._hierarchy.config.enabled,
+            )
+        return out
 
 
 # Global instance
