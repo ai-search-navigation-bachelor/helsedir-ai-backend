@@ -47,7 +47,7 @@ class SearchController:
     def __init__(self):
         self.search_service = search_service
         self._search_cache: Dict[
-            Tuple[str, Optional[str], str, int],
+            Tuple[object, ...],
             Tuple[float, List["SearchResult"]],
         ] = {}
 
@@ -62,6 +62,11 @@ class SearchController:
         category: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
         log: bool = True,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -91,7 +96,17 @@ class SearchController:
         # Fetch a fixed pool so that total and category_counts are stable across
         # all pagination requests for the same query.
         max_results = 500
-        all_results = self._execute_search(query, role, method, max_results)
+        all_results = self._execute_search(
+            query,
+            role,
+            method,
+            max_results,
+            bm25_weight=bm25_weight,
+            semantic_weight=semantic_weight,
+            rrf_k=rrf_k,
+            temaside_boost=temaside_boost,
+            retningslinje_boost=retningslinje_boost,
+        )
 
         # Coerce None to empty list
         if all_results is None:
@@ -506,7 +521,12 @@ class SearchController:
         query: str,
         role: Optional[str],
         method: str,
-        max_results: int
+        max_results: int,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -517,7 +537,17 @@ class SearchController:
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
-        cache_key = (query.strip().lower(), role, method, max_results)
+        cache_key = (
+            query.strip().lower(),
+            role,
+            method,
+            max_results,
+            bm25_weight,
+            semantic_weight,
+            rrf_k,
+            temaside_boost,
+            retningslinje_boost,
+        )
         now = time.monotonic()
 
         # Check cache
@@ -540,7 +570,12 @@ class SearchController:
         elif method == "keyword":
             regular_results = self.search_service.search(query=query, role=role, k=max_results)
         else:  # hybrid
-            regular_results = self.search_service.search_hybrid(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_hybrid(
+                query=query, role=role, k=max_results,
+                bm25_weight=bm25_weight, semantic_weight=semantic_weight, rrf_k=rrf_k,
+                temaside_boost=temaside_boost,
+                retningslinje_boost=retningslinje_boost,
+            )
 
         # Coerce None to empty list
         if regular_results is None:

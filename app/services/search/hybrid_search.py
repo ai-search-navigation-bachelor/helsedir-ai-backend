@@ -55,13 +55,25 @@ class HybridSearch:
         query: str,
         role: Optional[str] = None,
         k: int = 10,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
         query_keywords = set(re.findall(r'\w+', query_lower))
 
         try:
-            candidates = self._score_with_rrf(query, role, query_lower, query_keywords, k)
+            candidates = self._score_with_rrf(
+                query, role, query_lower, query_keywords, k,
+                bm25_weight=bm25_weight,
+                semantic_weight=semantic_weight,
+                rrf_k=rrf_k,
+                temaside_boost=temaside_boost,
+                retningslinje_boost=retningslinje_boost,
+            )
         except Exception:
             logger.exception("Error in RRF fusion")
             candidates = []
@@ -83,6 +95,11 @@ class HybridSearch:
         query_lower: str,
         query_keywords: set,
         k: int,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
         t_start = time.perf_counter()
@@ -114,10 +131,11 @@ class HybridSearch:
             ranked_lists["semantic"] = [result.id for result in semantic_hits]
 
         rrf_weights = {
-            "bm25": settings.search_rrf_weight_bm25,
-            "semantic": settings.search_rrf_weight_semantic,
+            "bm25": bm25_weight if bm25_weight is not None else settings.search_rrf_weight_bm25,
+            "semantic": semantic_weight if semantic_weight is not None else settings.search_rrf_weight_semantic,
         }
-        fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k, weights=rrf_weights)
+        effective_rrf_k = rrf_k if rrf_k is not None else self.rrf_k
+        fused = fuse_ranked_lists(ranked_lists, rrf_k=effective_rrf_k, weights=rrf_weights)
         t_rrf = time.perf_counter() - t0
         if not fused:
             return []
@@ -181,8 +199,12 @@ class HybridSearch:
 
         # Apply content type boosts
         type_boosts = {
-            "temaside": settings.search_boost_temaside,
-            "retningslinje": settings.search_boost_retningslinje,
+            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
+            "retningslinje": (
+                retningslinje_boost
+                if retningslinje_boost is not None
+                else settings.search_boost_retningslinje
+            ),
         }
         for c in candidates:
             boost = type_boosts.get(c.item.content_type.lower(), 1.0)
