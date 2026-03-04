@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     search_rrf_k: int = 60  # RRF fusion constant (higher = more weight to top ranks)
     search_rrf_weight_bm25: float = 0.3  # RRF weight for BM25 retrieval
     search_rrf_weight_semantic: float = 0.7  # RRF weight for semantic retrieval
+    search_bm25_hierarchy_enabled: bool = True
+    search_bm25_hierarchy_max_depth: int = 4
+    search_bm25_hierarchy_decay: float = 0.65
+    search_bm25_hierarchy_source_top_k: int = 400
+    search_bm25_hierarchy_top_children: int = 3
+    search_bm25_hierarchy_tail_weight: float = 0.35
+    search_bm25_hierarchy_weight: float = 0.8
+    search_bm25_hierarchy_min_contribution: float = 0.0001
 
     # Content type score boosts (multiplied on combined_score after RRF fusion)
     search_boost_temaside: float = 1.15
