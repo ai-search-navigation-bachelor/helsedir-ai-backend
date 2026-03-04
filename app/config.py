@@ -60,11 +60,13 @@ class Settings(BaseSettings):
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
-    # LLM API (for GPL training) — up to 4 keys for parallel query generation
+    # LLM API — up to 6 keys for parallel generation
     groq_api_key: str = ""
     groq_api_key_2: str = ""
     groq_api_key_3: str = ""
     groq_api_key_4: str = ""
+    groq_api_key_5: str = ""
+    groq_api_key_6: str = ""
 
     @property
     def groq_api_keys(self) -> list[str]:
@@ -75,6 +77,8 @@ class Settings(BaseSettings):
                 self.groq_api_key_2,
                 self.groq_api_key_3,
                 self.groq_api_key_4,
+                self.groq_api_key_5,
+                self.groq_api_key_6,
             ]
             if k
         ]
