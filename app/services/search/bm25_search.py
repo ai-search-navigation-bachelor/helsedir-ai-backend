@@ -35,10 +35,16 @@ class BM25Search:
     Title tokens are up-weighted by repeating title text during indexing.
     """
 
-    def __init__(self, k1: float = 1.2, b: float = 0.75, title_weight: int = 3):
+    def __init__(
+        self,
+        k1: float = 1.2,
+        b: float = 0.75,
+        title_weight: Optional[int] = None,
+    ):
         self.k1 = k1
         self.b = b
-        self.title_weight = max(1, int(title_weight))
+        effective_title_weight = settings.search_bm25_title_weight if title_weight is None else title_weight
+        self.title_weight = max(1, int(effective_title_weight))
 
         hierarchy_config = BM25HierarchyConfig(
             enabled=bool(settings.search_bm25_hierarchy_enabled),

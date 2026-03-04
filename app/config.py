@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     search_bm25_hierarchy_tail_weight: float = 0.35
     search_bm25_hierarchy_weight: float = 0.8
     search_bm25_hierarchy_min_contribution: float = 0.0001
+    search_bm25_title_weight: int = 3
 
     # Content type score boosts (multiplied on combined_score after RRF fusion)
     search_boost_temaside: float = 1.15
