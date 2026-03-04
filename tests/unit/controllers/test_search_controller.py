@@ -132,10 +132,11 @@ class TestSearchControllerHelpers:
 
     def test_extract_signature_from_unsigned_uuid_returns_none(self):
         import uuid
-        unsigned_id = str(uuid.uuid4())
+        # A plain uuid4() will not have the "c0de" marker in the last 12 hex chars
+        # with near-certainty. We force a UUID that provably lacks the marker.
+        unsigned_id = "12345678-1234-1234-1234-123456789abc"
         result = SearchController._extract_search_signature(unsigned_id)
-        # An unsigned UUID won't have the signature marker
-        assert result is None or isinstance(result, str)
+        assert result is None
 
     # ── _merge_theme_fallback_results ────────────────────────────────────────
 
@@ -516,3 +517,171 @@ class TestSearchControllerSearchCategorized:
         assert response.total == 0
         assert response.priority_categories == []
         assert response.other_categories == []
+
+
+@pytest.mark.unit
+class TestSearchControllerSearchCategory:
+    """
+    Tests for async search_category() — the follow-up endpoint used when
+    a user clicks 'Vis alle' for a specific category.
+
+    Key behavior:
+    - Validates search_id against DB (raises ValueError if not found)
+    - Filters results to exactly the requested category
+    - Filters out results below min_score
+    - Returns full result list with no pagination
+    """
+
+    async def test_returns_search_response(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+        from app.dto.response.search import SearchResponse
+
+        ctrl = SearchController()
+        results = [
+            _make_result("001", settings.search_min_score + 0.1, "retningslinje"),
+            _make_result("002", settings.search_min_score + 0.1, "veileder"),
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="diabetes", category="retningslinje", search_id="test-id"
+        )
+
+        assert isinstance(response, SearchResponse)
+        assert response.query == "diabetes"
+        assert response.search_id == "test-id"
+
+    async def test_filters_to_requested_category_only(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+
+        ctrl = SearchController()
+        results = [
+            _make_result("r1", settings.search_min_score + 0.1, "retningslinje"),
+            _make_result("v1", settings.search_min_score + 0.1, "veileder"),
+            _make_result("r2", settings.search_min_score + 0.1, "retningslinje"),
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="diabetes", category="retningslinje", search_id="test-id"
+        )
+
+        result_ids = [r.id for r in response.results]
+        assert "r1" in result_ids
+        assert "r2" in result_ids
+        assert "v1" not in result_ids  # Different category excluded
+
+    async def test_all_results_returned_no_pagination(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+
+        ctrl = SearchController()
+        results = [
+            _make_result(f"r{i}", settings.search_min_score + 0.1, "retningslinje")
+            for i in range(8)
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="diabetes", category="retningslinje", search_id="test-id"
+        )
+
+        assert response.total == 8
+        assert len(response.results) == 8
+        assert response.has_next is False
+        assert response.has_prev is False
+
+    async def test_results_below_min_score_excluded(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+
+        ctrl = SearchController()
+        results = [
+            _make_result("above", settings.search_min_score + 0.1, "retningslinje"),
+            _make_result("below", max(0.0, settings.search_min_score - 0.1), "retningslinje"),
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="test", category="retningslinje", search_id="test-id"
+        )
+
+        result_ids = [r.id for r in response.results]
+        assert "above" in result_ids
+        if settings.search_min_score > 0:
+            assert "below" not in result_ids
+
+    async def test_invalid_search_id_raises_value_error(
+        self, mock_content, mock_database_service
+    ):
+        mock_database_service.get_search_by_id.return_value = None
+
+        ctrl = SearchController()
+        with pytest.raises(ValueError, match="Invalid search_id"):
+            await ctrl.search_category(
+                query="diabetes", category="retningslinje", search_id="nonexistent"
+            )
+
+    async def test_invalid_method_raises_value_error(self, mock_database_service):
+        ctrl = SearchController()
+        with pytest.raises(ValueError, match="Invalid search method"):
+            await ctrl.search_category(
+                query="diabetes",
+                category="retningslinje",
+                method="invalid",
+                search_id="test-id",
+            )
+
+    async def test_category_filter_case_insensitive(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+
+        ctrl = SearchController()
+        results = [
+            _make_result("001", settings.search_min_score + 0.1, "retningslinje"),
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="test", category="Retningslinje", search_id="test-id"
+        )
+
+        assert response.total == 1
+        assert response.results[0].id == "001"
+
+    async def test_empty_category_results_returns_empty_list(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.config import settings
+
+        ctrl = SearchController()
+        results = [
+            _make_result("001", settings.search_min_score + 0.1, "veileder"),
+        ]
+        mocker.patch.object(ctrl, "_execute_search", return_value=results)
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search_category(
+            query="test", category="retningslinje", search_id="test-id"
+        )
+
+        assert response.total == 0
+        assert response.results == []

@@ -238,3 +238,56 @@ class TestCategorizedSearchRoute:
         assert "search_id" in data
         assert "priority_categories" in data
         assert "other_categories" in data
+
+
+@pytest.mark.integration
+class TestCategorySearchRoute:
+    BASE_URL = "/search/category?query=diabetes&category=retningslinje&search_id=test-id"
+
+    def test_missing_query_returns_422(self, client):
+        response = client.get("/search/category?category=retningslinje&search_id=test-id")
+        assert response.status_code == 422
+
+    def test_missing_category_returns_422(self, client):
+        response = client.get("/search/category?query=diabetes&search_id=test-id")
+        assert response.status_code == 422
+
+    def test_missing_search_id_returns_422(self, client):
+        response = client.get("/search/category?query=diabetes&category=retningslinje")
+        assert response.status_code == 422
+
+    def test_valid_request_returns_200(self, client, mocker):
+        mocker.patch(
+            "app.routes.search.search_controller.search_category",
+            new=AsyncMock(return_value=_mock_search_response()),
+        )
+        response = client.get(self.BASE_URL)
+        assert response.status_code == 200
+
+    def test_response_has_required_fields(self, client, mocker):
+        mocker.patch(
+            "app.routes.search.search_controller.search_category",
+            new=AsyncMock(return_value=_mock_search_response()),
+        )
+        data = client.get(self.BASE_URL).json()
+        assert "results" in data
+        assert "search_id" in data
+        assert "total" in data
+        assert "has_next" in data
+        assert "has_prev" in data
+
+    def test_value_error_from_controller_returns_400(self, client, mocker):
+        mocker.patch(
+            "app.routes.search.search_controller.search_category",
+            new=AsyncMock(side_effect=ValueError("Invalid search_id")),
+        )
+        response = client.get(self.BASE_URL)
+        assert response.status_code == 400
+
+    def test_runtime_error_returns_500(self, client, mocker):
+        mocker.patch(
+            "app.routes.search.search_controller.search_category",
+            new=AsyncMock(side_effect=RuntimeError("Unexpected error")),
+        )
+        response = client.get(self.BASE_URL)
+        assert response.status_code == 500
