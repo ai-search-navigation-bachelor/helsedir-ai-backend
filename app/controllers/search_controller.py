@@ -9,6 +9,8 @@ import re
 import logging
 import time
 import difflib
+import hashlib
+import json
 from typing import Optional, List, Dict, Tuple
 from collections import defaultdict
 from fastapi import BackgroundTasks
@@ -43,11 +45,13 @@ class SearchController:
     # Cache search results for 30 seconds so concurrent category-filtered
     # requests (same query) don't re-run the full pipeline.
     _CACHE_TTL_SECONDS = 30.0
+    _SEARCH_ID_SIGNATURE_MARKER = "c0de"
+    _SEARCH_ID_SIGNATURE_HEX_LENGTH = 8
 
     def __init__(self):
         self.search_service = search_service
         self._search_cache: Dict[
-            Tuple[str, Optional[str], str, int],
+            Tuple[object, ...],
             Tuple[float, List["SearchResult"]],
         ] = {}
 
@@ -62,6 +66,11 @@ class SearchController:
         category: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
         log: bool = True,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -91,7 +100,17 @@ class SearchController:
         # Fetch a fixed pool so that total and category_counts are stable across
         # all pagination requests for the same query.
         max_results = 500
-        all_results = self._execute_search(query, role, method, max_results)
+        all_results = self._execute_search(
+            query,
+            role,
+            method,
+            max_results,
+            bm25_weight=bm25_weight,
+            semantic_weight=semantic_weight,
+            rrf_k=rrf_k,
+            temaside_boost=temaside_boost,
+            retningslinje_boost=retningslinje_boost,
+        )
 
         # Coerce None to empty list
         if all_results is None:
@@ -126,7 +145,17 @@ class SearchController:
         page_results = self._populate_theme_page_children(page_results)
 
         # Handle search_id (new search vs pagination)
-        search_id = self._handle_search_id(search_id, query, role)
+        search_id = self._handle_search_id(
+            search_id=search_id,
+            query=query,
+            role=role,
+            method=method,
+            bm25_weight=bm25_weight,
+            semantic_weight=semantic_weight,
+            rrf_k=rrf_k,
+            temaside_boost=temaside_boost,
+            retningslinje_boost=retningslinje_boost,
+        )
 
         # Extract ML features and log results (skip for prefetch requests)
         if log:
@@ -506,7 +535,12 @@ class SearchController:
         query: str,
         role: Optional[str],
         method: str,
-        max_results: int
+        max_results: int,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -517,7 +551,17 @@ class SearchController:
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
-        cache_key = (query.strip().lower(), role, method, max_results)
+        cache_key = (
+            query.strip().lower(),
+            role,
+            method,
+            max_results,
+            bm25_weight,
+            semantic_weight,
+            rrf_k,
+            temaside_boost,
+            retningslinje_boost,
+        )
         now = time.monotonic()
 
         # Check cache
@@ -540,7 +584,13 @@ class SearchController:
         elif method == "keyword":
             regular_results = self.search_service.search(query=query, role=role, k=max_results)
         else:  # hybrid
-            regular_results = self.search_service.search_hybrid(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_hybrid(
+                query=query, role=role, k=max_results,
+                bm25_weight=bm25_weight, semantic_weight=semantic_weight,
+                rrf_k=max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
+                temaside_boost=temaside_boost,
+                retningslinje_boost=retningslinje_boost,
+            )
 
         # Coerce None to empty list
         if regular_results is None:
@@ -570,18 +620,46 @@ class SearchController:
         self,
         search_id: Optional[str],
         query: str,
-        role: Optional[str]
+        role: Optional[str],
+        method: str,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> str:
         """Generate new search_id or validate existing one."""
+        expected_signature = self._build_search_signature(
+            method=method,
+            bm25_weight=bm25_weight,
+            semantic_weight=semantic_weight,
+            rrf_k=rrf_k,
+            temaside_boost=temaside_boost,
+            retningslinje_boost=retningslinje_boost,
+        )
+
         if not search_id:
             # New search
-            search_id = str(uuid.uuid4())
+            search_id = self._build_signed_search_id(expected_signature)
             database_service.log_search(search_id=search_id, query=query, role=role)
         else:
             # Validate existing search_id
             stored_search = database_service.get_search_by_id(search_id)
             if stored_search is None:
                 raise ValueError(f"Invalid search_id: {search_id}")
+
+            embedded_signature = self._extract_search_signature(search_id)
+            if embedded_signature is None:
+                raise ValueError(
+                    "Invalid search_id format for pagination. "
+                    "Please start a new search."
+                )
+            if embedded_signature != expected_signature:
+                raise ValueError(
+                    "search_id does not match the current ranking configuration. "
+                    "Please start a new search."
+                )
+
             if stored_search["query"].strip().lower() != query.strip().lower():
                 raise ValueError(
                     f"Query mismatch: expected '{stored_search['query']}', got '{query}'"
@@ -595,6 +673,82 @@ class SearchController:
                 )
 
         return search_id
+
+    @classmethod
+    def _build_search_signature(
+        cls,
+        method: str,
+        bm25_weight: Optional[float],
+        semantic_weight: Optional[float],
+        rrf_k: Optional[int],
+        temaside_boost: Optional[float],
+        retningslinje_boost: Optional[float],
+    ) -> str:
+        """Build a stable signature for the ranking configuration."""
+        effective_tunables = {
+            "method": method.strip().lower(),
+            "bm25_weight": round(
+                float(
+                    bm25_weight
+                    if bm25_weight is not None
+                    else settings.search_rrf_weight_bm25
+                ),
+                6,
+            ),
+            "semantic_weight": round(
+                float(
+                    semantic_weight
+                    if semantic_weight is not None
+                    else settings.search_rrf_weight_semantic
+                ),
+                6,
+            ),
+            "rrf_k": max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
+            "temaside_boost": round(
+                float(
+                    temaside_boost
+                    if temaside_boost is not None
+                    else settings.search_boost_temaside
+                ),
+                6,
+            ),
+            "retningslinje_boost": round(
+                float(
+                    retningslinje_boost
+                    if retningslinje_boost is not None
+                    else settings.search_boost_retningslinje
+                ),
+                6,
+            ),
+        }
+        canonical = json.dumps(effective_tunables, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return digest[: cls._SEARCH_ID_SIGNATURE_HEX_LENGTH]
+
+    @classmethod
+    def _build_signed_search_id(cls, signature: str) -> str:
+        """
+        Encode a short configuration signature into the UUID tail.
+
+        Layout: <20 random hex><marker 4 hex><signature 8 hex>.
+        """
+        random_hex = uuid.uuid4().hex
+        signed_tail = f"{cls._SEARCH_ID_SIGNATURE_MARKER}{signature}"
+        signed_hex = f"{random_hex[:-12]}{signed_tail}"
+        return str(uuid.UUID(signed_hex))
+
+    @classmethod
+    def _extract_search_signature(cls, search_id: str) -> Optional[str]:
+        """Extract configuration signature from a signed UUID search_id."""
+        try:
+            search_hex = uuid.UUID(search_id).hex
+        except ValueError:
+            return None
+
+        signed_tail = search_hex[-12:]
+        if not signed_tail.startswith(cls._SEARCH_ID_SIGNATURE_MARKER):
+            return None
+        return signed_tail[len(cls._SEARCH_ID_SIGNATURE_MARKER):]
 
     async def get_theme_pages(
         self,

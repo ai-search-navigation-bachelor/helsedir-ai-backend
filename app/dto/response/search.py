@@ -23,10 +23,10 @@ class SearchResult(BaseModel):
     explanation: str
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
 
-    # Internal pipeline scores — carried through for logging, excluded from API response
-    bm25_score: Optional[float] = Field(default=None, exclude=True)
-    semantic_score: Optional[float] = Field(default=None, exclude=True)
-    rrf_score: Optional[float] = Field(default=None, exclude=True)
+    # Pipeline scores — included in API response for developer tooling
+    bm25_score: Optional[float] = Field(default=None)
+    semantic_score: Optional[float] = Field(default=None)
+    rrf_score: Optional[float] = Field(default=None)
 
 
 class SearchResponse(BaseModel):

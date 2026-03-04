@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.dto.request.search import SearchRequest, CategorizedSearchRequest, CategorySearchRequest
 from app.dto.response.search import SearchResponse, CategorizedSearchResponse, SuggestionResponse
@@ -12,6 +13,14 @@ async def search(
     background_tasks: BackgroundTasks,
     request: SearchRequest = Depends(),
     log: bool = Query(True, include_in_schema=False),
+    bm25_weight: Optional[float] = Query(None, include_in_schema=False),
+    semantic_weight: Optional[float] = Query(None, include_in_schema=False),
+    rrf_k: Optional[int] = Query(None, include_in_schema=False),
+    temaside_boost: Optional[float] = Query(None, include_in_schema=False),
+    retningslinje_boost: Optional[float] = Query(None, include_in_schema=False),
+    search_boost_temaside: Optional[float] = Query(None, include_in_schema=False),
+    search_boost_retningslinje: Optional[float] = Query(None, include_in_schema=False),
+    method: Optional[str] = Query(None, include_in_schema=False),
 ):
     """
     Search for content with pagination.
@@ -30,16 +39,36 @@ async def search(
         - search_id: Existing search_id for pagination (optional)
     """
     try:
+        if method is not None:
+            method = method.strip().lower()
+            valid_methods = {"keyword", "semantic", "hybrid"}
+            if method not in valid_methods:
+                raise ValueError(f"Invalid search method: {method}. Must be one of {valid_methods}")
+
+        effective_temaside_boost = (
+            temaside_boost if temaside_boost is not None else search_boost_temaside
+        )
+        effective_retningslinje_boost = (
+            retningslinje_boost
+            if retningslinje_boost is not None
+            else search_boost_retningslinje
+        )
+
         return await search_controller.search(
             query=request.query,
             role=request.role,
-            method=settings.search_method,
+            method=method or "hybrid",
             offset=request.offset,
             limit=request.limit,
             search_id=request.search_id,
             category=request.category,
             background_tasks=background_tasks,
             log=log,
+            bm25_weight=bm25_weight,
+            semantic_weight=semantic_weight,
+            rrf_k=rrf_k,
+            temaside_boost=effective_temaside_boost,
+            retningslinje_boost=effective_retningslinje_boost,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
