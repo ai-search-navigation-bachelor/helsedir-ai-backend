@@ -586,7 +586,8 @@ class SearchController:
         else:  # hybrid
             regular_results = self.search_service.search_hybrid(
                 query=query, role=role, k=max_results,
-                bm25_weight=bm25_weight, semantic_weight=semantic_weight, rrf_k=rrf_k,
+                bm25_weight=bm25_weight, semantic_weight=semantic_weight,
+                rrf_k=max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
                 temaside_boost=temaside_boost,
                 retningslinje_boost=retningslinje_boost,
             )
