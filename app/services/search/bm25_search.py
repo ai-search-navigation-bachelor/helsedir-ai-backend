@@ -165,8 +165,6 @@ class BM25Search:
             item = self._items[idx]
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.role_tags:
-                continue
 
             hits.append((item, float(score)))
 

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     search_boost_temaside: float = 1.15
     search_boost_retningslinje: float = 1.10
 
+    # Role match boost/penalty (multiplied on combined_score in hybrid search)
+    search_role_match_boost: float = 1.15
+    search_role_mismatch_penalty: float = 0.85
+
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results
     search_category_preview_count: int = 3  # Number of results in category preview

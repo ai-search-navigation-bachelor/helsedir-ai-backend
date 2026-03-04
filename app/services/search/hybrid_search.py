@@ -143,8 +143,6 @@ class HybridSearch:
 
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.role_tags:
-                continue
 
             # Keep old keyword feature semantics for reranker compatibility.
             keyword_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
@@ -188,6 +186,15 @@ class HybridSearch:
             boost = type_boosts.get(c.item.content_type.lower(), 1.0)
             if boost != 1.0:
                 c.combined_score *= boost
+
+        # Apply role-based soft boost/penalty
+        if role:
+            for c in candidates:
+                if role in c.item.role_tags:
+                    c.combined_score *= settings.search_role_match_boost
+                elif c.item.role_tags:  # has tags but no match
+                    c.combined_score *= settings.search_role_mismatch_penalty
+                # No tags = neutral (1.0)
 
         candidates.sort(key=lambda c: -c.combined_score)
 
