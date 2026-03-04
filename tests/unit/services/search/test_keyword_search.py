@@ -7,6 +7,7 @@ because that method iterates content_service.get_all_content().
 """
 
 import pytest
+from typing import List, Optional
 from app.entities.content import ContentItem
 from app.services.search.keyword_search import (
     KeywordSearch,
@@ -20,7 +21,7 @@ def _item(
     title: str,
     content_type: str = "retningslinje",
     id: str = "test-x",
-    target_groups: list = None,
+    target_groups: Optional[List[str]] = None,
 ) -> ContentItem:
     return ContentItem(
         id=id,

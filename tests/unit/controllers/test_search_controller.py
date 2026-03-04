@@ -14,10 +14,10 @@ from app.controllers.search_controller import SearchController
 from app.dto.response.search import SearchResult, SearchResponse
 
 
-def _make_result(id: str, score: float, info_type: str = "retningslinje") -> SearchResult:
+def _make_result(result_id: str, score: float, info_type: str = "retningslinje") -> SearchResult:
     return SearchResult(
-        id=id,
-        title=f"Title {id}",
+        id=result_id,
+        title=f"Title {result_id}",
         info_type=info_type,
         score=score,
         explanation="test",
@@ -330,9 +330,10 @@ class TestSearchControllerSearchAsync:
 
     def test_get_suggestions_max_five_results(self, mock_content):
         from app.services.data.content_service import content_service
+        from app.entities.content import ContentItem
         # Add extra temasider that all start with "test"
         for i in range(10):
-            item = __import__("app.entities.content", fromlist=["ContentItem"]).ContentItem(
+            item = ContentItem(
                 id=f"ts-{i}", title=f"Test temaside {i}", body="",
                 content_type="temaside", path=f"/temasider/test-{i}"
             )
