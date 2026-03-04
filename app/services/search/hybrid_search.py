@@ -143,7 +143,7 @@ class HybridSearch:
 
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.target_groups:
+            if role and role not in item.role_tags:
                 continue
 
             # Keep old keyword feature semantics for reranker compatibility.
@@ -306,17 +306,16 @@ class HybridSearch:
 
         # Role match
         role_match = 0.0
-        if role and item.target_groups:
-            if role in item.target_groups:
-                role_match = 1.0 / len(item.target_groups)
-        elif not role and not item.target_groups:
+        if role and item.role_tags:
+            if role in item.role_tags:
+                role_match = 1.0 / len(item.role_tags)
+        elif not role and not item.role_tags:
             role_match = 0.5
-        elif not item.target_groups:
+        elif not item.role_tags:
             role_match = 0.3
 
-        # Maalgruppe match
-        target_groups = item.target_groups or []
-        maalgruppe_match = 1.0 if role and role in target_groups else 0.0
+        # Maalgruppe match (uses role_tags)
+        maalgruppe_match = 1.0 if role and role in item.role_tags else 0.0
 
         return {
             "semantic_score": candidate.semantic_norm,

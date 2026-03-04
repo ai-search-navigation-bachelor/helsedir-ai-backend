@@ -122,17 +122,17 @@ class HealthContentEmbedding:
             else:
                 sentences.append(f"{title}.")
 
-        # Target groups (maalgruppe) - who is this for?
-        maalgruppe = content_item.get("maalgruppe") or content_item.get("target_groups")
-        if maalgruppe:
-            if isinstance(maalgruppe, str):
+        # Role tags - who is this for?
+        role_tags = content_item.get("role_tags")
+        if role_tags:
+            if isinstance(role_tags, str):
                 try:
                     import json
-                    maalgruppe = json.loads(maalgruppe)
+                    role_tags = json.loads(role_tags)
                 except (json.JSONDecodeError, TypeError):
-                    maalgruppe = []
-            if isinstance(maalgruppe, list) and maalgruppe:
-                sentences.append(f"Målgruppe: {', '.join(maalgruppe)}.")
+                    role_tags = []
+            if isinstance(role_tags, list) and role_tags:
+                sentences.append(f"Målgruppe: {', '.join(role_tags)}.")
 
         # Medical codes - include naturally
         koder = content_item.get("koder")

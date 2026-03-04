@@ -77,7 +77,7 @@ class ContentService:
         self.content = []
         for item in db_content:
             # Parse JSON fields
-            maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+            role_tags = self._parse_json_field(item.get("role_tags"), [])
             links = self._parse_links(item.get("links"))
 
             # Parse anbefaling-specific fields if this is an anbefaling
@@ -109,7 +109,7 @@ class ContentService:
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
                 path=item.get("path"),
-                target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                role_tags=role_tags if isinstance(role_tags, list) else [],
                 links=links,
                 anbefaling_fields=anbefaling_fields,
             )
@@ -193,7 +193,7 @@ class ContentService:
             # Parse into ContentItem format
             self.content = []
             for item in api_items:
-                maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+                role_tags = self._parse_json_field(item.get("role_tags"), [])
                 links = self._parse_links(item.get("links"))
 
                 content_item = ContentItem(
@@ -202,7 +202,7 @@ class ContentService:
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
                     path=item.get("path"),
-                    target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                    role_tags=role_tags if isinstance(role_tags, list) else [],
                     links=links,
                 )
                 self.content.append(content_item)

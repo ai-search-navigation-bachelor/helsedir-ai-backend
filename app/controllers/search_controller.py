@@ -694,15 +694,15 @@ class SearchController:
         )
 
     @staticmethod
-    def _compute_role_match(role: Optional[str], target_groups: Optional[list]) -> float:
+    def _compute_role_match(role: Optional[str], role_tags: Optional[list]) -> float:
         """Role match score."""
-        target_groups = target_groups or []
-        if role and target_groups:
-            if role in target_groups:
-                return 1.0 / len(target_groups)
-        elif not role and not target_groups:
+        role_tags = role_tags or []
+        if role and role_tags:
+            if role in role_tags:
+                return 1.0 / len(role_tags)
+        elif not role and not role_tags:
             return 0.5
-        elif not target_groups:
+        elif not role_tags:
             return 0.3
         return 0.0
 
@@ -738,8 +738,8 @@ class SearchController:
             maalgruppe_match = 0
             if content_item:
                 type_match = self._compute_type_match(content_item.info_type)
-                role_match = self._compute_role_match(role, content_item.target_groups)
-                maalgruppe_match = 1 if role and role in (content_item.target_groups or []) else 0
+                role_match = self._compute_role_match(role, content_item.role_tags)
+                maalgruppe_match = 1 if role and role in (content_item.role_tags or []) else 0
 
             results_to_log.append({
                 "content_id": result.id,

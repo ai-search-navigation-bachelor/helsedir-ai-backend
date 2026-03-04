@@ -75,7 +75,7 @@ class ContentRepository:
         Cache a content item from Helsedir API or theme page.
 
         Args:
-            content: Content dict with id, tittel, tekst, koder, maalgruppe, etc.
+            content: Content dict with id, tittel, tekst, koder, role_tags, etc.
                      For theme pages: also includes path, info_type='temaside'
                      For anbefaling: also includes data.praktisk, data.rasjonale, etc.
 
@@ -90,20 +90,20 @@ class ContentRepository:
             cursor = conn.cursor()
 
             koder_json = self._serialize_json_field(content.get("koder"))
-            maalgruppe_json = self._serialize_json_field(content.get("maalgruppe"))
+            role_tags_json = self._serialize_json_field(content.get("role_tags"))
             links_json = self._serialize_json_field(content.get("links"))
             info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links, path)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
                     koder = COALESCE(VALUES(koder), koder),
-                    maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
+                    role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
                     path = VALUES(path)
                 """,
@@ -113,7 +113,7 @@ class ContentRepository:
                     content.get("tekst"),
                     info_type,
                     koder_json,
-                    maalgruppe_json,
+                    role_tags_json,
                     links_json,
                     content.get("path"),
                 ),
@@ -156,20 +156,20 @@ class ContentRepository:
             for content in contents:
                 try:
                     koder_json = self._serialize_json_field(content.get("koder"))
-                    maalgruppe_json = self._serialize_json_field(content.get("maalgruppe"))
+                    role_tags_json = self._serialize_json_field(content.get("role_tags"))
                     links_json = self._serialize_json_field(content.get("links"))
                     info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
 
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links, path)
+                        INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
                             info_type = VALUES(info_type),
                             koder = COALESCE(VALUES(koder), koder),
-                            maalgruppe = COALESCE(VALUES(maalgruppe), maalgruppe),
+                            role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
                             path = VALUES(path)
                         """,
@@ -179,7 +179,7 @@ class ContentRepository:
                             content.get("tekst"),
                             info_type,
                             koder_json,
-                            maalgruppe_json,
+                            role_tags_json,
                             links_json,
                             content.get("path"),
                         ),

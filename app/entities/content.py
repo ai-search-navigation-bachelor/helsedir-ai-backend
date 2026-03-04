@@ -54,7 +54,7 @@ class ContentItem(BaseModel):
     body: str
     content_type: str
     path: Optional[str] = None
-    target_groups: List[str] = []
+    role_tags: List[str] = []
     links: List[ContentLink] = []
 
     # Info type-specific fields (extensible pattern for future types)

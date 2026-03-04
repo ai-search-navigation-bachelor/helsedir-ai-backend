@@ -162,7 +162,7 @@ class SemanticSearch:
                 continue
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.target_groups:
+            if role and role not in item.role_tags:
                 continue
             valid_items.append((item, float(similarities[idx])))
 

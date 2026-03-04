@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS content (
     tekst LONGTEXT,
     info_type VARCHAR(50),
     koder JSON,
-    maalgruppe JSON,
+    role_tags JSON,
     links JSON,
     embedding BLOB,
 
