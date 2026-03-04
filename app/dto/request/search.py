@@ -2,14 +2,16 @@
 Search request DTOs.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
+
+from app.constants import ALLOWED_ROLES_SET
 
 
 class SearchRequest(BaseModel):
     """Request model for search endpoint with pagination."""
     query: str = Field(..., min_length=1, description="Search query")
-    role: Optional[str] = Field(None, description="User role for filtering")
+    role: Optional[str] = Field(None, description="User role for boosting")
     category: Optional[str] = Field(None, description="Filter results by category (info_type)")
 
     # Pagination
@@ -17,20 +19,40 @@ class SearchRequest(BaseModel):
     limit: int = Field(15, ge=1, le=1000, description="Number of results per page")
     search_id: Optional[str] = Field(None, description="Existing search_id for pagination")
 
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ALLOWED_ROLES_SET:
+            raise ValueError(f"Invalid role: {v}. Must be one of: {sorted(ALLOWED_ROLES_SET)}")
+        return v
 
 
 class CategorizedSearchRequest(BaseModel):
     """Request model for categorized search endpoint."""
     query: str = Field(..., min_length=1, description="Search query")
-    role: Optional[str] = Field(None, description="User role for filtering")
+    role: Optional[str] = Field(None, description="User role for boosting")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ALLOWED_ROLES_SET:
+            raise ValueError(f"Invalid role: {v}. Must be one of: {sorted(ALLOWED_ROLES_SET)}")
+        return v
 
 
 class CategorySearchRequest(BaseModel):
     """Request model for searching within a specific category."""
     query: str = Field(..., min_length=1, description="Search query")
     category: str = Field(..., min_length=1, description="Category (info_type) to filter by")
-    role: Optional[str] = Field(None, description="User role for filtering")
+    role: Optional[str] = Field(None, description="User role for boosting")
     search_id: str = Field(..., description="search_id from categorized search (required)")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ALLOWED_ROLES_SET:
+            raise ValueError(f"Invalid role: {v}. Must be one of: {sorted(ALLOWED_ROLES_SET)}")
+        return v
 
 
 class HelseDirectorateSearchRequest(BaseModel):
