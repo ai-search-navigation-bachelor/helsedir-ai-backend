@@ -5,7 +5,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -57,7 +57,7 @@ class BM25Search:
             min_contribution=max(0.0, float(settings.search_bm25_hierarchy_min_contribution)),
         )
         self._hierarchy = BM25HierarchyIndex(hierarchy_config)
-        self._index_signature: Optional[FrozenSet[Tuple[str, str]]] = None
+        self._content_version: int = -1
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
         self._avg_doc_length: float = 1.0
@@ -71,13 +71,12 @@ class BM25Search:
         return re.findall(r"\w+", text.lower())
 
     def _needs_rebuild(self) -> bool:
-        current = content_service.get_all_content()
-        return BM25HierarchyIndex.compute_signature(current) != self._index_signature
+        return content_service._content_version != self._content_version
 
     def _build_index(self) -> None:
         items = content_service.get_all_content()
         self._items = list(items)
-        self._index_signature = BM25HierarchyIndex.compute_signature(self._items)
+        self._content_version = content_service._content_version
 
         n_docs = len(self._items)
         if n_docs == 0:

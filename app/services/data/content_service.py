@@ -24,6 +24,7 @@ class ContentService:
         self.content_by_id: dict = {}
         self.content_by_path: dict = {}
         self.searchable_types: Set[str] = set()
+        self._content_version: int = 0
         self.load_content()
 
     def _parse_json_field(self, value, default=None):
@@ -116,6 +117,7 @@ class ContentService:
             self.content.append(content_item)
 
         self._rebuild_lookup_dicts()
+        self._content_version += 1
         print(f"Loaded {len(self.content)} content items from database cache")
 
         self._enrich_with_theme_page_links()
@@ -208,6 +210,7 @@ class ContentService:
                 self.content.append(content_item)
 
             self._rebuild_lookup_dicts()
+            self._content_version += 1
             self._enrich_with_theme_page_links()
             print(f"Loaded {len(self.content)} content items from API")
 
