@@ -71,7 +71,7 @@ class BM25HierarchyIndex:
             )
         link_chunks.sort()
 
-        tg = "|".join(sorted(item.target_groups or []))
+        tg = "|".join(sorted(item.role_tags or []))
         payload = "\x1f".join(
             [
                 item.title or "",

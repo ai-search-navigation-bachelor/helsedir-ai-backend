@@ -660,17 +660,14 @@ class SearchController:
                     "Please start a new search."
                 )
 
-            if stored_search["query"].strip().lower() != query.strip().lower():
-                raise ValueError(
-                    f"Query mismatch: expected '{stored_search['query']}', got '{query}'"
-                )
-            # Validate role matches
+            stored_query = stored_search["query"].strip().lower()
             stored_role = stored_search.get("role") or None
             incoming_role = role or None
-            if stored_role != incoming_role:
-                raise ValueError(
-                    f"Role mismatch: expected '{stored_role}', got '{incoming_role}'"
-                )
+
+            if stored_query != query.strip().lower() or stored_role != incoming_role:
+                # Query or role changed — start a fresh search
+                search_id = self._build_signed_search_id(expected_signature)
+                database_service.log_search(search_id=search_id, query=query, role=role)
 
         return search_id
 
