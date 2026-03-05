@@ -21,7 +21,7 @@ class TestBM25Tokenize:
         assert BM25Search._tokenize("") == []
 
     def test_none_like_input_returns_empty(self):
-        assert BM25Search._tokenize("") == []
+        assert BM25Search._tokenize(None) == []
 
     def test_splits_on_word_boundaries(self):
         tokens = BM25Search._tokenize("hjerte-infarkt, diabetes.")

@@ -6,6 +6,7 @@ at the point of use in app.routes.search.
 """
 
 import pytest
+from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 from app.dto.response.search import (
@@ -20,7 +21,7 @@ from app.dto.response.search import (
 
 def _mock_search_response(
     query: str = "diabetes",
-    results: list = None,
+    results: Optional[List[SearchResult]] = None,
 ) -> SearchResponse:
     if results is None:
         results = [
@@ -114,7 +115,7 @@ class TestSearchRoute:
             assert "score" in result
             assert "info_type" in result
 
-    def test_invalid_method_returns_400(self, client, mocker):
+    def test_invalid_method_returns_400(self, client):
         response = client.get("/search?query=diabetes&method=invalid_method")
         assert response.status_code == 400
 

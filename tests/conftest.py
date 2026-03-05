@@ -70,7 +70,7 @@ SAMPLE_CONTENT = [
 
 
 @pytest.fixture
-def mock_content(monkeypatch):
+def mock_content():
     """
     Replace content_service's in-memory lists with SAMPLE_CONTENT.
     Restores original state after each test.
@@ -104,8 +104,20 @@ def mock_content(monkeypatch):
 @pytest.fixture
 def mock_database_service(mocker):
     """
-    Replace database_service with a MagicMock so tests can run
-    without a real database.
+    Replace database_service with a MagicMock so tests can run without a real
+    database. The following methods are explicitly stubbed with sensible defaults:
+
+    - log_search → True
+    - get_search_by_id → {"query": "diabetes", "role": None}
+    - log_search_results → True
+    - log_click → True
+    - get_logged_content_ids_for_search → set()
+    - get_max_position_for_search → 0
+    - is_connected → False
+
+    All other DatabaseService methods are generic MagicMock defaults (return a
+    new MagicMock on each call). Tests that need specific behaviour for those
+    methods should configure mock_database_service.<method>.return_value directly.
     """
     mock_db = MagicMock()
     mock_db.log_search.return_value = True
