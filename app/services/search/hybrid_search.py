@@ -15,7 +15,7 @@ from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.services.search.bm25_search import bm25_search
-from app.services.search.keyword_search import keyword_search
+from app.services.search.keyword_search import keyword_search, _normalize_query_keywords
 from app.services.search.rrf_fusion import fuse_ranked_lists
 from app.services.search.semantic_search import semantic_search
 from app.config import settings
@@ -151,6 +151,9 @@ class HybridSearch:
         if semantic_available:
             query_embedding = semantic_search.get_query_embedding(query)
 
+        # Pre-normalize query keywords once (stemming + synonym expansion)
+        normalized_keywords = _normalize_query_keywords(query_keywords)
+
         t0 = time.perf_counter()
         candidates: List[HybridCandidate] = []
         for fused_result in fused[:candidate_pool]:
@@ -163,7 +166,7 @@ class HybridSearch:
                 continue
 
             # Keep old keyword feature semantics for reranker compatibility.
-            keyword_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
+            keyword_raw = keyword_search.calculate_score(item, query_lower, normalized_keywords, _pre_normalized=True)
 
             sem_norm = semantic_norm_by_id.get(content_id, 0.0)
             if sem_norm <= 0.0 and query_embedding is not None and content_id in semantic_search.content_embeddings:
