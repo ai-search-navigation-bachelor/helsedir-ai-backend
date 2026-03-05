@@ -34,6 +34,7 @@ class HybridCandidate:
     keyword_norm: float
     semantic_norm: float
     rrf_raw: float = 0.0  # Original RRF score, preserved when ML ranking overwrites combined_score
+    role_boost: float = 1.0  # Role boost/penalty multiplier applied (1.0 = neutral)
 
 
 class HybridSearch:
@@ -216,10 +217,11 @@ class HybridSearch:
         if role:
             for c in candidates:
                 if role in c.item.role_tags:
-                    c.combined_score *= settings.search_role_match_boost
+                    c.role_boost = settings.search_role_match_boost
                 elif c.item.role_tags:  # has tags but no match
-                    c.combined_score *= settings.search_role_mismatch_penalty
-                # No tags = neutral (1.0)
+                    c.role_boost = settings.search_role_mismatch_penalty
+                # No tags = neutral (1.0, default)
+                c.combined_score *= c.role_boost
 
         candidates.sort(key=lambda c: -c.combined_score)
 
@@ -271,6 +273,7 @@ class HybridSearch:
                     bm25_score=c.keyword_norm,
                     semantic_score=c.semantic_norm,
                     rrf_score=c.rrf_raw,
+                    role_boost=c.role_boost,
                 )
             )
         return results
