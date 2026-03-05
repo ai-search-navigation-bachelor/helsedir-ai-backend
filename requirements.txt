@@ -7,6 +7,8 @@ python-dotenv>=1.0.0
 
 # Development
 pytest>=8.3.0
+pytest-mock>=3.14.0
+pytest-asyncio>=0.24.0
 httpx>=0.28.0
 requests>=2.32.0
 
@@ -26,3 +28,6 @@ accelerate>=0.26.0
 
 # Database
 mysql-connector-python>=8.0.0
+
+# Norwegian text processing (stop words, stemming for keyword search)
+snowballstemmer>=2.2.0

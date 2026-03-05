@@ -37,6 +37,10 @@ wheels/
 # Logs
 logs/*.jsonl
 logs/*.log
+pip-log.txt
+pip-delete-this-directory.txt
+*.whl.metadata
+=[0-9]*
 
 # Data
 /data/
