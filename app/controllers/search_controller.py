@@ -660,7 +660,7 @@ class SearchController:
                     "Please start a new search."
                 )
 
-            stored_query = stored_search["query"].strip().lower()
+            stored_query = (stored_search.get("query") or "").strip().lower()
             stored_role = stored_search.get("role") or None
             incoming_role = role or None
 
@@ -845,7 +845,7 @@ class SearchController:
         )
 
     @staticmethod
-    def _compute_role_match(role: Optional[str], role_tags: Optional[list]) -> float:
+    def _compute_role_match(role: Optional[str], role_tags: Optional[List[str]]) -> float:
         """Role match score."""
         role_tags = role_tags or []
         if role and role_tags:

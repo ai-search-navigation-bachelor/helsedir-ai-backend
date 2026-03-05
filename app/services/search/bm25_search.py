@@ -3,6 +3,7 @@
 import logging
 import math
 import re
+import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -57,6 +58,7 @@ class BM25Search:
             min_contribution=max(0.0, float(settings.search_bm25_hierarchy_min_contribution)),
         )
         self._hierarchy = BM25HierarchyIndex(hierarchy_config)
+        self._rebuild_lock = threading.Lock()
         self._content_version: int = -1
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
@@ -124,7 +126,9 @@ class BM25Search:
 
     def _ensure_index(self) -> None:
         if self._needs_rebuild():
-            self._build_index()
+            with self._rebuild_lock:
+                if self._needs_rebuild():
+                    self._build_index()
 
     def prebuild(self) -> int:
         """Build the BM25 index eagerly. Returns number of indexed items."""

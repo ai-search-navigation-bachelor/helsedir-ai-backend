@@ -224,7 +224,7 @@ def parse_scores(response_text: str) -> Optional[List[float]]:
 
     try:
         scores = json.loads(match.group())
-        if not isinstance(scores, list) or len(scores) != 10:
+        if not isinstance(scores, list) or len(scores) != len(ROLE_SLUGS):
             return None
         return [max(0.0, min(1.0, float(s))) for s in scores]
     except (json.JSONDecodeError, ValueError, TypeError):

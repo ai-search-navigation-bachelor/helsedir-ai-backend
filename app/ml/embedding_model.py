@@ -132,7 +132,7 @@ class HealthContentEmbedding:
                 except (json.JSONDecodeError, TypeError):
                     role_tags = []
             if isinstance(role_tags, list) and role_tags:
-                sentences.append(f"Målgruppe: {', '.join(role_tags)}.")
+                sentences.append(f"Målgruppe: {', '.join(str(t) for t in role_tags)}.")
 
         # Medical codes - include naturally
         koder = content_item.get("koder")
