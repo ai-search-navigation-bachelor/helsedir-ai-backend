@@ -7,7 +7,7 @@ content_service, then call _build_index() to force index rebuild.
 
 import pytest
 from app.entities.content import ContentItem
-from app.services.search.bm25_search import BM25Search, BM25Hit
+from app.services.search.bm25_search import BM25Search, BM25Hit, BM25HierarchyIndex
 
 
 @pytest.mark.unit
@@ -167,13 +167,13 @@ class TestBM25Search:
 
     def test_compute_signature_is_stable(self, mock_content):
         from app.services.data.content_service import content_service
-        sig1 = BM25Search._compute_signature(content_service.content)
-        sig2 = BM25Search._compute_signature(content_service.content)
+        sig1 = BM25HierarchyIndex.compute_signature(content_service.content)
+        sig2 = BM25HierarchyIndex.compute_signature(content_service.content)
         assert sig1 == sig2
 
     def test_compute_signature_changes_when_content_changes(self, mock_content):
         from app.services.data.content_service import content_service
-        sig_before = BM25Search._compute_signature(content_service.content)
+        sig_before = BM25HierarchyIndex.compute_signature(content_service.content)
         new_item = ContentItem(
             id="sig-change-001",
             title="Ny innhold",
@@ -181,5 +181,5 @@ class TestBM25Search:
             content_type="veileder",
         )
         content_service.content.append(new_item)
-        sig_after = BM25Search._compute_signature(content_service.content)
+        sig_after = BM25HierarchyIndex.compute_signature(content_service.content)
         assert sig_before != sig_after
