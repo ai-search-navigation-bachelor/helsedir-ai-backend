@@ -21,6 +21,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import random
 import re
 import sys
 import time
@@ -284,7 +285,7 @@ async def call_groq_async(
     client: httpx.AsyncClient,
     api_key: str,
     prompt: str,
-    max_retries: int = 3,
+    max_retries: int = 5,
 ) -> Optional[str]:
     """Call Groq API with retry logic (async, reuses client)."""
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -307,8 +308,23 @@ async def call_groq_async(
             response = await client.post(url, headers=headers, json=payload, timeout=30.0)
 
             if response.status_code == 429:
-                wait = min(2 ** attempt * 5, 60)
-                logger.warning("Worker rate limited, waiting %ds (attempt %d/%d)...", wait, attempt + 1, max_retries)
+                # Use Retry-After header if reasonable, otherwise exponential backoff
+                retry_after = response.headers.get("retry-after")
+                wait = min(2 ** attempt * 5, 120)  # default backoff
+                if retry_after:
+                    try:
+                        header_wait = float(retry_after)
+                        if header_wait > 300:
+                            # Quota exhausted (daily/hourly limit), not just rate limit
+                            logger.error("Retry-After too high (%.0fs / %.1f min) — API quota likely exhausted", header_wait, header_wait / 60)
+                            return None
+                        wait = min(header_wait, 120)
+                    except ValueError:
+                        pass
+                # Add jitter to avoid thundering herd
+                jitter = random.uniform(1, 5)
+                wait += jitter
+                logger.warning("Worker rate limited, waiting %.1fs (attempt %d/%d)...", wait, attempt + 1, max_retries)
                 await asyncio.sleep(wait)
                 continue
 
@@ -319,7 +335,7 @@ async def call_groq_async(
         except Exception as e:
             logger.warning("Groq API error (attempt %d/%d): %s", attempt + 1, max_retries, e)
             if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2 ** attempt + random.uniform(0, 2))
 
     return None
 
@@ -332,7 +348,7 @@ async def api_worker(
     pending_updates: List,
     updates_lock: asyncio.Lock,
     dry_run: bool,
-    db_batch_size: int = 25,
+    db_batch_size: int = 10,
 ) -> None:
     """
     Async worker that consumes items from the queue and calls the Groq API.
@@ -414,7 +430,7 @@ async def api_worker(
                     )
 
             queue.task_done()
-            await asyncio.sleep(2)  # ~30 req/min per key
+            await asyncio.sleep(3 + random.uniform(0, 2))  # ~15-20 req/min per key, with jitter
 
 
 async def run_workers(
@@ -451,8 +467,15 @@ async def run_workers(
         for i, key in enumerate(api_keys)
     ]
 
-    logger.info("Starting %d parallel workers...", len(workers))
-    await asyncio.gather(*workers)
+    logger.info("Starting %d parallel workers (staggered)...", len(workers))
+    # Stagger worker starts to avoid all hitting API at the same instant
+    staggered = []
+    for i, worker in enumerate(workers):
+        async def staggered_start(w, delay):
+            await asyncio.sleep(delay)
+            await w
+        staggered.append(staggered_start(worker, i * 1.5))
+    await asyncio.gather(*staggered)
 
     # Flush remaining pending updates
     if pending_updates and not dry_run:
@@ -539,10 +562,10 @@ def main():
 
     total = len(items_to_process)
     num_workers = len(api_keys)
-    estimated_seconds = (total / num_workers) * 2
+    estimated_seconds = (total / num_workers) * 4  # ~4s avg between requests
     print(f"\n  Items to process: {total}")
     print(f"  Parallel workers: {num_workers}")
-    print(f"  Effective rate: ~{num_workers * 30} req/min")
+    print(f"  Effective rate: ~{num_workers * 15} req/min")
     print(f"  Estimated time: ~{estimated_seconds / 60:.1f} minutes")
 
     if args.dry_run:
