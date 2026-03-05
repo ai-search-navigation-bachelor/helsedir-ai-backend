@@ -98,7 +98,7 @@ def save_content_batch(items: List[Dict]) -> int:
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, maalgruppe, links, path)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel     = VALUES(tittel),
@@ -113,7 +113,7 @@ def save_content_batch(items: List[Dict]) -> int:
                     item.get("tekst") or "",
                     info_type,
                     json.dumps(item["koder"], ensure_ascii=False) if item.get("koder") else None,
-                    json.dumps(item["maalgruppe"], ensure_ascii=False) if item.get("maalgruppe") else None,
+                    json.dumps(item["role_tags"], ensure_ascii=False) if item.get("role_tags") else None,
                     links_json,
                     item.get("path") or extract_helsedir_path(item.get("url", "") or ""),
                 ),

@@ -70,7 +70,7 @@ class ContentResponse(BaseModel):
     body: str
     content_type: str
     path: Optional[str] = None
-    target_groups: List[str] = []
+    role_tags: List[str] = []
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
 

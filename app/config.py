@@ -41,10 +41,23 @@ class Settings(BaseSettings):
     search_rrf_k: int = 60  # RRF fusion constant (higher = more weight to top ranks)
     search_rrf_weight_bm25: float = 0.3  # RRF weight for BM25 retrieval
     search_rrf_weight_semantic: float = 0.7  # RRF weight for semantic retrieval
+    search_bm25_hierarchy_enabled: bool = True
+    search_bm25_hierarchy_max_depth: int = 4
+    search_bm25_hierarchy_decay: float = 0.65
+    search_bm25_hierarchy_source_top_k: int = 400
+    search_bm25_hierarchy_top_children: int = 3
+    search_bm25_hierarchy_tail_weight: float = 0.35
+    search_bm25_hierarchy_weight: float = 0.8
+    search_bm25_hierarchy_min_contribution: float = 0.0001
+    search_bm25_title_weight: int = 3
 
     # Content type score boosts (multiplied on combined_score after RRF fusion)
     search_boost_temaside: float = 1.15
     search_boost_retningslinje: float = 1.10
+
+    # Role match boost/penalty (multiplied on combined_score in hybrid search)
+    search_role_match_boost: float = 1.15
+    search_role_mismatch_penalty: float = 0.85
 
     # Categorized search settings
     search_min_score: float = 0.45  # Minimum score threshold for results
@@ -56,11 +69,13 @@ class Settings(BaseSettings):
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
-    # LLM API (for GPL training) — up to 4 keys for parallel query generation
+    # LLM API — up to 6 keys for parallel generation
     groq_api_key: str = ""
     groq_api_key_2: str = ""
     groq_api_key_3: str = ""
     groq_api_key_4: str = ""
+    groq_api_key_5: str = ""
+    groq_api_key_6: str = ""
 
     @property
     def groq_api_keys(self) -> list[str]:
@@ -71,13 +86,15 @@ class Settings(BaseSettings):
                 self.groq_api_key_2,
                 self.groq_api_key_3,
                 self.groq_api_key_4,
+                self.groq_api_key_5,
+                self.groq_api_key_6,
             ]
             if k
         ]
 
     # MySQL Database
-    mysql_host: str = "localhost"
-    mysql_port: int = 3306
+    mysql_host: str = "127.0.0.1"
+    mysql_port: int = 3307
     mysql_user: str = "helsedir_ai_user"
     mysql_password: str = "your_password_here"
     mysql_database: str = "helsedir_ai"

@@ -15,7 +15,7 @@ from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.data.database_service import database_service
 from app.services.search.bm25_search import bm25_search
-from app.services.search.keyword_search import keyword_search
+from app.services.search.keyword_search import keyword_search, _normalize_query_keywords
 from app.services.search.rrf_fusion import fuse_ranked_lists
 from app.services.search.semantic_search import semantic_search
 from app.config import settings
@@ -34,6 +34,7 @@ class HybridCandidate:
     keyword_norm: float
     semantic_norm: float
     rrf_raw: float = 0.0  # Original RRF score, preserved when ML ranking overwrites combined_score
+    role_boost: float = 1.0  # Role boost/penalty multiplier applied (1.0 = neutral)
 
 
 class HybridSearch:
@@ -55,13 +56,25 @@ class HybridSearch:
         query: str,
         role: Optional[str] = None,
         k: int = 10,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
         query_keywords = set(re.findall(r'\w+', query_lower))
 
         try:
-            candidates = self._score_with_rrf(query, role, query_lower, query_keywords, k)
+            candidates = self._score_with_rrf(
+                query, role, query_lower, query_keywords, k,
+                bm25_weight=bm25_weight,
+                semantic_weight=semantic_weight,
+                rrf_k=rrf_k,
+                temaside_boost=temaside_boost,
+                retningslinje_boost=retningslinje_boost,
+            )
         except Exception:
             logger.exception("Error in RRF fusion")
             candidates = []
@@ -83,6 +96,11 @@ class HybridSearch:
         query_lower: str,
         query_keywords: set,
         k: int,
+        bm25_weight: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
+        rrf_k: Optional[int] = None,
+        temaside_boost: Optional[float] = None,
+        retningslinje_boost: Optional[float] = None,
     ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
         t_start = time.perf_counter()
@@ -114,10 +132,11 @@ class HybridSearch:
             ranked_lists["semantic"] = [result.id for result in semantic_hits]
 
         rrf_weights = {
-            "bm25": settings.search_rrf_weight_bm25,
-            "semantic": settings.search_rrf_weight_semantic,
+            "bm25": bm25_weight if bm25_weight is not None else settings.search_rrf_weight_bm25,
+            "semantic": semantic_weight if semantic_weight is not None else settings.search_rrf_weight_semantic,
         }
-        fused = fuse_ranked_lists(ranked_lists, rrf_k=self.rrf_k, weights=rrf_weights)
+        effective_rrf_k = rrf_k if rrf_k is not None else self.rrf_k
+        fused = fuse_ranked_lists(ranked_lists, rrf_k=effective_rrf_k, weights=rrf_weights)
         t_rrf = time.perf_counter() - t0
         if not fused:
             return []
@@ -133,6 +152,9 @@ class HybridSearch:
         if semantic_available:
             query_embedding = semantic_search.get_query_embedding(query)
 
+        # Pre-normalize query keywords once (stemming + synonym expansion)
+        normalized_keywords = _normalize_query_keywords(query_keywords)
+
         t0 = time.perf_counter()
         candidates: List[HybridCandidate] = []
         for fused_result in fused[:candidate_pool]:
@@ -143,11 +165,9 @@ class HybridSearch:
 
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.target_groups:
-                continue
 
             # Keep old keyword feature semantics for reranker compatibility.
-            keyword_raw = keyword_search.calculate_score(item, query_lower, query_keywords)
+            keyword_raw = keyword_search.calculate_score(item, query_lower, normalized_keywords, _pre_normalized=True)
 
             sem_norm = semantic_norm_by_id.get(content_id, 0.0)
             if sem_norm <= 0.0 and query_embedding is not None and content_id in semantic_search.content_embeddings:
@@ -181,13 +201,27 @@ class HybridSearch:
 
         # Apply content type boosts
         type_boosts = {
-            "temaside": settings.search_boost_temaside,
-            "retningslinje": settings.search_boost_retningslinje,
+            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
+            "retningslinje": (
+                retningslinje_boost
+                if retningslinje_boost is not None
+                else settings.search_boost_retningslinje
+            ),
         }
         for c in candidates:
             boost = type_boosts.get(c.item.content_type.lower(), 1.0)
             if boost != 1.0:
                 c.combined_score *= boost
+
+        # Apply role-based soft boost/penalty
+        if role:
+            for c in candidates:
+                if role in c.item.role_tags:
+                    c.role_boost = settings.search_role_match_boost
+                elif c.item.role_tags:  # has tags but no match
+                    c.role_boost = settings.search_role_mismatch_penalty
+                # No tags = neutral (1.0, default)
+                c.combined_score *= c.role_boost
 
         candidates.sort(key=lambda c: -c.combined_score)
 
@@ -239,6 +273,7 @@ class HybridSearch:
                     bm25_score=c.keyword_norm,
                     semantic_score=c.semantic_norm,
                     rrf_score=c.rrf_raw,
+                    role_boost=c.role_boost,
                 )
             )
         return results
@@ -306,17 +341,16 @@ class HybridSearch:
 
         # Role match
         role_match = 0.0
-        if role and item.target_groups:
-            if role in item.target_groups:
-                role_match = 1.0 / len(item.target_groups)
-        elif not role and not item.target_groups:
+        if role and item.role_tags:
+            if role in item.role_tags:
+                role_match = 1.0 / len(item.role_tags)
+        elif not role and not item.role_tags:
             role_match = 0.5
-        elif not item.target_groups:
+        elif not item.role_tags:
             role_match = 0.3
 
-        # Maalgruppe match
-        target_groups = item.target_groups or []
-        maalgruppe_match = 1.0 if role and role in target_groups else 0.0
+        # Maalgruppe match (uses role_tags)
+        maalgruppe_match = 1.0 if role and role in item.role_tags else 0.0
 
         return {
             "semantic_score": candidate.semantic_norm,
