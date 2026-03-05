@@ -65,6 +65,7 @@ class TestBM25Index:
             content_type="veileder",
         )
         content_service.content.append(new_item)
+        content_service._content_version += 1
         assert bm25._needs_rebuild()
 
 

@@ -197,7 +197,7 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         body=content.body,
         content_type=content.content_type,
         path=content.path,
-        target_groups=content.target_groups,
+        role_tags=content.role_tags,
         links=links_response,
         linked_content=linked_content_response,
         anbefaling_fields=anbefaling_fields_response,

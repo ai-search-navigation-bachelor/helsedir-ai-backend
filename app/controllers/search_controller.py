@@ -660,17 +660,14 @@ class SearchController:
                     "Please start a new search."
                 )
 
-            if stored_search["query"].strip().lower() != query.strip().lower():
-                raise ValueError(
-                    f"Query mismatch: expected '{stored_search['query']}', got '{query}'"
-                )
-            # Validate role matches
+            stored_query = (stored_search.get("query") or "").strip().lower()
             stored_role = stored_search.get("role") or None
             incoming_role = role or None
-            if stored_role != incoming_role:
-                raise ValueError(
-                    f"Role mismatch: expected '{stored_role}', got '{incoming_role}'"
-                )
+
+            if stored_query != query.strip().lower() or stored_role != incoming_role:
+                # Query or role changed — start a fresh search
+                search_id = self._build_signed_search_id(expected_signature)
+                database_service.log_search(search_id=search_id, query=query, role=role)
 
         return search_id
 
@@ -848,15 +845,15 @@ class SearchController:
         )
 
     @staticmethod
-    def _compute_role_match(role: Optional[str], target_groups: Optional[list]) -> float:
+    def _compute_role_match(role: Optional[str], role_tags: Optional[List[str]]) -> float:
         """Role match score."""
-        target_groups = target_groups or []
-        if role and target_groups:
-            if role in target_groups:
-                return 1.0 / len(target_groups)
-        elif not role and not target_groups:
+        role_tags = role_tags or []
+        if role and role_tags:
+            if role in role_tags:
+                return 1.0 / len(role_tags)
+        elif not role and not role_tags:
             return 0.5
-        elif not target_groups:
+        elif not role_tags:
             return 0.3
         return 0.0
 
@@ -892,8 +889,8 @@ class SearchController:
             maalgruppe_match = 0
             if content_item:
                 type_match = self._compute_type_match(content_item.info_type)
-                role_match = self._compute_role_match(role, content_item.target_groups)
-                maalgruppe_match = 1 if role and role in (content_item.target_groups or []) else 0
+                role_match = self._compute_role_match(role, content_item.role_tags)
+                maalgruppe_match = 1 if role and role in (content_item.role_tags or []) else 0
 
             results_to_log.append({
                 "content_id": result.id,

@@ -121,8 +121,6 @@ class KeywordSearch:
         for item in content_service.get_all_content():
             if item.content_type not in content_service.searchable_types:
                 continue
-            if role and role not in item.target_groups:
-                continue
 
             score, breakdown = self.calculate_score_with_breakdown(
                 item, query_lower, query_keywords
@@ -158,8 +156,9 @@ class KeywordSearch:
         item: ContentItem,
         query_lower: str,
         query_keywords: Set[str],
+        _pre_normalized: bool = False,
     ) -> float:
-        score, _ = self.calculate_score_with_breakdown(item, query_lower, query_keywords)
+        score, _ = self.calculate_score_with_breakdown(item, query_lower, query_keywords, _pre_normalized=_pre_normalized)
         return score
 
     def calculate_score_with_breakdown(
@@ -167,9 +166,10 @@ class KeywordSearch:
         item: ContentItem,
         query_lower: str,
         query_keywords: Set[str],
+        _pre_normalized: bool = False,
     ) -> Tuple[float, Dict[str, Any]]:
         """Score an item against the query using title-only signals."""
-        normalized_query_keywords = _normalize_query_keywords(query_keywords)
+        normalized_query_keywords = query_keywords if _pre_normalized else _normalize_query_keywords(query_keywords)
         score = 0.0
         breakdown: Dict[str, Any] = {}
 

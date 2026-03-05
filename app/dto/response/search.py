@@ -27,6 +27,7 @@ class SearchResult(BaseModel):
     bm25_score: Optional[float] = Field(default=None)
     semantic_score: Optional[float] = Field(default=None)
     rrf_score: Optional[float] = Field(default=None)
+    role_boost: Optional[float] = Field(default=None)  # Role boost/penalty multiplier (1.15=match, 0.85=mismatch, 1.0=neutral/no role)
 
 
 class SearchResponse(BaseModel):

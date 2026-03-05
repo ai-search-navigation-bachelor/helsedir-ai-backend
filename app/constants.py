@@ -121,3 +121,27 @@ def get_theme_category_display_name(category: str) -> str:
     if not category:
         return "Ukjent"
     return THEME_PAGE_CATEGORIES.get(category.lower(), category.title())
+
+
+# =============================================================================
+# User Roles (for content personalization)
+# =============================================================================
+# Maps role slugs to Norwegian display names.
+# AI-generated role tags on content are matched against these slugs.
+
+ROLE_INFO = {
+    "lege": "Lege",
+    "sykepleier": "Sykepleier",
+    "annet-helsepersonell": "Annet helsepersonell",
+    "leder-helsetjenesten": "Leder i helsetjenesten",
+    "offentlig-ansatt": "Offentlig ansatt",
+    "it-og-ehelse": "IT og e-helse",
+    "forskning-og-utdanning": "Forskning og utdanning",
+    "naeringsliv": "Næringsliv og bransje",
+    "media": "Media",
+    "jus-og-regelverk": "Jus og regelverk",
+}
+
+ROLE_SLUGS = list(ROLE_INFO.keys())
+ALLOWED_ROLES_SET = set(ROLE_SLUGS)
+ROLE_TAG_THRESHOLD = 0.5  # Score >= this → document gets the tag

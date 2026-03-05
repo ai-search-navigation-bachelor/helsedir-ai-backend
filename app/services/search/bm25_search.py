@@ -3,9 +3,10 @@
 import logging
 import math
 import re
+import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -57,7 +58,8 @@ class BM25Search:
             min_contribution=max(0.0, float(settings.search_bm25_hierarchy_min_contribution)),
         )
         self._hierarchy = BM25HierarchyIndex(hierarchy_config)
-        self._index_signature: Optional[FrozenSet[Tuple[str, str]]] = None
+        self._rebuild_lock = threading.Lock()
+        self._content_version: int = -1
         self._items: List[ContentItem] = []
         self._doc_lengths: np.ndarray = np.array([], dtype=np.float32)
         self._avg_doc_length: float = 1.0
@@ -71,13 +73,12 @@ class BM25Search:
         return re.findall(r"\w+", text.lower())
 
     def _needs_rebuild(self) -> bool:
-        current = content_service.get_all_content()
-        return BM25HierarchyIndex.compute_signature(current) != self._index_signature
+        return content_service._content_version != self._content_version
 
     def _build_index(self) -> None:
         items = content_service.get_all_content()
         self._items = list(items)
-        self._index_signature = BM25HierarchyIndex.compute_signature(self._items)
+        self._content_version = content_service._content_version
 
         n_docs = len(self._items)
         if n_docs == 0:
@@ -125,7 +126,9 @@ class BM25Search:
 
     def _ensure_index(self) -> None:
         if self._needs_rebuild():
-            self._build_index()
+            with self._rebuild_lock:
+                if self._needs_rebuild():
+                    self._build_index()
 
     def prebuild(self) -> int:
         """Build the BM25 index eagerly. Returns number of indexed items."""
@@ -186,8 +189,6 @@ class BM25Search:
 
             item = self._items[idx]
             if item.content_type not in content_service.searchable_types:
-                continue
-            if role and role not in item.target_groups:
                 continue
 
             hits.append((item, float(score)))

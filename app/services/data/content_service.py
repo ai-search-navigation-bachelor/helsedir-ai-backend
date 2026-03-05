@@ -24,6 +24,7 @@ class ContentService:
         self.content_by_id: dict = {}
         self.content_by_path: dict = {}
         self.searchable_types: Set[str] = set()
+        self._content_version: int = 0
         self.load_content()
 
     def _parse_json_field(self, value, default=None):
@@ -77,7 +78,7 @@ class ContentService:
         self.content = []
         for item in db_content:
             # Parse JSON fields
-            maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+            role_tags = self._parse_json_field(item.get("role_tags"), [])
             links = self._parse_links(item.get("links"))
 
             # Parse anbefaling-specific fields if this is an anbefaling
@@ -109,13 +110,14 @@ class ContentService:
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
                 path=item.get("path"),
-                target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                role_tags=role_tags if isinstance(role_tags, list) else [],
                 links=links,
                 anbefaling_fields=anbefaling_fields,
             )
             self.content.append(content_item)
 
         self._rebuild_lookup_dicts()
+        self._content_version += 1
         print(f"Loaded {len(self.content)} content items from database cache")
 
         self._enrich_with_theme_page_links()
@@ -193,7 +195,7 @@ class ContentService:
             # Parse into ContentItem format
             self.content = []
             for item in api_items:
-                maalgruppe = self._parse_json_field(item.get("maalgruppe"), [])
+                role_tags = self._parse_json_field(item.get("role_tags"), [])
                 links = self._parse_links(item.get("links"))
 
                 content_item = ContentItem(
@@ -202,12 +204,13 @@ class ContentService:
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
                     path=item.get("path"),
-                    target_groups=maalgruppe if isinstance(maalgruppe, list) else [],
+                    role_tags=role_tags if isinstance(role_tags, list) else [],
                     links=links,
                 )
                 self.content.append(content_item)
 
             self._rebuild_lookup_dicts()
+            self._content_version += 1
             self._enrich_with_theme_page_links()
             print(f"Loaded {len(self.content)} content items from API")
 
