@@ -13,40 +13,40 @@ Centralized location for configuration values used across the application.
 CATEGORY_INFO = {
     # Retningslinjer
     "retningslinje": "Retningslinje",
-    "nasjonalt-forlop": "Nasjonalt forløp",
-    "pakkeforlop-anbefaling": "Pakkeforløp-anbefaling",
-    "normen-dokument": "Normen-dokument",
-    "nasjonal-veileder": "Nasjonal veileder",
-    "prioriteringsveileder": "Prioriteringsveileder",
 
     # Faglige råd
     "anbefaling": "Anbefaling",
     "rad": "Råd",
     "faglig-rad": "Faglig råd",
     "pico": "PICO",
+    "nasjonalt-forlop": "Nasjonalt forløp",
+    "pakkeforlop-anbefaling": "Pakkeforløp-anbefaling",
 
-    # Veiledere
-    "takst-med-merknad": "Takst med merknad",
-    "ehelsestandard": "E-helsestandard",
-    "tilskudd": "Tilskudd",
+    # Veiledere og standarder
+    "nasjonal-veileder": "Nasjonal veileder",
     "veileder": "Veileder",
     "veiledning": "Veiledning",
+    "veiviser": "Veiviser",
+    "prioriteringsveileder": "Prioriteringsveileder",
+    "normen-dokument": "Normen-dokument",
+    "ehelsestandard": "E-helsestandard",
+    "takst-med-merknad": "Takst med merknad",
+    "tilskudd": "Tilskudd",
 
-    # Rundskriv
-    "rundskriv": "Rundskriv",
-
-    # Lovfortolkning
+    # Regelverk
     "lov-eller-forskriftstekst-med-kommentar": "Lov/forskrift med kommentar",
+    "lovfortolkning": "Lovfortolkning",
     "regelverk-lov-eller-forskrift": "Regelverk",
     "veileder-lov-forskrift": "Veileder til lov og forskrift",
     "paragraf-med-kommentar": "Paragraf med kommentar",
+    "rundskriv": "Rundskriv",
 
     # Statistikk og rapporter
     "rapport": "Rapport",
     "statistikkelement": "Statistikkelement",
     "statistikk": "Statistikk",
 
-    # Temasider (spesiell type)
+    # Temasider
     "temaside": "Temaside",
 }
 
