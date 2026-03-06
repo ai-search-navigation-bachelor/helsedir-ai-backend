@@ -95,8 +95,14 @@ class ContentRepository:
             links_json = self._serialize_json_field(content.get("links"))
             info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
             document_meta = compute_document_metadata(content)
-            has_text_content = int(content.get("has_text_content", document_meta["has_text_content"]))
-            document_url = content.get("document_url") or document_meta["document_url"]
+            has_text_content = int(
+                content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
+            )
+            document_url = (
+                content["document_url"] if "document_url" in content else document_meta["document_url"]
+            )
+            has_text_content_provided = "has_text_content" in content
+            document_url_provided = "document_url" in content
 
             cursor.execute(
                 """
@@ -113,8 +119,14 @@ class ContentRepository:
                     role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
                     path = VALUES(path),
-                    has_text_content = VALUES(has_text_content),
-                    document_url = VALUES(document_url)
+                    has_text_content = CASE
+                        WHEN %s THEN VALUES(has_text_content)
+                        ELSE has_text_content
+                    END,
+                    document_url = CASE
+                        WHEN %s THEN VALUES(document_url)
+                        ELSE document_url
+                    END
                 """,
                 (
                     content.get("id"),
@@ -127,6 +139,8 @@ class ContentRepository:
                     content.get("path"),
                     has_text_content,
                     document_url,
+                    has_text_content_provided,
+                    document_url_provided,
                 ),
             )
 
@@ -171,8 +185,14 @@ class ContentRepository:
                     links_json = self._serialize_json_field(content.get("links"))
                     info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
                     document_meta = compute_document_metadata(content)
-                    has_text_content = int(content.get("has_text_content", document_meta["has_text_content"]))
-                    document_url = content.get("document_url") or document_meta["document_url"]
+                    has_text_content = int(
+                        content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
+                    )
+                    document_url = (
+                        content["document_url"] if "document_url" in content else document_meta["document_url"]
+                    )
+                    has_text_content_provided = "has_text_content" in content
+                    document_url_provided = "document_url" in content
 
                     cursor.execute(
                         """
@@ -189,8 +209,14 @@ class ContentRepository:
                             role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
                             path = VALUES(path),
-                            has_text_content = VALUES(has_text_content),
-                            document_url = VALUES(document_url)
+                            has_text_content = CASE
+                                WHEN %s THEN VALUES(has_text_content)
+                                ELSE has_text_content
+                            END,
+                            document_url = CASE
+                                WHEN %s THEN VALUES(document_url)
+                                ELSE document_url
+                            END
                         """,
                         (
                             content.get("id"),
@@ -203,6 +229,8 @@ class ContentRepository:
                             content.get("path"),
                             has_text_content,
                             document_url,
+                            has_text_content_provided,
+                            document_url_provided,
                         ),
                     )
 

@@ -19,6 +19,9 @@ def _make_result(result_id: str, score: float, info_type: str = "retningslinje")
         id=result_id,
         title=f"Title {result_id}",
         info_type=info_type,
+        has_text_content=True,
+        document_url=None,
+        is_pdf_only=False,
         score=score,
         explanation="test",
     )

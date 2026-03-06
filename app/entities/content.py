@@ -4,7 +4,7 @@ Entity models.
 Core business entities that represent the domain model.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.services.data.document_metadata import has_visible_text, resolve_public_document_url
@@ -67,10 +67,9 @@ class ContentItem(BaseModel):
     anbefaling_fields: Optional[AnbefalingFields] = None
 
     @model_validator(mode='after')
-    def populate_content_metadata(self):
+    def populate_content_metadata(self) -> Self:
         """Ensure text metadata is consistent for in-memory content items."""
-        if has_visible_text(self.body):
-            self.has_text_content = True
+        self.has_text_content = bool(has_visible_text(self.body))
         return self
 
     @property

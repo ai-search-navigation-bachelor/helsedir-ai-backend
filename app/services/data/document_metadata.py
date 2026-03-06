@@ -9,9 +9,9 @@ import re
 from typing import Any, Dict, Iterable, Mapping, Optional
 from urllib.parse import urlparse
 
+from app.config import settings
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
-_HELSEDIR_PUBLIC_BASE_URL = "https://www.helsedirektoratet.no"
 
 
 def _normalize_text(value: Optional[str]) -> str:
@@ -43,7 +43,7 @@ def _iter_document_candidates(payload: Mapping[str, Any]) -> Iterable[str]:
         for attachment in attachments:
             if not isinstance(attachment, Mapping):
                 continue
-            for key in ("href", "url", "fil"):
+            for key in ("fil", "href", "url"):
                 candidate = attachment.get(key)
                 if isinstance(candidate, str) and candidate.strip():
                     yield candidate.strip()
@@ -55,7 +55,7 @@ def _iter_document_candidates(payload: Mapping[str, Any]) -> Iterable[str]:
         for link in links:
             if not isinstance(link, Mapping):
                 continue
-            for field_name in ("href", "url", "fil"):
+            for field_name in ("fil", "href", "url"):
                 candidate = link.get(field_name)
                 if isinstance(candidate, str) and candidate.strip().lower().endswith(".pdf"):
                     yield candidate.strip()
@@ -86,7 +86,7 @@ def resolve_public_document_url(
                 return normalized_path
             if not normalized_path.startswith("/"):
                 normalized_path = f"/{normalized_path}"
-            return f"{_HELSEDIR_PUBLIC_BASE_URL}{normalized_path}"
+            return f"{settings.helsedir_public_base_url}{normalized_path}"
 
     if stored_document_url and stored_document_url.strip():
         return stored_document_url.strip()
@@ -114,4 +114,24 @@ def compute_document_metadata(payload: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "has_text_content": has_text_content,
         "document_url": document_url,
+    }
+
+
+def build_content_metadata(
+    path: Optional[str],
+    has_text_content: Any,
+    stored_document_url: Optional[str],
+) -> Dict[str, Any]:
+    """Build canonical API metadata fields from stored content values."""
+    has_text = bool(has_text_content)
+    is_pdf_only = (not has_text) and bool(stored_document_url)
+    document_url = (
+        resolve_public_document_url(path, stored_document_url)
+        if is_pdf_only
+        else None
+    )
+    return {
+        "has_text_content": has_text,
+        "document_url": document_url,
+        "is_pdf_only": is_pdf_only,
     }

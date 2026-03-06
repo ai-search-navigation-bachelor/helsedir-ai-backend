@@ -38,8 +38,8 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
         """
         if not force:
             query += """
-            WHERE has_text_content IS NULL
-               OR (document_url IS NULL AND (tekst IS NULL OR TRIM(tekst) = ''))
+            WHERE (has_text_content IS NULL OR has_text_content = 0)
+              AND document_url IS NULL
             """
         query += " ORDER BY id"
         if limit > 0:

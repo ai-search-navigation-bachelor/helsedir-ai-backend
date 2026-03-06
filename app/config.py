@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Helsedirektoratet API
     helsedir_api_key: str = ""
     helsedir_api_url: str = "https://api.helsedirektoratet.no"
+    helsedir_public_base_url: str = "https://www.helsedirektoratet.no"
 
     # Search method: 'keyword', 'semantic', or 'hybrid'
     search_method: str = "hybrid"
