@@ -19,6 +19,7 @@ from app.dto.response.content import (
 )
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
+from app.services.data.document_metadata import resolve_public_document_url
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
@@ -143,6 +144,12 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
             title=content_item.get('tittel', ''),
             info_type=info_type,
             path=content_item.get('path'),
+            has_text_content=bool(content_item.get('has_text_content')),
+            document_url=resolve_public_document_url(
+                content_item.get('path'),
+                content_item.get('document_url'),
+            ),
+            is_pdf_only=not bool(content_item.get('has_text_content')) and bool(content_item.get('document_url')),
         )
         grouped[info_type].append(linked_item)
 
@@ -198,6 +205,9 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         content_type=content.content_type,
         path=content.path,
         role_tags=content.role_tags,
+        has_text_content=content.has_text_content,
+        document_url=content.public_document_url,
+        is_pdf_only=content.is_pdf_only,
         links=links_response,
         linked_content=linked_content_response,
         anbefaling_fields=anbefaling_fields_response,

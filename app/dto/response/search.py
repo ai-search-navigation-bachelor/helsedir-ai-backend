@@ -19,6 +19,9 @@ class SearchResult(BaseModel):
     title: str
     info_type: str
     path: Optional[str] = None
+    has_text_content: bool = False
+    document_url: Optional[str] = None
+    is_pdf_only: bool = False
     score: float  # Normalized 0-1
     explanation: str
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content

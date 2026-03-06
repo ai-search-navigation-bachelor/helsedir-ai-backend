@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS content (
     koder JSON,
     role_tags JSON,
     links JSON,
+    has_text_content TINYINT(1),
+    document_url TEXT,
     embedding BLOB,
 
     -- Theme page fields (only used when info_type='temaside')

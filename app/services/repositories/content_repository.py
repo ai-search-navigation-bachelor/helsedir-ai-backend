@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any, Set
 import mysql.connector
 
 from app.services.repositories.base import db_pool
+from app.services.data.document_metadata import compute_document_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,17 @@ class ContentRepository:
             role_tags_json = self._serialize_json_field(content.get("role_tags"))
             links_json = self._serialize_json_field(content.get("links"))
             info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
+            document_meta = compute_document_metadata(content)
+            has_text_content = int(content.get("has_text_content", document_meta["has_text_content"]))
+            document_url = content.get("document_url") or document_meta["document_url"]
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO content (
+                    id, tittel, tekst, info_type, koder, role_tags, links, path,
+                    has_text_content, document_url
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
@@ -105,7 +112,9 @@ class ContentRepository:
                     koder = COALESCE(VALUES(koder), koder),
                     role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
-                    path = VALUES(path)
+                    path = VALUES(path),
+                    has_text_content = VALUES(has_text_content),
+                    document_url = VALUES(document_url)
                 """,
                 (
                     content.get("id"),
@@ -116,6 +125,8 @@ class ContentRepository:
                     role_tags_json,
                     links_json,
                     content.get("path"),
+                    has_text_content,
+                    document_url,
                 ),
             )
 
@@ -159,11 +170,17 @@ class ContentRepository:
                     role_tags_json = self._serialize_json_field(content.get("role_tags"))
                     links_json = self._serialize_json_field(content.get("links"))
                     info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
+                    document_meta = compute_document_metadata(content)
+                    has_text_content = int(content.get("has_text_content", document_meta["has_text_content"]))
+                    document_url = content.get("document_url") or document_meta["document_url"]
 
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO content (
+                            id, tittel, tekst, info_type, koder, role_tags, links, path,
+                            has_text_content, document_url
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
@@ -171,7 +188,9 @@ class ContentRepository:
                             koder = COALESCE(VALUES(koder), koder),
                             role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
-                            path = VALUES(path)
+                            path = VALUES(path),
+                            has_text_content = VALUES(has_text_content),
+                            document_url = VALUES(document_url)
                         """,
                         (
                             content.get("id"),
@@ -182,6 +201,8 @@ class ContentRepository:
                             role_tags_json,
                             links_json,
                             content.get("path"),
+                            has_text_content,
+                            document_url,
                         ),
                     )
 

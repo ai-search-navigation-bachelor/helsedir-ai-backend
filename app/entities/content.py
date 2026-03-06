@@ -6,6 +6,7 @@ Core business entities that represent the domain model.
 
 from pydantic import BaseModel, model_validator
 from typing import Optional, List
+from app.services.data.document_metadata import has_visible_text, resolve_public_document_url
 
 
 class ContentLink(BaseModel):
@@ -56,11 +57,32 @@ class ContentItem(BaseModel):
     path: Optional[str] = None
     role_tags: List[str] = []
     links: List[ContentLink] = []
+    has_text_content: bool = False
+    document_url: Optional[str] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFields] = None
+
+    @model_validator(mode='after')
+    def populate_content_metadata(self):
+        """Ensure text metadata is consistent for in-memory content items."""
+        if has_visible_text(self.body):
+            self.has_text_content = True
+        return self
 
     @property
     def info_type(self) -> str:
         """Alias for content_type (used by ranking features)."""
         return self.content_type
+
+    @property
+    def is_pdf_only(self) -> bool:
+        """True when content has no text body but points to a document."""
+        return not self.has_text_content and bool(self.document_url)
+
+    @property
+    def public_document_url(self) -> Optional[str]:
+        """Preferred frontend URL for PDF-only content."""
+        if not self.is_pdf_only:
+            return None
+        return resolve_public_document_url(self.path, self.document_url)

@@ -114,6 +114,9 @@ class TestSearchRoute:
             assert "title" in result
             assert "score" in result
             assert "info_type" in result
+            assert "has_text_content" in result
+            assert "document_url" in result
+            assert "is_pdf_only" in result
 
     def test_invalid_method_returns_400(self, client):
         response = client.get("/search?query=diabetes&method=invalid_method")

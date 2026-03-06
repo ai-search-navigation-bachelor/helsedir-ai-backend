@@ -28,6 +28,7 @@ from app.dto.response.search import (
 from app.services.search.search_service import search_service
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
+from app.services.data.document_metadata import resolve_public_document_url
 from app.services.repositories.content_repository import content_repository
 from app.config import settings
 from app.constants import (
@@ -410,6 +411,9 @@ class SearchController:
                     title=theme_page.title,
                     info_type='temaside',
                     path=theme_page.path,
+                    has_text_content=theme_page.has_text_content,
+                    document_url=theme_page.public_document_url,
+                    is_pdf_only=theme_page.is_pdf_only,
                     score=max_score,
                     explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%"
                 ))
@@ -465,6 +469,12 @@ class SearchController:
                     title=content.get('tittel', ''),
                     info_type=info_type,
                     path=content.get('path'),
+                    has_text_content=bool(content.get('has_text_content')),
+                    document_url=resolve_public_document_url(
+                        content.get('path'),
+                        content.get('document_url'),
+                    ),
+                    is_pdf_only=not bool(content.get('has_text_content')) and bool(content.get('document_url')),
                     score=1.0,  # Children inherit parent's relevance
                     explanation=f"Under {result.title}"
                 )
