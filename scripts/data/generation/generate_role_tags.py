@@ -5,8 +5,12 @@ Generate AI-based role tags for content items.
 For each content item, builds context from title + body + child hierarchy,
 sends to an LLM, and stores matching role slugs as JSON in the role_tags column.
 
+Supports two LLM providers:
+- OpenAI (default): uses OPENAI_API_KEY, model gpt-4.1-mini
+- Groq: uses GROQ_API_KEY (+ _2/_3/_4 for parallel workers)
+
 Optimizations:
-- Parallel async workers (one per Groq API key, up to 4x throughput)
+- Parallel async workers (one per API key, up to 4x throughput with Groq)
 - Batched DB writes (one connection per batch instead of per item)
 - Reused httpx.AsyncClient per worker (no connection churn)
 - HTML stripped from body text (saves tokens)
@@ -14,6 +18,7 @@ Optimizations:
 
 Usage:
     python scripts/data/generation/generate_role_tags.py
+    python scripts/data/generation/generate_role_tags.py --provider groq
     python scripts/data/generation/generate_role_tags.py --dry-run
     python scripts/data/generation/generate_role_tags.py --skip-existing
 """
@@ -278,23 +283,40 @@ def save_role_tags_batch(updates: List[Tuple[str, List[str]]]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# LLM provider config
+# ---------------------------------------------------------------------------
+
+PROVIDER_CONFIG = {
+    "openai": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4.1-mini",
+    },
+    "groq": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "model": "llama-3.3-70b-versatile",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Async API worker
 # ---------------------------------------------------------------------------
 
-async def call_groq_async(
+async def call_llm_async(
     client: httpx.AsyncClient,
     api_key: str,
     prompt: str,
+    provider: str = "openai",
     max_retries: int = 5,
 ) -> Optional[str]:
-    """Call Groq API with retry logic (async, reuses client)."""
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    """Call LLM API with retry logic (async, reuses client)."""
+    config = PROVIDER_CONFIG[provider]
+    url = config["url"]
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": config["model"],
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -308,20 +330,17 @@ async def call_groq_async(
             response = await client.post(url, headers=headers, json=payload, timeout=30.0)
 
             if response.status_code == 429:
-                # Use Retry-After header if reasonable, otherwise exponential backoff
                 retry_after = response.headers.get("retry-after")
-                wait = min(2 ** attempt * 5, 120)  # default backoff
+                wait = min(2 ** attempt * 5, 120)
                 if retry_after:
                     try:
                         header_wait = float(retry_after)
                         if header_wait > 300:
-                            # Quota exhausted (daily/hourly limit), not just rate limit
                             logger.error("Retry-After too high (%.0fs / %.1f min) — API quota likely exhausted", header_wait, header_wait / 60)
                             return None
                         wait = min(header_wait, 120)
                     except ValueError:
                         pass
-                # Add jitter to avoid thundering herd
                 jitter = random.uniform(1, 5)
                 wait += jitter
                 logger.warning("Worker rate limited, waiting %.1fs (attempt %d/%d)...", wait, attempt + 1, max_retries)
@@ -333,7 +352,7 @@ async def call_groq_async(
             return data["choices"][0]["message"]["content"]
 
         except Exception as e:
-            logger.warning("Groq API error (attempt %d/%d): %s", attempt + 1, max_retries, e)
+            logger.warning("%s API error (attempt %d/%d): %s", provider, attempt + 1, max_retries, e)
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt + random.uniform(0, 2))
 
@@ -348,10 +367,11 @@ async def api_worker(
     pending_updates: List,
     updates_lock: asyncio.Lock,
     dry_run: bool,
+    provider: str = "openai",
     db_batch_size: int = 10,
 ) -> None:
     """
-    Async worker that consumes items from the queue and calls the Groq API.
+    Async worker that consumes items from the queue and calls an LLM API.
 
     Each worker uses its own API key and httpx client. Completed results are
     collected in pending_updates and flushed to the DB in batches.
@@ -368,7 +388,7 @@ async def api_worker(
 
             prompt = item["_prompt"]
 
-            response_text = await call_groq_async(client, api_key, prompt)
+            response_text = await call_llm_async(client, api_key, prompt, provider=provider)
 
             if not response_text:
                 async with updates_lock:
@@ -430,13 +450,16 @@ async def api_worker(
                     )
 
             queue.task_done()
-            await asyncio.sleep(3 + random.uniform(0, 2))  # ~15-20 req/min per key, with jitter
+            # OpenAI has higher rate limits; Groq needs more spacing
+            delay = 1 + random.uniform(0, 1) if provider == "openai" else 3 + random.uniform(0, 2)
+            await asyncio.sleep(delay)
 
 
 async def run_workers(
     items: List[Dict],
     api_keys: List[str],
     dry_run: bool,
+    provider: str = "openai",
 ) -> Dict:
     """Fill the queue and launch one async worker per API key."""
     queue: asyncio.Queue = asyncio.Queue()
@@ -463,6 +486,7 @@ async def run_workers(
             pending_updates=pending_updates,
             updates_lock=updates_lock,
             dry_run=dry_run,
+            provider=provider,
         )
         for i, key in enumerate(api_keys)
     ]
@@ -493,17 +517,31 @@ def main():
     parser = argparse.ArgumentParser(description="Generate AI role tags for content")
     parser.add_argument("--dry-run", action="store_true", help="Preview without saving to DB")
     parser.add_argument("--skip-existing", action="store_true", help="Skip items that already have role tags")
+    parser.add_argument("--provider", choices=["openai", "groq"], default="openai",
+                        help="LLM provider to use (default: openai)")
     args = parser.parse_args()
 
-    api_keys = settings.groq_api_keys
-    if not api_keys:
-        print("ERROR: No Groq API keys configured. Set GROQ_API_KEY in .env")
-        sys.exit(1)
+    provider = args.provider
+
+    if provider == "openai":
+        if not settings.openai_api_key:
+            print("ERROR: No OpenAI API key configured. Set OPENAI_API_KEY in .env")
+            sys.exit(1)
+        api_keys = [settings.openai_api_key]
+    else:
+        api_keys = settings.groq_api_keys
+        if not api_keys:
+            print("ERROR: No Groq API keys configured. Set GROQ_API_KEY in .env")
+            sys.exit(1)
+
+    model_name = PROVIDER_CONFIG[provider]["model"]
 
     print("=" * 60)
     print("ROLE TAG GENERATION")
     print("=" * 60)
-    print(f"  Groq API keys: {len(api_keys)}")
+    print(f"  Provider: {provider}")
+    print(f"  Model: {model_name}")
+    print(f"  API keys: {len(api_keys)}")
     print(f"  Threshold: {ROLE_TAG_THRESHOLD}")
     print(f"  Roles: {len(ROLE_SLUGS)}")
     print(f"  Dry run: {args.dry_run}")
@@ -578,6 +616,7 @@ def main():
         items=items_to_process,
         api_keys=api_keys,
         dry_run=args.dry_run,
+        provider=provider,
     ))
 
     # Summary
