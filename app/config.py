@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     ml_ranking_enabled: bool = False
     ml_models_dir: str = "models"
 
-    # LLM API — up to 6 keys for parallel generation
+    # LLM API
+    openai_api_key: str = ""
+    # Groq — up to 6 keys for parallel generation
     groq_api_key: str = ""
     groq_api_key_2: str = ""
     groq_api_key_3: str = ""
