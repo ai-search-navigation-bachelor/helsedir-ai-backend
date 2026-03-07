@@ -14,6 +14,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
+import httpx
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from app.services.external.helsedir_api_service import (  # noqa: E402
@@ -24,10 +26,17 @@ from app.services.repositories.base import db_pool  # noqa: E402
 from app.services.data.document_metadata import compute_document_metadata  # noqa: E402
 
 
-def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
+def _require_db_connection(operation: str):
     conn = db_pool.get_connection()
     if not conn:
-        return []
+        message = f"ERROR: Database connection unavailable during {operation}"
+        print(message)
+        raise RuntimeError(message)
+    return conn
+
+
+def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
+    conn = _require_db_connection("row fetch for document metadata backfill")
 
     cursor = None
     try:
@@ -58,9 +67,7 @@ def _apply_updates(updates: List[Tuple[int, Optional[str], str]]) -> int:
     if not updates:
         return 0
 
-    conn = db_pool.get_connection()
-    if not conn:
-        return 0
+    conn = _require_db_connection("content update for document metadata backfill")
 
     cursor = None
     try:
@@ -181,7 +188,7 @@ def main():
                 api_updates.append((0, document_url, content_id))
                 if document_url:
                     found_document_url += 1
-            except HelseDirectorateAPIError as exc:
+            except (HelseDirectorateAPIError, httpx.HTTPStatusError) as exc:
                 print(f"WARN {content_id}: {exc}")
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 print(f"WARN {content_id}: {type(exc).__name__}: {exc}")

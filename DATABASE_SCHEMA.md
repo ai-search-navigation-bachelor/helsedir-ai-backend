@@ -20,7 +20,7 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
 | `links`      | JSON            | Relaterte lenker (forelder, barn, root, etc.)       |
 | `has_text_content` | TINYINT(1), nullable | Indicates whether the content has visible text; `NULL` means unknown/unbackfilled until backfill runs |
-| `document_url` | TEXT, nullable | Stores the extracted document URL for PDF-only content; may be `NULL` for non-PDF or pre-backfill records |
+| `document_url` | TEXT, nullable | Stores the extracted document URL for any extracted file/attachment (for example from `data.fil` or `attachments`); may be `NULL` when no file is extracted or before backfill runs |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
 
 **Links-struktur:**
