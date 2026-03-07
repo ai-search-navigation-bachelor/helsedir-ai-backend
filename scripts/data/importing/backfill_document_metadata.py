@@ -165,6 +165,7 @@ def main():
     api_updates: List[Tuple[int, Optional[str], str]] = []
     processed = 0
     found_document_url = 0
+    total_updated = 0
     started = time.perf_counter()
     progress_every = max(1, args.progress_every)
 
@@ -188,7 +189,7 @@ def main():
             processed += 1
 
             if len(api_updates) >= max(1, args.batch_size):
-                _apply_updates(api_updates)
+                total_updated += _apply_updates(api_updates)
                 api_updates.clear()
 
             if processed % progress_every == 0 or processed == len(api_candidates):
@@ -203,8 +204,8 @@ def main():
                     f"ETA ~{eta_seconds / 60:.1f} min"
                 )
 
-    updated = _apply_updates(api_updates)
-    print(f"Applied remaining API updates to {updated} rows")
+    total_updated += _apply_updates(api_updates)
+    print(f"Applied remaining API updates to {total_updated} rows")
 
 
 if __name__ == "__main__":

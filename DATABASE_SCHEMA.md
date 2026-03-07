@@ -19,6 +19,8 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `koder`      | JSON            | Fagkoder fra Helsedir (ICD, ICPC, SNOMED, LIS)      |
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
 | `links`      | JSON            | Relaterte lenker (forelder, barn, root, etc.)       |
+| `has_text_content` | TINYINT(1) | Indicates whether the content has visible text      |
+| `document_url` | TEXT          | Stores the extracted document URL for PDF-only content |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
 
 **Links-struktur:**
@@ -51,6 +53,8 @@ Lagrer alt innhold fra Helsedirektoratet API.
 Backend semantics:
 - `data.fil` and items in `attachments` are treated as document file URLs directly, regardless of file type.
 - `links`/`lenker` may also include non-document references, so the backend only uses values that explicitly end with `.pdf` when deriving `document_url`.
+- `attachments` is part of the API payload and is not persisted as a separate column.
+- Runtime parsing happens in `extract_document_url`, and `scripts/setup/init_database.sql` shows that the `content` table has no `attachments` column.
 
 **Indekser:**
 
