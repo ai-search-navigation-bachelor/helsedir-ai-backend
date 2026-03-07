@@ -182,7 +182,7 @@ def main():
                     found_document_url += 1
             except HelseDirectorateAPIError as exc:
                 print(f"WARN {content_id}: {exc}")
-            except Exception as exc:
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 print(f"WARN {content_id}: {type(exc).__name__}: {exc}")
 
             processed += 1

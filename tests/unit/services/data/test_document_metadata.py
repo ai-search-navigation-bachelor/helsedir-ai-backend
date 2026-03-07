@@ -13,13 +13,103 @@ class TestDocumentMetadata:
     def test_has_visible_text_ignores_empty_html(self):
         assert has_visible_text("<p>&nbsp;</p>") is False
 
-    def test_compute_document_metadata_detects_pdf_url(self):
+    def test_compute_document_metadata_detects_data_fil_url(self):
         meta = compute_document_metadata(
             {
                 "tekst": "",
                 "data": {
                     "fil": "https://helsedirektoratet.no/rapporter/test/test.pdf",
                 },
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] == "https://helsedirektoratet.no/rapporter/test/test.pdf"
+
+    def test_compute_document_metadata_detects_attachment_non_pdf_url(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "attachments": [
+                    {
+                        "url": "https://helsedirektoratet.no/rapporter/test/test.docx",
+                    }
+                ],
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] == "https://helsedirektoratet.no/rapporter/test/test.docx"
+
+    def test_compute_document_metadata_detects_attachment_pdf_url(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "attachments": [
+                    {
+                        "href": "https://helsedirektoratet.no/rapporter/test/test.pdf",
+                    }
+                ],
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] == "https://helsedirektoratet.no/rapporter/test/test.pdf"
+
+    def test_compute_document_metadata_ignores_non_pdf_links(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "links": [
+                    {
+                        "url": "https://helsedirektoratet.no/rapporter/test/test.docx",
+                    }
+                ],
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] is None
+
+    def test_compute_document_metadata_detects_pdf_link(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "links": [
+                    {
+                        "href": "https://helsedirektoratet.no/rapporter/test/test.pdf",
+                    }
+                ],
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] == "https://helsedirektoratet.no/rapporter/test/test.pdf"
+
+    def test_compute_document_metadata_ignores_non_pdf_lenker(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "lenker": [
+                    {
+                        "fil": "https://helsedirektoratet.no/rapporter/test/test.docx",
+                    }
+                ],
+            }
+        )
+
+        assert meta["has_text_content"] is False
+        assert meta["document_url"] is None
+
+    def test_compute_document_metadata_detects_pdf_lenker(self):
+        meta = compute_document_metadata(
+            {
+                "tekst": "",
+                "lenker": [
+                    {
+                        "fil": "https://helsedirektoratet.no/rapporter/test/test.pdf",
+                    }
+                ],
             }
         )
 

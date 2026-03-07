@@ -34,6 +34,24 @@ Lagrer alt innhold fra Helsedirektoratet API.
 ]
 ```
 
+**Attachments field:**
+`attachments` stores document files attached to the content item.
+
+**Attachments structure:**
+```json
+[
+  {
+    "fil": "https://www.helsedirektoratet.no/.../vedlegg.docx",
+    "href": "https://www.helsedirektoratet.no/.../vedlegg.pdf",
+    "url": "https://www.helsedirektoratet.no/.../vedlegg.xlsx"
+  }
+]
+```
+
+Backend semantics:
+- `data.fil` and items in `attachments` are treated as document file URLs directly, regardless of file type.
+- `links`/`lenker` may also include non-document references, so the backend only uses values that explicitly end with `.pdf` when deriving `document_url`.
+
 **Indekser:**
 
 - PRIMARY KEY: `id`

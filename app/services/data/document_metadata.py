@@ -32,6 +32,9 @@ def has_visible_text(value: Optional[str]) -> bool:
 
 
 def _iter_document_candidates(payload: Mapping[str, Any]) -> Iterable[str]:
+    # Intentional asymmetry: data["fil"] and attachment entries are treated as
+    # document file URLs directly, while links/lenker may include other
+    # references and are therefore restricted to explicit PDF URLs only.
     data = payload.get("data")
     if isinstance(data, Mapping):
         file_url = data.get("fil")
