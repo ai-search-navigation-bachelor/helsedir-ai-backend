@@ -19,6 +19,8 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `koder`      | JSON            | Fagkoder fra Helsedir (ICD, ICPC, SNOMED, LIS)      |
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
 | `links`      | JSON            | Relaterte lenker (forelder, barn, root, etc.)       |
+| `has_text_content` | TINYINT(1), nullable | Indicates whether the content has visible text; `NULL` means unknown/unbackfilled until backfill runs |
+| `document_url` | TEXT, nullable | Stores the extracted document URL for any extracted file/attachment (for example from `data.fil` or `attachments`); may be `NULL` when no file is extracted or before backfill runs |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
 
 **Links-struktur:**
@@ -33,6 +35,30 @@ Lagrer alt innhold fra Helsedirektoratet API.
   }
 ]
 ```
+
+**Upstream payload metadata (not persisted):**
+`attachments` is part of the Helsedirektoratet API payload and is not stored as a separate column in `content`.
+
+**Attachments structure:**
+```json
+[
+  {
+    "fil": "https://www.helsedirektoratet.no/.../vedlegg.docx",
+    "href": "https://www.helsedirektoratet.no/.../vedlegg.pdf",
+    "url": "https://www.helsedirektoratet.no/.../vedlegg.xlsx"
+  }
+]
+```
+
+Backend semantics:
+- `data.fil` and items in `attachments` are treated as document file URLs directly, regardless of file type.
+- `links`/`lenker` may also include non-document references, so the backend only uses values that explicitly end with `.pdf` when deriving `document_url`.
+- Runtime parsing happens in `extract_document_url`, and `scripts/setup/init_database.sql` shows that the `content` table has no `attachments` column.
+
+Nullable contract:
+- `has_text_content = NULL` means the value is still unknown because the row has not been backfilled yet.
+- `document_url = NULL` is a valid persisted state for non-PDF content and for rows that have not been backfilled yet.
+- Queries and migration tooling should treat these `NULL` values as expected persisted states and handle them explicitly.
 
 **Indekser:**
 

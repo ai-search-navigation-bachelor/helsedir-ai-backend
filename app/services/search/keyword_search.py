@@ -121,6 +121,8 @@ class KeywordSearch:
         for item in content_service.get_all_content():
             if item.content_type not in content_service.searchable_types:
                 continue
+            if role and role not in item.role_tags:
+                continue
 
             score, breakdown = self.calculate_score_with_breakdown(
                 item, query_lower, query_keywords
@@ -145,6 +147,9 @@ class KeywordSearch:
                     title=item.title,
                     info_type=item.content_type,
                     path=item.path,
+                    has_text_content=item.has_text_content,
+                    document_url=item.public_document_url,
+                    is_pdf_only=item.is_pdf_only,
                     score=round(norm_score, 3),
                     explanation=explanation,
                 )

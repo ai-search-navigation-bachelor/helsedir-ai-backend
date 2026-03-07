@@ -181,6 +181,9 @@ class SemanticSearch:
                     title=item.title,
                     info_type=item.content_type,
                     path=item.path,
+                    has_text_content=item.has_text_content,
+                    document_url=item.public_document_url,
+                    is_pdf_only=item.is_pdf_only,
                     score=round(norm_score, 3),
                     explanation=f"Semantic: {sem_score:.3f} → {norm_score:.2f}",
                 )
