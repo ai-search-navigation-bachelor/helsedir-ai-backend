@@ -205,7 +205,7 @@ def main():
                 )
 
     total_updated += _apply_updates(api_updates)
-    print(f"Applied remaining API updates to {total_updated} rows")
+    print(f"Applied API updates; cumulative total updated rows: {total_updated}")
 
 
 if __name__ == "__main__":
