@@ -28,8 +28,12 @@ from app.services.external.helsedir_api_service import (
 )
 
 
-def ensure_columns_exist():
-    """Add forst_publisert and sist_faglig_oppdatert columns if they don't exist."""
+def check_columns_exist():
+    """Check whether forst_publisert and sist_faglig_oppdatert columns exist.
+
+    Returns:
+        (has_forst, has_sist) booleans
+    """
     conn = db_pool.get_connection()
     if not conn:
         print("ERROR: Could not connect to database")
@@ -38,21 +42,54 @@ def ensure_columns_exist():
     cursor = None
     try:
         cursor = conn.cursor()
-        # Check which columns exist
         cursor.execute("SHOW COLUMNS FROM content LIKE 'forst_publisert'")
         has_forst = cursor.fetchone() is not None
         cursor.execute("SHOW COLUMNS FROM content LIKE 'sist_faglig_oppdatert'")
         has_sist = cursor.fetchone() is not None
+        return has_forst, has_sist
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
 
-        if not has_forst:
+
+def ensure_columns_exist(dry_run: bool = False):
+    """Add forst_publisert and sist_faglig_oppdatert columns if they don't exist."""
+    has_forst, has_sist = check_columns_exist()
+
+    if has_forst:
+        print("Column forst_publisert already exists.")
+    elif dry_run:
+        print("Column forst_publisert is MISSING (would be added without --dry-run)")
+    else:
+        conn = db_pool.get_connection()
+        if not conn:
+            print("ERROR: Could not connect to database")
+            sys.exit(1)
+        cursor = None
+        try:
+            cursor = conn.cursor()
             print("Adding column forst_publisert...")
             cursor.execute("ALTER TABLE content ADD COLUMN forst_publisert DATETIME DEFAULT NULL AFTER links")
             conn.commit()
             print("  Done.")
-        else:
-            print("Column forst_publisert already exists.")
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
 
-        if not has_sist:
+    if has_sist:
+        print("Column sist_faglig_oppdatert already exists.")
+    elif dry_run:
+        print("Column sist_faglig_oppdatert is MISSING (would be added without --dry-run)")
+    else:
+        conn = db_pool.get_connection()
+        if not conn:
+            print("ERROR: Could not connect to database")
+            sys.exit(1)
+        cursor = None
+        try:
+            cursor = conn.cursor()
             # Check if old column name exists (needs rename)
             cursor.execute("SHOW COLUMNS FROM content LIKE 'sist_oppdatert'")
             has_old = cursor.fetchone() is not None
@@ -60,19 +97,15 @@ def ensure_columns_exist():
             if has_old:
                 print("Renaming column sist_oppdatert -> sist_faglig_oppdatert...")
                 cursor.execute("ALTER TABLE content CHANGE sist_oppdatert sist_faglig_oppdatert DATETIME DEFAULT NULL")
-                conn.commit()
-                print("  Done.")
             else:
                 print("Adding column sist_faglig_oppdatert...")
                 cursor.execute("ALTER TABLE content ADD COLUMN sist_faglig_oppdatert DATETIME DEFAULT NULL AFTER forst_publisert")
-                conn.commit()
-                print("  Done.")
-        else:
-            print("Column sist_faglig_oppdatert already exists.")
-    finally:
-        if cursor:
-            cursor.close()
-        conn.close()
+            conn.commit()
+            print("  Done.")
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
 
 
 def get_content_to_backfill(refetch: bool = False):
@@ -158,8 +191,14 @@ def main():
     parser = argparse.ArgumentParser(description="Backfill publish dates for content")
     parser.add_argument("--dry-run", action="store_true", help="Preview without saving")
     parser.add_argument("--refetch", action="store_true", help="Clear sist_faglig_oppdatert and re-fetch all from API (use after field name correction)")
-    parser.add_argument("--workers", type=int, default=10, help="Parallel API workers (default: 10)")
-    parser.add_argument("--batch-size", type=int, default=50, help="DB write batch size (default: 50)")
+    def positive_int(value):
+        ivalue = int(value)
+        if ivalue <= 0:
+            raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+        return ivalue
+
+    parser.add_argument("--workers", type=positive_int, default=10, help="Parallel API workers (default: 10)")
+    parser.add_argument("--batch-size", type=positive_int, default=50, help="DB write batch size (default: 50)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -168,7 +207,7 @@ def main():
 
     # Step 1: Ensure columns exist
     print("\n[1/4] Ensuring database columns exist...")
-    ensure_columns_exist()
+    ensure_columns_exist(dry_run=args.dry_run)
 
     # Step 2: Clear sist_faglig_oppdatert if --refetch
     if args.refetch:
@@ -209,7 +248,8 @@ def main():
 
     total = len(missing_ids)
     start_time = time.monotonic()
-    success = 0
+    fetched = 0
+    saved_total = 0
     errors = 0
     skipped = 0
     pending_updates = []
@@ -233,9 +273,9 @@ def main():
                     has_dates = dates.get("forstPublisert") or dates.get("sistFagligOppdatert")
 
                     if has_dates:
+                        fetched += 1
                         if not args.dry_run:
                             pending_updates.append((content_id, dates))
-                        success += 1
                         pub = dates.get("forstPublisert") or "-"
                         upd = dates.get("sistFagligOppdatert") or "-"
                         print(f"  [{i}/{total}] {content_id}  publisert={pub}  oppdatert={upd}")
@@ -255,6 +295,7 @@ def main():
             saved = save_dates_batch(pending_updates)
             print(f"  --- Batch saved: {saved} items ---")
             if saved > 0:
+                saved_total += saved
                 pending_updates.clear()
             else:
                 print("  WARNING: Batch save returned 0, retaining items for retry")
@@ -268,7 +309,7 @@ def main():
             print(
                 f"\n  === Progress: {i}/{total} ({100*i/total:.0f}%) | "
                 f"{rate:.1f} items/s | ETA: {eta/60:.1f} min | "
-                f"OK: {success}, Skip: {skipped}, Err: {errors} ===\n"
+                f"Fetched: {fetched}, Saved: {saved_total}, Skip: {skipped}, Err: {errors} ===\n"
             )
 
         # Rate limit between chunks
@@ -278,6 +319,7 @@ def main():
     if not args.dry_run and pending_updates:
         saved = save_dates_batch(pending_updates)
         if saved > 0:
+            saved_total += saved
             print(f"  Final batch saved: {saved} items")
         else:
             print(f"  ERROR: Final batch save failed, {len(pending_updates)} items not saved")
@@ -288,7 +330,8 @@ def main():
     print("BACKFILL COMPLETE")
     print("=" * 60)
     print(f"  Total: {len(missing_ids)}")
-    print(f"  Updated: {success}")
+    print(f"  Fetched (dates found): {fetched}")
+    print(f"  Saved to DB: {saved_total if not args.dry_run else '[DRY RUN]'}")
     print(f"  Skipped (no dates in API): {skipped}")
     print(f"  Errors: {errors}")
     print(f"  Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")

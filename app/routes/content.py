@@ -107,7 +107,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                         if al.get("rel") == "barn"
                         and (al.get("id") or al.get("href"))
                     ]
-                except HelseDirectorateAPIError as exc:
+                except (HelseDirectorateAPIError, ValueError) as exc:
                     logger.warning(
                         "Failed to fetch children for barn link %s: %s",
                         link.href,
