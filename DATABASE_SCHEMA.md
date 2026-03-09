@@ -20,7 +20,7 @@ Lagrer alt innhold fra Helsedirektoratet API.
 | `maalgruppe` | JSON            | Målgrupper (Fastlege, Sykepleier, etc.)             |
 | `links`      | JSON            | Relaterte lenker (forelder, barn, root, etc.)       |
 | `has_text_content` | TINYINT(1), nullable | Indicates whether the content has visible text; `NULL` means unknown/unbackfilled until backfill runs |
-| `document_url` | TEXT, nullable | Stores the extracted document URL for any extracted file/attachment (for example from `data.fil` or `attachments`); may be `NULL` when no file is extracted or before backfill runs |
+| `document_url` | TEXT, nullable | Stores the extracted document URL for files/attachments and, for `pdf-av-rapporten` chapters, the resolved PDF URL scraped from the public HTML page when HAPI does not expose it directly |
 | `embedding`  | BLOB            | Embedding-vektor for semantisk søk                  |
 
 **Links-struktur:**
@@ -53,6 +53,7 @@ Lagrer alt innhold fra Helsedirektoratet API.
 Backend semantics:
 - `data.fil` and items in `attachments` are treated as document file URLs directly, regardless of file type.
 - `links`/`lenker` may also include non-document references, so the backend only uses values that explicitly end with `.pdf` when deriving `document_url`.
+- `pdf-av-rapporten` / `pdf-versjon-av-rapporten` chapter pages may be backfilled from the public Helsedirektoratet HTML page when HAPI only exposes shortcode markup such as `[knapp ...]`.
 - Runtime parsing happens in `extract_document_url`, and `scripts/setup/init_database.sql` shows that the `content` table has no `attachments` column.
 
 Nullable contract:
