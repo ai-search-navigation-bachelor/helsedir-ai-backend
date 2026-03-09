@@ -5,10 +5,11 @@ Helpers for normalizing text-content and document metadata.
 from __future__ import annotations
 
 import html
+import json
 import logging
 import re
 from html.parser import HTMLParser
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -23,6 +24,10 @@ _ANCHOR_WITHOUT_HREF_RE = re.compile(
 )
 _PDF_HREF_RE = re.compile(r"\.pdf(?:$|[?#])", re.IGNORECASE)
 _PDF_PATH_SUFFIXES = ("/pdf-av-rapporten", "/pdf-versjon-av-rapporten")
+_JSON_SCRIPT_RE = re.compile(
+    r"<script[^>]*type=[\"']application/json[\"'][^>]*>(.*?)</script>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +176,82 @@ def extract_pdf_url_from_public_html(
     if base_url:
         return urljoin(base_url, parser.pdf_href)
     return parser.pdf_href
+
+
+def extract_related_links_from_public_html(
+    html_content: str,
+    *,
+    base_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return normalized relatedLinks entries from a public Helsedir HTML page."""
+    for match in _JSON_SCRIPT_RE.finditer(html_content):
+        raw_json = html.unescape(match.group(1).strip())
+        if not raw_json:
+            continue
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+
+        props = payload.get("props")
+        related_links = props.get("relatedLinks") if isinstance(props, Mapping) else None
+        if not isinstance(related_links, list):
+            continue
+
+        normalized: List[Dict[str, Any]] = []
+        for item in related_links:
+            if not isinstance(item, Mapping):
+                continue
+            title = item.get("tittel")
+            url = item.get("url")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            if not isinstance(url, str) or not url.strip():
+                continue
+
+            normalized.append(
+                {
+                    "title": title.strip(),
+                    "url": urljoin(base_url, url.strip()) if base_url else url.strip(),
+                    "is_document": bool(item.get("type")),
+                    "file_type": item.get("typeFile") if isinstance(item.get("typeFile"), str) else None,
+                    "url_type": item.get("typeUrl") if isinstance(item.get("typeUrl"), str) else None,
+                    "target": item.get("target") if isinstance(item.get("target"), str) else None,
+                }
+            )
+
+        if normalized:
+            return normalized
+
+    return []
+
+
+def resolve_public_related_links(
+    path: Optional[str],
+    *,
+    public_url: Optional[str] = None,
+    timeout: float = 10.0,
+    client: Optional[httpx.Client] = None,
+) -> List[Dict[str, Any]]:
+    """Resolve related links from the public HTML page for textless report pages."""
+    page_url = _build_public_content_url(path, public_url.strip() if isinstance(public_url, str) else public_url)
+    if not page_url:
+        return []
+
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(timeout=timeout, follow_redirects=True)
+
+    try:
+        response = client.get(page_url)
+        response.raise_for_status()
+        return extract_related_links_from_public_html(response.text, base_url=page_url)
+    except httpx.HTTPError as exc:
+        logger.warning("Failed to resolve related links from public page %s: %s", page_url, exc)
+        return []
+    finally:
+        if owns_client and client is not None:
+            client.close()
 
 
 def resolve_pdf_report_chapter_document_url(

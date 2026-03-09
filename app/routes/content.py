@@ -16,10 +16,11 @@ from app.dto.response.content import (
     GroupedLinkedContent,
     LinkedContentItem,
     AnbefalingFieldsResponse,
+    RelatedLinkResponse,
 )
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
-from app.services.data.document_metadata import build_content_metadata
+from app.services.data.document_metadata import build_content_metadata, resolve_public_related_links
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
@@ -182,6 +183,39 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
     return result if result else None
 
 
+def _should_resolve_related_links(content: ContentItem) -> bool:
+    """Return True for report pages that have no text and no primary document URL."""
+    if content.content_type.lower() != "rapport":
+        return False
+    if content.has_text_content or content.document_url:
+        return False
+
+    useful_link_rels = {link.rel for link in content.links if link.rel}
+    return useful_link_rels.issubset({"root", "publikasjon", "temaside"})
+
+
+def _get_report_related_links(content: ContentItem) -> Optional[List[RelatedLinkResponse]]:
+    """Resolve related report/document links from the public HTML page."""
+    if not _should_resolve_related_links(content):
+        return None
+
+    resolved_links = resolve_public_related_links(content.path)
+    if not resolved_links:
+        return None
+
+    return [
+        RelatedLinkResponse(
+            title=link["title"],
+            url=link["url"],
+            is_document=bool(link.get("is_document")),
+            file_type=link.get("file_type"),
+            url_type=link.get("url_type"),
+            target=link.get("target"),
+        )
+        for link in resolved_links
+    ]
+
+
 async def _build_content_response(content: ContentItem, search_id: Optional[str] = None) -> ContentResponse:
     """Build ContentResponse from a ContentItem, with parallel link enrichment and click logging."""
     coros = [_build_links_with_children(content.links)]
@@ -202,6 +236,11 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
     linked_content_response = None
     if content.content_type.lower() == "temaside":
         linked_content_response = _get_theme_page_linked_content(content.id)
+
+    related_links_response = None
+    if _should_resolve_related_links(content):
+        related_links_result = await run_in_threadpool(_get_report_related_links, content)
+        related_links_response = related_links_result
 
     anbefaling_fields_response = None
     if content.anbefaling_fields:
@@ -229,6 +268,7 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         is_pdf_only=content.is_pdf_only,
         links=links_response,
         linked_content=linked_content_response,
+        related_links=related_links_response,
         anbefaling_fields=anbefaling_fields_response,
     )
 

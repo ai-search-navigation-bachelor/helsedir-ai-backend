@@ -68,6 +68,16 @@ class AnbefalingFieldsResponse(BaseModel):
     styrke: Optional[str] = None
 
 
+class RelatedLinkResponse(BaseModel):
+    """Related report/document link resolved from public Helsedir pages."""
+    title: str
+    url: str
+    is_document: bool = False
+    file_type: Optional[str] = None
+    url_type: Optional[str] = None
+    target: Optional[str] = None
+
+
 class ContentResponse(BaseModel):
     """Response model for content endpoint."""
     id: str
@@ -83,6 +93,7 @@ class ContentResponse(BaseModel):
     is_pdf_only: bool = False
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
+    related_links: Optional[List[RelatedLinkResponse]] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFieldsResponse] = None

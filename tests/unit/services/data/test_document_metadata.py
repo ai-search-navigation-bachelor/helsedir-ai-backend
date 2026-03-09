@@ -5,8 +5,10 @@ from app.services.data.document_metadata import (
     compute_document_metadata,
     compute_document_metadata_with_fallback,
     extract_pdf_url_from_public_html,
+    extract_related_links_from_public_html,
     has_visible_text,
     resolve_pdf_report_chapter_document_url,
+    resolve_public_related_links,
     resolve_public_document_url,
 )
 
@@ -229,6 +231,68 @@ class TestDocumentMetadata:
 
     def test_extract_pdf_url_from_public_html_returns_none_when_missing(self):
         assert extract_pdf_url_from_public_html("<html><body><a href='/foo'>Hei</a></body></html>") is None
+
+    def test_extract_related_links_from_public_html_returns_normalized_links(self):
+        html = """
+        <script type="application/json">
+        {"props":{"relatedLinks":[
+            {"tittel":"Rapport 2025","url":"https://www.helsedirektoratet.no/rapporter/test-2025","type":false,"typeFile":"UNDEF","typeUrl":"internal","target":""},
+            {"tittel":"Rapport 2025 PDF","url":"/rapporter/test/rapport-2025.pdf?download=false","type":true,"typeFile":"PDF","typeUrl":"internal","target":"_blank"}
+        ]}}
+        </script>
+        """
+        links = extract_related_links_from_public_html(
+            html,
+            base_url="https://www.helsedirektoratet.no/rapporter/test",
+        )
+        assert links == [
+            {
+                "title": "Rapport 2025",
+                "url": "https://www.helsedirektoratet.no/rapporter/test-2025",
+                "is_document": False,
+                "file_type": "UNDEF",
+                "url_type": "internal",
+                "target": "",
+            },
+            {
+                "title": "Rapport 2025 PDF",
+                "url": "https://www.helsedirektoratet.no/rapporter/test/rapport-2025.pdf?download=false",
+                "is_document": True,
+                "file_type": "PDF",
+                "url_type": "internal",
+                "target": "_blank",
+            },
+        ]
+
+    def test_resolve_public_related_links_fetches_public_page(self):
+        class DummyResponse:
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                return None
+
+        class DummyClient:
+            def get(self, url):
+                assert url == "https://www.helsedirektoratet.no/rapporter/test"
+                return DummyResponse(
+                    '<script type="application/json">{"props":{"relatedLinks":[{"tittel":"Rapport 2025","url":"/rapporter/test-2025","type":false,"typeFile":"UNDEF","typeUrl":"internal","target":""}]}}</script>'
+                )
+
+            def close(self):
+                return None
+
+        links = resolve_public_related_links("/rapporter/test", client=DummyClient())
+        assert links == [
+            {
+                "title": "Rapport 2025",
+                "url": "https://www.helsedirektoratet.no/rapporter/test-2025",
+                "is_document": False,
+                "file_type": "UNDEF",
+                "url_type": "internal",
+                "target": "",
+            }
+        ]
 
     def test_resolve_pdf_report_chapter_document_url_fetches_public_page(self):
         class DummyResponse:
