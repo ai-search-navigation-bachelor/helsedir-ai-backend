@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any, Set
 import mysql.connector
 
 from app.services.repositories.base import db_pool
-from app.services.data.document_metadata import compute_document_metadata
+from app.services.data.document_metadata import compute_document_metadata_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class ContentRepository:
             role_tags_json = self._serialize_json_field(content.get("role_tags"))
             links_json = self._serialize_json_field(content.get("links"))
             info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
-            document_meta = compute_document_metadata(content)
+            document_meta = compute_document_metadata_with_fallback(content)
             has_text_content = int(
                 content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
             )
@@ -177,7 +177,7 @@ class ContentRepository:
                     role_tags_json = self._serialize_json_field(content.get("role_tags"))
                     links_json = self._serialize_json_field(content.get("links"))
                     info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
-                    document_meta = compute_document_metadata(content)
+                    document_meta = compute_document_metadata_with_fallback(content)
                     has_text_content = int(
                         content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
                     )

@@ -8,6 +8,8 @@ and patches _build_links_with_children to avoid external API calls.
 import pytest
 from unittest.mock import AsyncMock, patch
 
+from app.entities.content import ContentItem
+
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("mock_content")
@@ -106,3 +108,29 @@ class TestGetContentByPath:
         data = client.get("/content/by-path?path=/retningslinjer/diabetes").json()
         assert data["id"] == "001"
         assert data["content_type"] == "retningslinje"
+
+    def test_pdf_report_chapter_returns_pdf_document_url(self, client, mock_content, mocker):
+        mocker.patch(
+            "app.routes.content._build_links_with_children",
+            new=AsyncMock(return_value=[]),
+        )
+        mocker.patch(
+            "app.routes.content.content_repository.get_theme_page_content",
+            return_value=[],
+        )
+        pdf_item = ContentItem(
+            id="pdf-chapter-1",
+            title="PDF av rapporten",
+            body='[knapp text="Last ned PDF av rapporten" internalLink="abc"/]',
+            content_type="kapittel",
+            path="/rapporter/test/pdf-av-rapporten",
+            has_text_content=False,
+            document_url="https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten/test.pdf",
+        )
+        mock_content.content.append(pdf_item)
+        mock_content.content_by_id[pdf_item.id] = pdf_item
+        mock_content.content_by_path[pdf_item.path] = pdf_item
+
+        data = client.get("/content/pdf-chapter-1").json()
+        assert data["document_url"] == "https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten/test.pdf"
+        assert data["is_pdf_only"] is True

@@ -23,7 +23,9 @@ from app.services.external.helsedir_api_service import (  # noqa: E402
     HelseDirectorateAPIError,
 )
 from app.services.repositories.base import db_pool  # noqa: E402
-from app.services.data.document_metadata import compute_document_metadata  # noqa: E402
+from app.services.data.document_metadata import (  # noqa: E402
+    compute_document_metadata_with_fallback,
+)
 
 
 def _require_db_connection(operation: str):
@@ -42,7 +44,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
     try:
         cursor = conn.cursor(dictionary=True)
         query = """
-            SELECT id, tekst, has_text_content, document_url
+            SELECT id, tekst, path, has_text_content, document_url
             FROM content
         """
         if not force:
@@ -118,7 +120,7 @@ def _apply_updates_in_batches(
 
 def _fetch_document_metadata(content_id: str) -> Tuple[str, Optional[str]]:
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-    meta = compute_document_metadata(detailed)
+    meta = compute_document_metadata_with_fallback(detailed)
     return content_id, meta["document_url"]
 
 
@@ -143,7 +145,7 @@ def main():
     api_candidates: List[str] = []
 
     for index, row in enumerate(rows, start=1):
-        meta = compute_document_metadata(row)
+        meta = compute_document_metadata_with_fallback(row)
         has_text = int(meta["has_text_content"])
         document_url = row.get("document_url") or meta["document_url"]
         local_updates.append((has_text, document_url, row["id"]))
