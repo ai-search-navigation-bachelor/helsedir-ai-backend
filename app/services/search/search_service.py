@@ -55,6 +55,8 @@ class SearchService:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval (RRF fusion)."""
         return self._hybrid.search(
@@ -66,6 +68,8 @@ class SearchService:
             rrf_k=rrf_k,
             temaside_boost=temaside_boost,
             retningslinje_boost=retningslinje_boost,
+            role_boost=role_boost,
+            role_penalty=role_penalty,
         )
 
     # ==================== Utility Methods ====================
