@@ -110,6 +110,8 @@ class ContentService:
                 body=item.get("tekst") or "",
                 content_type=item.get("info_type") or "unknown",
                 path=item.get("path"),
+                forst_publisert=item.get("forst_publisert"),
+                sist_faglig_oppdatert=item.get("sist_faglig_oppdatert"),
                 role_tags=role_tags if isinstance(role_tags, list) else [],
                 links=links,
                 anbefaling_fields=anbefaling_fields,

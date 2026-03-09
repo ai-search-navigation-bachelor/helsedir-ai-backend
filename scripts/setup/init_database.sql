@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS content (
     links JSON,
     embedding BLOB,
 
+    -- Publishing dates from Helsedir API (not used for temaside)
+    forst_publisert DATETIME DEFAULT NULL,
+    sist_faglig_oppdatert DATETIME DEFAULT NULL,
+
     -- Theme page fields (only used when info_type='temaside')
     -- Also stores helsedirektoratet.no path for regular content (from API url field)
     path VARCHAR(1000),

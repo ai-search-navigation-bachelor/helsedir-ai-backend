@@ -96,8 +96,8 @@ class ContentRepository:
 
             cursor.execute(
                 """
-                INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
@@ -105,6 +105,8 @@ class ContentRepository:
                     koder = COALESCE(VALUES(koder), koder),
                     role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
+                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
                     path = VALUES(path)
                 """,
                 (
@@ -115,6 +117,8 @@ class ContentRepository:
                     koder_json,
                     role_tags_json,
                     links_json,
+                    content.get("forstPublisert") or content.get("forst_publisert") or None,
+                    content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert") or None,
                     content.get("path"),
                 ),
             )
@@ -162,8 +166,8 @@ class ContentRepository:
 
                     cursor.execute(
                         """
-                        INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, path)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO content (id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
@@ -171,6 +175,8 @@ class ContentRepository:
                             koder = COALESCE(VALUES(koder), koder),
                             role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
+                            forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                            sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
                             path = VALUES(path)
                         """,
                         (
@@ -181,6 +187,8 @@ class ContentRepository:
                             koder_json,
                             role_tags_json,
                             links_json,
+                            content.get("forstPublisert") or content.get("forst_publisert"),
+                            content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert"),
                             content.get("path"),
                         ),
                     )

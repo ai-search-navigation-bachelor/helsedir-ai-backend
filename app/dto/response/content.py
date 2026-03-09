@@ -2,6 +2,7 @@
 Content response DTOs.
 """
 
+from datetime import datetime
 from pydantic import BaseModel, model_validator
 from typing import List, Optional
 
@@ -16,6 +17,7 @@ class ContentLinkResponse(BaseModel):
     id: Optional[str] = None
     href: Optional[str] = None
     path: Optional[str] = None
+    sist_faglig_oppdatert: Optional[datetime] = None
     children: Optional[List["ContentLinkResponse"]] = None  # Populated for barn links (1st level only)
 
     @model_validator(mode='after')
@@ -70,6 +72,8 @@ class ContentResponse(BaseModel):
     body: str
     content_type: str
     path: Optional[str] = None
+    forst_publisert: Optional[datetime] = None
+    sist_faglig_oppdatert: Optional[datetime] = None
     role_tags: List[str] = []
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
