@@ -40,6 +40,7 @@ def store_embeddings_batch(
     if not conn:
         return 0
 
+    cursor = None
     try:
         cursor = conn.cursor()
         # executemany is faster than individual execute calls
@@ -53,7 +54,8 @@ def store_embeddings_batch(
         print(f"  Error committing batch: {e}")
         return 0
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 
@@ -63,6 +65,7 @@ def load_embedding(db_service, content_id: str) -> bytes:
     if not conn:
         return None
 
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.execute(
@@ -75,7 +78,8 @@ def load_embedding(db_service, content_id: str) -> bytes:
         print(f"Error loading embedding: {e}")
         return None
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
         conn.close()
 
 

@@ -66,16 +66,17 @@ def find_synonym_matches(query: str) -> List[Tuple[str, FrozenSet[str]]]:
                 matches.append((term, SYNONYM_LOOKUP[term]))
                 matched_spans.add((start, end))
 
-    # Then check single-word synonyms
-    for token in tokenize(query):
+    # Then check single-word synonyms using re.finditer for accurate positions
+    for m in re.finditer(r"\w+", query_lower):
+        token = m.group()
         if token in SYNONYM_LOOKUP:
-            # Check this token isn't part of an already matched multi-word term
-            start = query_lower.find(token)
-            end = start + len(token)
+            start = m.start()
+            end = m.end()
             if not any(
                 s <= start and e >= end for s, e in matched_spans
             ):
                 matches.append((token, SYNONYM_LOOKUP[token]))
+                matched_spans.add((start, end))
 
     return matches
 

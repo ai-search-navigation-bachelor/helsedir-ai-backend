@@ -68,13 +68,14 @@ def get_synonym_variants(text: str) -> List[str]:
                             seen.add(variant)
                             variants.append(variant)
 
-    # Single-word synonyms
-    tokens = re.findall(r"\w+", text_lower)
-    for token in tokens:
+    # Single-word synonyms — use re.finditer for accurate positions
+    for m in re.finditer(r"\w+", text_lower):
+        token = m.group()
         if token in SYNONYM_LOOKUP:
-            idx = text_lower.find(token)
-            end = idx + len(token)
+            idx = m.start()
+            end = m.end()
             if not any(s <= idx and e >= end for s, e in matched_ranges):
+                matched_ranges.append((idx, end))
                 for syn in SYNONYM_LOOKUP[token]:
                     if syn.lower() != token:
                         variant = text_lower[:idx] + syn + text_lower[end:]

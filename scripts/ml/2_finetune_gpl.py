@@ -447,7 +447,7 @@ def create_training_triplets(
                 sims = chunk_sims[qi_local].copy()
                 pos_doc_idx = id_to_doc_idx.get(pos_id)
                 if pos_doc_idx is not None:
-                    sims[pos_doc_idx] = -2.0  # Exclude positive
+                    sims[pos_doc_idx] = -np.inf  # Exclude positive
 
                 top_indices = np.argsort(sims)[-num_hard_negatives:][::-1]
                 hard_neg_ids = [valid_ids[i] for i in top_indices]

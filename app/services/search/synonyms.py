@@ -11,7 +11,8 @@ Each key maps to a list of synonyms. The mapping is bidirectional:
 all terms in a synonym group can find each other.
 """
 
-from typing import Dict, FrozenSet, List, Set
+import re
+from typing import Dict, FrozenSet, List, Set, Tuple
 
 # ---------------------------------------------------------------------------
 # Synonym groups – each tuple contains terms that are interchangeable.
@@ -696,17 +697,27 @@ def _build_lookup() -> Dict[str, FrozenSet[str]]:
 SYNONYM_LOOKUP: Dict[str, FrozenSet[str]] = _build_lookup()
 
 
-def _build_multi_word_index() -> Dict[str, List[str]]:
-    """Index multi-word synonyms by their first word for fast lookup."""
-    index: Dict[str, List[str]] = {}
+def _tokenize_term(term: str) -> List[str]:
+    """Tokenize a synonym term using the same \w+ pattern as BM25Search."""
+    return re.findall(r"\w+", term.lower())
+
+
+def _build_multi_word_index() -> Dict[str, List[Tuple[str, List[str]]]]:
+    """Index multi-word synonyms by their first token for fast lookup.
+
+    Uses \\w+ tokenization so hyphenated terms like "covid-19" (tokens:
+    ["covid", "19"]) are correctly treated as multi-word and indexed
+    under their first token ("covid").
+    """
+    index: Dict[str, List[Tuple[str, List[str]]]] = {}
     for term in SYNONYM_LOOKUP:
-        if " " in term:
-            first_word = term.split()[0]
-            index.setdefault(first_word, []).append(term)
+        tokens = _tokenize_term(term)
+        if len(tokens) > 1:
+            index.setdefault(tokens[0], []).append((term, tokens))
     return index
 
 
-_MULTI_WORD_INDEX: Dict[str, List[str]] = _build_multi_word_index()
+_MULTI_WORD_INDEX: Dict[str, List[Tuple[str, List[str]]]] = _build_multi_word_index()
 
 # Weight for synonym terms relative to original query terms (1.0).
 # Lower weight means synonyms help recall without dominating scoring.
@@ -729,35 +740,36 @@ def expand_terms(terms: List[str]) -> Dict[str, float]:
     for t in terms:
         weights[t] = weights.get(t, 0.0) + 1.0
 
-    query_text = " ".join(terms)
-    matched_spans: List[tuple] = []
+    # Track which term indices are covered by multi-word matches
+    covered_indices: Set[int] = set()
 
-    # Multi-word query matches: if query contains a multi-word synonym,
-    # add single-word synonyms from that group
-    for term in terms:
-        for candidate in _MULTI_WORD_INDEX.get(term, []):
-            start = query_text.find(candidate)
-            if start >= 0:
-                end = start + len(candidate)
-                if not any(s < end and e > start for s, e in matched_spans):
-                    matched_spans.append((start, end))
+    # Multi-word query matches: check if query terms contain a multi-word
+    # synonym as a contiguous token subsequence
+    for i, term in enumerate(terms):
+        if i in covered_indices:
+            continue
+        for candidate, candidate_tokens in _MULTI_WORD_INDEX.get(term, []):
+            n = len(candidate_tokens)
+            if i + n <= len(terms) and terms[i:i + n] == candidate_tokens:
+                # Check no overlap with already covered indices
+                span_indices = set(range(i, i + n))
+                if not span_indices & covered_indices:
+                    covered_indices |= span_indices
                     for syn in SYNONYM_LOOKUP[candidate]:
-                        if syn != candidate and " " not in syn:
-                            if syn not in weights:
-                                weights[syn] = SYNONYM_WEIGHT
+                        syn_tokens = _tokenize_term(syn)
+                        if syn != candidate and len(syn_tokens) == 1:
+                            if syn_tokens[0] not in weights:
+                                weights[syn_tokens[0]] = SYNONYM_WEIGHT
 
     # Single-word synonyms (skip words covered by multi-word match)
-    covered_words = set()
-    for s, e in matched_spans:
-        covered_words.update(query_text[s:e].split())
-
-    for term in terms:
-        if term in covered_words:
+    for i, term in enumerate(terms):
+        if i in covered_indices:
             continue
         if term in SYNONYM_LOOKUP:
             for syn in SYNONYM_LOOKUP[term]:
-                if syn != term and " " not in syn:
-                    if syn not in weights:
-                        weights[syn] = SYNONYM_WEIGHT
+                syn_tokens = _tokenize_term(syn)
+                if syn != term and len(syn_tokens) == 1:
+                    if syn_tokens[0] not in weights:
+                        weights[syn_tokens[0]] = SYNONYM_WEIGHT
 
     return weights
