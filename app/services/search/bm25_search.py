@@ -73,24 +73,6 @@ class BM25Search:
             return []
         return re.findall(r"\w+", text.lower())
 
-    @staticmethod
-    def _get_child_text(item: ContentItem) -> str:
-        """Get titles and body snippets from child content for richer indexing."""
-        parts: List[str] = []
-        for link in item.links:
-            if link.rel != "barn" or not link.id:
-                continue
-            child = content_service.content_by_id.get(link.id)
-            if not child:
-                continue
-            if child.title:
-                parts.append(child.title)
-            if child.body:
-                # Include a snippet of the child body (first ~200 chars)
-                snippet = re.sub(r'<[^>]+>', ' ', child.body[:500])
-                snippet = re.sub(r'\s+', ' ', snippet).strip()[:200]
-                parts.append(snippet)
-        return " ".join(parts)
 
     def _needs_rebuild(self) -> bool:
         return content_service._content_version != self._content_version
@@ -116,14 +98,8 @@ class BM25Search:
             title = item.title or ""
             body = item.body or ""
 
-            # For content with children (e.g. temasider), append child titles
-            # so the parent is findable by terms in its children.
-            child_text = self._get_child_text(item)
-
             # Up-weight title matches in lexical retrieval.
             weighted_text = (" ".join([title] * self.title_weight) + " " + body).strip()
-            if child_text:
-                weighted_text = weighted_text + " " + child_text
             terms = self._tokenize(weighted_text)
             doc_lengths[idx] = float(len(terms))
 
