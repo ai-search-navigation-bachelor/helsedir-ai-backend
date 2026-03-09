@@ -19,6 +19,7 @@ from app.dto.response.content import (
 )
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
+from app.services.data.document_metadata import build_content_metadata
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
@@ -148,12 +149,21 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
         if not info_type:
             continue
 
+        metadata = build_content_metadata(
+            content_item.get('path'),
+            content_item.get('has_text_content'),
+            content_item.get('document_url'),
+        )
+
         # Create LinkedContentItem
         linked_item = LinkedContentItem(
             id=content_item.get('id', ''),
             title=content_item.get('tittel', ''),
             info_type=info_type,
             path=content_item.get('path'),
+            has_text_content=metadata["has_text_content"],
+            document_url=metadata["document_url"],
+            is_pdf_only=metadata["is_pdf_only"],
         )
         grouped[info_type].append(linked_item)
 
@@ -211,6 +221,9 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         forst_publisert=content.forst_publisert,
         sist_faglig_oppdatert=content.sist_faglig_oppdatert,
         role_tags=content.role_tags,
+        has_text_content=content.has_text_content,
+        document_url=content.public_document_url,
+        is_pdf_only=content.is_pdf_only,
         links=links_response,
         linked_content=linked_content_response,
         anbefaling_fields=anbefaling_fields_response,

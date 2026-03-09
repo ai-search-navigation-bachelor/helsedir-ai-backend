@@ -45,6 +45,9 @@ class LinkedContentItem(BaseModel):
     title: str
     info_type: str
     path: Optional[str] = None
+    has_text_content: bool = False
+    document_url: Optional[str] = None
+    is_pdf_only: bool = False
 
 
 class GroupedLinkedContent(BaseModel):
@@ -75,6 +78,9 @@ class ContentResponse(BaseModel):
     forst_publisert: Optional[datetime] = None
     sist_faglig_oppdatert: Optional[datetime] = None
     role_tags: List[str] = []
+    has_text_content: bool = False
+    document_url: Optional[str] = None
+    is_pdf_only: bool = False
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
 

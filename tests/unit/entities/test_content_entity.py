@@ -67,6 +67,7 @@ class TestContentItem:
     def test_target_groups_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
         assert item.target_groups == []
+        assert item.has_text_content is True
 
     def test_links_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
@@ -79,6 +80,8 @@ class TestContentItem:
     def test_anbefaling_fields_defaults_to_none(self):
         item = ContentItem(id="1", title="T", body="B", content_type="anbefaling")
         assert item.anbefaling_fields is None
+        assert item.document_url is None
+        assert item.is_pdf_only is False
 
     def test_content_item_with_full_fields(self):
         link = ContentLink(rel="forelder", type="retningslinje", id="parent-001")
@@ -97,6 +100,18 @@ class TestContentItem:
         assert len(item.links) == 1
         assert item.target_groups == ["lege", "sykepleier"]
         assert item.anbefaling_fields.styrke == "A"
+        assert item.has_text_content is True
+
+    def test_pdf_only_item_sets_is_pdf_only(self):
+        item = ContentItem(
+            id="pdf-001",
+            title="PDF item",
+            body="",
+            content_type="rapport",
+            document_url="https://helsedirektoratet.no/test.pdf",
+        )
+        assert item.has_text_content is False
+        assert item.is_pdf_only is True
 
 
 @pytest.mark.unit

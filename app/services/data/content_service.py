@@ -10,6 +10,7 @@ from typing import List, Optional, Set
 from pydantic import ValidationError
 from app.entities.content import ContentItem, ContentLink, AnbefalingFields
 from app.services.data.database_service import database_service
+from app.services.data.document_metadata import compute_document_metadata
 from app.services.repositories.content_repository import content_repository
 from app.constants import ALLOWED_INFO_TYPES_SET
 
@@ -80,6 +81,8 @@ class ContentService:
             # Parse JSON fields
             role_tags = self._parse_json_field(item.get("role_tags"), [])
             links = self._parse_links(item.get("links"))
+            document_meta = compute_document_metadata(item)
+            stored_has_text = item.get("has_text_content")
 
             # Parse anbefaling-specific fields if this is an anbefaling
             anbefaling_fields = None
@@ -114,6 +117,12 @@ class ContentService:
                 sist_faglig_oppdatert=item.get("sist_faglig_oppdatert"),
                 role_tags=role_tags if isinstance(role_tags, list) else [],
                 links=links,
+                has_text_content=(
+                    bool(stored_has_text)
+                    if stored_has_text is not None
+                    else document_meta["has_text_content"]
+                ),
+                document_url=item.get("document_url") or document_meta["document_url"],
                 anbefaling_fields=anbefaling_fields,
             )
             self.content.append(content_item)
@@ -199,6 +208,7 @@ class ContentService:
             for item in api_items:
                 role_tags = self._parse_json_field(item.get("role_tags"), [])
                 links = self._parse_links(item.get("links"))
+                document_meta = compute_document_metadata(item)
 
                 content_item = ContentItem(
                     id=str(item.get("id", item.get("infoId", ""))),
@@ -208,6 +218,8 @@ class ContentService:
                     path=item.get("path"),
                     role_tags=role_tags if isinstance(role_tags, list) else [],
                     links=links,
+                    has_text_content=document_meta["has_text_content"],
+                    document_url=document_meta["document_url"],
                 )
                 self.content.append(content_item)
 

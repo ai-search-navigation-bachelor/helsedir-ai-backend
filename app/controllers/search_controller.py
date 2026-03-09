@@ -28,6 +28,7 @@ from app.dto.response.search import (
 from app.services.search.search_service import search_service
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
+from app.services.data.document_metadata import build_content_metadata
 from app.services.repositories.content_repository import content_repository
 from app.config import settings
 from app.constants import (
@@ -410,6 +411,9 @@ class SearchController:
                     title=theme_page.title,
                     info_type='temaside',
                     path=theme_page.path,
+                    has_text_content=theme_page.has_text_content,
+                    document_url=theme_page.public_document_url,
+                    is_pdf_only=theme_page.is_pdf_only,
                     score=max_score,
                     explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%"
                 ))
@@ -459,12 +463,21 @@ class SearchController:
                 if not info_type:
                     continue
 
+                metadata = build_content_metadata(
+                    content.get('path'),
+                    content.get('has_text_content'),
+                    content.get('document_url'),
+                )
+
                 # Create SearchResult for child content
                 child_result = SearchResult(
                     id=content.get('id', ''),
                     title=content.get('tittel', ''),
                     info_type=info_type,
                     path=content.get('path'),
+                    has_text_content=metadata["has_text_content"],
+                    document_url=metadata["document_url"],
+                    is_pdf_only=metadata["is_pdf_only"],
                     score=1.0,  # Children inherit parent's relevance
                     explanation=f"Under {result.title}"
                 )
