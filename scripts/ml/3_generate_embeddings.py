@@ -40,26 +40,21 @@ def store_embeddings_batch(
     if not conn:
         return 0
 
-    stored = 0
     try:
         cursor = conn.cursor()
-        for content_id, embedding_bytes in ids_and_embeddings:
-            try:
-                cursor.execute(
-                    "UPDATE content SET embedding = %s WHERE id = %s",
-                    (embedding_bytes, content_id)
-                )
-                stored += 1
-            except Exception as e:
-                print(f"  Error storing embedding for {content_id}: {e}")
+        # executemany is faster than individual execute calls
+        cursor.executemany(
+            "UPDATE content SET embedding = %s WHERE id = %s",
+            [(emb, cid) for cid, emb in ids_and_embeddings],
+        )
         conn.commit()
+        return len(ids_and_embeddings)
     except Exception as e:
         print(f"  Error committing batch: {e}")
+        return 0
     finally:
         cursor.close()
         conn.close()
-
-    return stored
 
 
 def load_embedding(db_service, content_id: str) -> bytes:
@@ -162,21 +157,15 @@ def main():
     else:
         print("\nSkipping enrichment (--no-enrich specified)")
 
-    # Build passages (same as training: HealthContentEmbedding.format_passage)
-    id_to_passage = {
-        str(item["id"]): HealthContentEmbedding.format_passage(item)
-        for item in content_items
-    }
-
-    # Show sample passages
-    print(f"\nBuilt {len(id_to_passage)} passages")
+    # Show sample passages (encode_passages calls format_passage internally)
+    print(f"\nSample passages:")
     shown = 0
     for item in content_items:
         if shown >= 3:
             break
-        passage = id_to_passage[str(item["id"])]
         linked_count = len(item.get("linked_content") or [])
         if linked_count > 0 or shown == 0:
+            passage = HealthContentEmbedding.format_passage(item)
             print(f"\n  [{item.get('info_type')}] {item.get('tittel', '')[:60]}")
             print(f"  Linked: {linked_count}, Passage length: {len(passage)} chars")
             print(f"  Preview: {passage[:200]}...")
