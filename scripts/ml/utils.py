@@ -1,104 +1,40 @@
 """
-Shared utilities for ML scripts (query generation, embedding generation).
+Shared utilities for ML scripts (training, embedding generation).
+
+Provides enrichment functions used by both 2_finetune_gpl.py and
+3_generate_embeddings.py to ensure identical passages.
 """
 
 import json
-import time
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List
 
-import httpx
-
-
-def fetch_linked_content(
-    href: str,
-    api_key: str,
-    timeout: float = 10.0,
-    debug: bool = False,
-) -> Optional[Dict[str, Any]]:
-    """
-    Fetch content from Helsedirektoratet API by href URL.
-
-    Args:
-        href: Full API URL (e.g., https://api.helsedirektoratet.no/innhold/kapitler/...)
-        api_key: Helsedirektoratet API key
-        timeout: Request timeout in seconds
-        debug: Print debug info about fetched content
-
-    Returns:
-        Dict with 'tittel', 'tekst', and 'type' fields, or None if fetch failed
-    """
-    try:
-        headers = {
-            "Ocp-Apim-Subscription-Key": api_key,
-            "Accept": "application/json",
-        }
-        if debug:
-            print(f"    [DEBUG] Fetching: {href}")
-
-        with httpx.Client() as client:
-            response = client.get(href, headers=headers, timeout=timeout)
-            if debug:
-                print(f"    [DEBUG] Status: {response.status_code}")
-
-            if response.status_code == 200:
-                data = response.json()
-                if debug:
-                    print(f"    [DEBUG] Response keys: {list(data.keys())}")
-                    print(f"    [DEBUG] tittel: {data.get('tittel', '')[:50]}")
-                    tekst = data.get("tekst", "")
-                    print(f"    [DEBUG] tekst length: {len(tekst) if tekst else 0}")
-                    if tekst:
-                        print(f"    [DEBUG] tekst preview: {tekst[:100]}...")
-
-                info_type = ""
-                tekniske_data = data.get("tekniskeData", {})
-                if tekniske_data:
-                    info_type = tekniske_data.get("infoType", "")
-
-                return {
-                    "tittel": data.get("tittel", ""),
-                    "tekst": data.get("tekst", ""),
-                    "type": info_type,
-                }
-            else:
-                if debug:
-                    print(f"    [DEBUG] Failed: status {response.status_code}")
-                    print(f"    [DEBUG] Response: {response.text[:200]}")
-    except Exception as e:
-        if debug:
-            print(f"    [DEBUG] Error: {e}")
-    return None
+project_root = Path(__file__).resolve().parents[2]
 
 
-def enrich_content_with_links(
+def enrich_with_child_content(
     content_items: List[Dict[str, Any]],
-    api_key: str,
-    max_links_per_item: int = 10,
-    format_passage_fn=None,
-) -> List[Dict[str, Any]]:
+) -> None:
     """
-    Enrich content items by fetching linked content from the Helsedir API.
+    Enrich content items with their children's title and text.
 
-    Fetches all link types (barn, forelder, root, publikasjon) for each item.
+    For each content item that has barn-links with resolved IDs:
+    - Adds child's tittel + tekst as linked_content
+    - If the child is a 'kapittel', also adds grandchildren (one extra depth level)
 
-    Args:
-        content_items: List of content dicts from the database
-        api_key: Helsedirektoratet API key
-        max_links_per_item: Maximum number of links to fetch per item
-        format_passage_fn: Optional function to format passages for debug preview
-
-    Returns:
-        Enriched content items with 'linked_content' field added
+    Modifies content_items in-place by adding/extending 'linked_content'.
     """
-    enriched = []
-    total_links_fetched = 0
-    items_enriched = 0
-    items_with_links = 0
-    passages_shown = 0
+    # Build lookup: id -> content item
+    id_to_content = {str(item["id"]): item for item in content_items}
 
-    print(f"  Processing {len(content_items)} items...")
+    enriched_count = 0
 
-    for i, item in enumerate(content_items):
+    for item in content_items:
+        # Skip temasider — they get separate enrichment via theme_page_content
+        info_type = (item.get("info_type") or "").lower()
+        if info_type == "temaside":
+            continue
+
         links_raw = item.get("links")
         if isinstance(links_raw, str):
             try:
@@ -108,87 +44,209 @@ def enrich_content_with_links(
         else:
             links = links_raw or []
 
-        linked_content = []
-        if links:
-            items_with_links += 1
-            links_to_fetch = links[:max_links_per_item]
-            debug_this_item = passages_shown < 3
+        linked_content = list(item.get("linked_content") or [])
+        added = 0
 
-            for link in links_to_fetch:
-                href = link.get("href")
-                if href:
-                    fetched = fetch_linked_content(href, api_key, debug=debug_this_item)
-                    if fetched and (fetched.get("tittel") or fetched.get("tekst")):
-                        linked_content.append(fetched)
-                        total_links_fetched += 1
-                    time.sleep(0.05)
+        for link in links:
+            if link.get("rel") != "barn":
+                continue
 
-            if linked_content:
-                items_enriched += 1
+            child_id = link.get("id")
+            if not child_id:
+                continue
 
-        enriched_item = dict(item)
-        enriched_item["linked_content"] = linked_content
-        enriched.append(enriched_item)
+            child = id_to_content.get(str(child_id))
+            if not child:
+                continue
 
-        if passages_shown < 3 and linked_content and format_passage_fn:
-            passages_shown += 1
-            print(f"\n{'='*80}")
-            print(f"PASSAGE {passages_shown}/3: {item.get('tittel', '')}")
-            print(f"{'='*80}")
-            print(f"ID: {item.get('id')}")
-            print(f"Type: {item.get('info_type')}")
-            print(f"Body length: {len(item.get('tekst') or '')} chars")
-            print(f"Links fetched: {len(linked_content)}")
-            print()
+            linked_content.append({
+                "tittel": child.get("tittel") or "",
+                "tekst": child.get("tekst") or "",
+                "type": child.get("info_type") or "",
+            })
+            added += 1
 
-            print("-" * 40)
-            print("MAIN CONTENT:")
-            print("-" * 40)
-            body = item.get("tekst") or ""
-            if body:
-                from app.ml.embedding_model import HealthContentEmbedding
-                clean_body = HealthContentEmbedding.strip_html_tags(body)
-                print(clean_body[:500] if len(clean_body) > 500 else clean_body)
-                if len(clean_body) > 500:
-                    print(f"[...{len(clean_body) - 500} more chars...]")
-            else:
-                print("(no body text)")
-            print()
-
-            print("-" * 40)
-            print("LINKED CONTENT:")
-            print("-" * 40)
-            for j, lc in enumerate(linked_content, 1):
-                print(f"\n  LINK {j}: {lc.get('tittel', '(no title)')}")
-                lc_tekst = lc.get("tekst", "")
-                if lc_tekst:
-                    from app.ml.embedding_model import HealthContentEmbedding
-                    clean_lc = HealthContentEmbedding.strip_html_tags(lc_tekst)
-                    print(f"  Text ({len(clean_lc)} chars): {clean_lc[:300]}")
-                    if len(clean_lc) > 300:
-                        print(f"  [...{len(clean_lc) - 300} more chars...]")
+            # If child is a kapittel, go one level deeper
+            child_type = (child.get("info_type") or "").lower()
+            if child_type == "kapittel":
+                child_links_raw = child.get("links")
+                if isinstance(child_links_raw, str):
+                    try:
+                        child_links = json.loads(child_links_raw)
+                    except json.JSONDecodeError:
+                        child_links = []
                 else:
-                    print("  Text: (no text)")
+                    child_links = child_links_raw or []
 
-            print()
-            print("-" * 40)
-            print("FULL FORMATTED PASSAGE:")
-            print("-" * 40)
-            passage = format_passage_fn(enriched_item)
-            print(passage)
-            print(f"\n[Total passage length: {len(passage)} chars]")
-            print()
+                for child_link in child_links:
+                    if child_link.get("rel") != "barn":
+                        continue
 
-        if (i + 1) % 10 == 0:
-            print(
-                f"  [{i + 1}/{len(content_items)}] "
-                f"Items with links: {items_with_links}, "
-                f"Enriched: {items_enriched}, "
-                f"Links fetched: {total_links_fetched}"
-            )
+                    grandchild_id = child_link.get("id")
+                    if not grandchild_id:
+                        continue
 
-    print(
-        f"\n  Done! Enriched {items_enriched}/{items_with_links} items "
-        f"with {total_links_fetched} linked documents"
-    )
-    return enriched
+                    grandchild = id_to_content.get(str(grandchild_id))
+                    if not grandchild:
+                        continue
+
+                    linked_content.append({
+                        "tittel": grandchild.get("tittel") or "",
+                        "tekst": grandchild.get("tekst") or "",
+                        "type": grandchild.get("info_type") or "",
+                    })
+                    added += 1
+
+        if added > 0:
+            item["linked_content"] = linked_content
+            enriched_count += 1
+
+    print(f"  Enriched {enriched_count} items with child content")
+
+
+def enrich_temasider_with_children(
+    content_items: List[Dict[str, Any]],
+) -> None:
+    """
+    Enrich temaside content items with linked content from the database.
+
+    Uses theme_page_content junction table (populated by link_theme_pages.py)
+    to find which real content belongs under each temaside. Also includes
+    child temasider's linked content (grandchildren) for richer passages.
+
+    Modifies content_items in-place by adding 'linked_content' to temasider.
+    Falls back to theme_pages.json hierarchy titles if DB is unavailable.
+    """
+    from app.services.repositories.base import db_pool
+
+    conn = db_pool.get_connection()
+    if not conn:
+        print("  Warning: No database connection, falling back to hierarchy")
+        _enrich_from_hierarchy(content_items)
+        return
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        # Load all theme_page_content links
+        cursor.execute("""
+            SELECT tpc.theme_page_id, c.id, c.tittel, c.tekst, c.info_type
+            FROM theme_page_content tpc
+            JOIN content c ON c.id = tpc.content_id
+            ORDER BY tpc.theme_page_id, tpc.display_order
+        """)
+        rows = cursor.fetchall()
+
+        # Group by theme page
+        theme_to_content: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            theme_id = row["theme_page_id"]
+            theme_to_content.setdefault(theme_id, []).append({
+                "tittel": row["tittel"] or "",
+                "tekst": row["tekst"] or "",
+                "type": row["info_type"] or "",
+            })
+
+        print(f"  Loaded {len(rows)} theme-content links for {len(theme_to_content)} temasider")
+
+    except Exception as e:
+        print(f"  Warning: Could not load theme_page_content: {e}")
+        theme_to_content = {}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    if not theme_to_content:
+        _enrich_from_hierarchy(content_items)
+        return
+
+    # Build temaside hierarchy for parent pages that have child temasider
+    theme_pages_path = project_root / "data" / "theme_pages.json"
+    child_temaside_ids: Dict[str, List[str]] = {}
+    if theme_pages_path.exists():
+        with open(theme_pages_path, "r", encoding="utf-8") as f:
+            theme_pages = json.load(f)
+
+        path_to_id = {tp["path"].rstrip("/"): tp["id"] for tp in theme_pages}
+        for tp in theme_pages:
+            parent_id = tp["id"]
+            for link in tp.get("links", []):
+                if link.get("rel") == "barn":
+                    child_path = link["href"].rstrip("/")
+                    child_id = path_to_id.get(child_path)
+                    if child_id:
+                        child_temaside_ids.setdefault(parent_id, []).append(child_id)
+
+    enriched_count = 0
+    for item in content_items:
+        info_type = (item.get("info_type") or item.get("content_type") or "").lower()
+        if info_type != "temaside":
+            continue
+
+        item_id = str(item.get("id", ""))
+        linked = []
+
+        # Direct content linked to this temaside
+        if item_id in theme_to_content:
+            linked.extend(theme_to_content[item_id])
+
+        # Also include content from child temasider (grandchildren)
+        for child_id in child_temaside_ids.get(item_id, []):
+            if child_id in theme_to_content:
+                linked.extend(theme_to_content[child_id])
+
+        if linked:
+            item["linked_content"] = linked
+            enriched_count += 1
+
+    print(f"  Enriched {enriched_count} temasider with linked content")
+
+
+def _enrich_from_hierarchy(content_items: List[Dict[str, Any]]) -> None:
+    """Fallback: enrich temasider using theme_pages.json titles only."""
+    theme_pages_path = project_root / "data" / "theme_pages.json"
+    if not theme_pages_path.exists():
+        print("  Warning: theme_pages.json not found, no enrichment possible")
+        return
+
+    with open(theme_pages_path, "r", encoding="utf-8") as f:
+        theme_pages = json.load(f)
+
+    path_to_page = {tp["path"].rstrip("/"): tp for tp in theme_pages}
+    path_to_children: Dict[str, List[str]] = {}
+    for tp in theme_pages:
+        for link in tp.get("links", []):
+            if link.get("rel") == "barn":
+                path_to_children.setdefault(
+                    tp["path"].rstrip("/"), []
+                ).append(link["href"].rstrip("/"))
+
+    enriched_count = 0
+
+    for item in content_items:
+        info_type = (item.get("info_type") or item.get("content_type") or "").lower()
+        if info_type != "temaside":
+            continue
+
+        item_path = (item.get("path") or "").rstrip("/")
+        if not item_path:
+            continue
+
+        linked = []
+        for child_path in path_to_children.get(item_path, []):
+            child_page = path_to_page.get(child_path)
+            if child_page:
+                linked.append({"tittel": child_page["tittel"], "tekst": "", "type": "temaside"})
+                for gc_path in path_to_children.get(child_path, []):
+                    gc_page = path_to_page.get(gc_path)
+                    if gc_page:
+                        linked.append({"tittel": gc_page["tittel"], "tekst": "", "type": "temaside"})
+
+        if linked:
+            item["linked_content"] = linked
+            enriched_count += 1
+
+    print(f"  Fallback: enriched {enriched_count} temasider with child temaside titles")
