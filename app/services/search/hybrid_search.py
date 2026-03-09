@@ -61,6 +61,8 @@ class HybridSearch:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
@@ -74,6 +76,8 @@ class HybridSearch:
                 rrf_k=rrf_k,
                 temaside_boost=temaside_boost,
                 retningslinje_boost=retningslinje_boost,
+                role_boost=role_boost,
+                role_penalty=role_penalty,
             )
         except Exception:
             logger.exception("Error in RRF fusion")
@@ -101,6 +105,8 @@ class HybridSearch:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
         t_start = time.perf_counter()
@@ -215,11 +221,13 @@ class HybridSearch:
 
         # Apply role-based soft boost/penalty
         if role:
+            effective_role_boost = role_boost if role_boost is not None else settings.search_role_match_boost
+            effective_role_penalty = role_penalty if role_penalty is not None else settings.search_role_mismatch_penalty
             for c in candidates:
                 if role in c.item.role_tags:
-                    c.role_boost = settings.search_role_match_boost
+                    c.role_boost = effective_role_boost
                 elif c.item.role_tags:  # has tags but no match
-                    c.role_boost = settings.search_role_mismatch_penalty
+                    c.role_boost = effective_role_penalty
                 # No tags = neutral (1.0, default)
                 c.combined_score *= c.role_boost
 
