@@ -137,7 +137,7 @@ class TestBM25Search:
             title="Diabetes for lege",
             body="",
             content_type="retningslinje",
-            target_groups=["lege"],
+            role_tags=["lege"],
         )
         content_service.content.append(role_item)
         content_service.content_by_id["bm25-role-001"] = role_item
@@ -155,7 +155,7 @@ class TestBM25Search:
             title="Diabetes lege spesial",
             body="",
             content_type="retningslinje",
-            target_groups=["lege"],
+            role_tags=["lege"],
         )
         content_service.content.append(role_item)
         content_service.content_by_id["bm25-role-002"] = role_item

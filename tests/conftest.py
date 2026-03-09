@@ -44,6 +44,7 @@ SAMPLE_CONTENT = [
         body="Tekst om diabetes behandling og forebygging.",
         content_type="retningslinje",
         path="/retningslinjer/diabetes",
+        has_text_content=True,
     ),
     ContentItem(
         id="002",
