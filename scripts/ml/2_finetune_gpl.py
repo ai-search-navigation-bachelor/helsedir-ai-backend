@@ -6,11 +6,11 @@ GPL uses an LLM to generate synthetic queries for each document, then trains
 the embedding model contrastively to match queries to their source documents.
 
 OPTIMIZATIONS:
-1. Smart Batch Construction with Multiple Hard Negatives
-   - Mines top-K hard negatives using pre-computed embeddings (cosine similarity)
-   - Includes ALL hard negatives in batches as "fake positives"
-   - MNRL treats them as in-batch negatives → actually uses hard-mined negatives!
-   - Effective batch size: batch_size * (1 + num_hard_negatives)
+1. Per-Query Hard Negative Mining with Native MNRL
+   - Encodes all queries with base model, computes similarity against document embeddings
+   - Mines top-K hard negatives per query (not per document)
+   - Each InputExample = [query, positive, neg1, neg2, ...] — MNRL pushes away from
+     both explicit hard negatives AND in-batch negatives from other examples
 
 2. Mixed Precision Training (AMP)
    - 2x faster training with same quality
@@ -808,7 +808,6 @@ def main():
     # Pre-training sanity check
     print(f"\nPre-training sanity check:")
     sample = triplets[0]
-    from sentence_transformers import util
     emb_q = model.encode(sample["query"])
     emb_p = model.encode(sample["positive"])
     emb_n = model.encode(sample["hard_negatives"][0])  # Use hardest negative
