@@ -696,28 +696,68 @@ def _build_lookup() -> Dict[str, FrozenSet[str]]:
 SYNONYM_LOOKUP: Dict[str, FrozenSet[str]] = _build_lookup()
 
 
-def expand_terms(terms: List[str]) -> Set[str]:
-    """
-    Expand a list of query terms with synonyms.
+def _build_multi_word_index() -> Dict[str, List[str]]:
+    """Index multi-word synonyms by their first word for fast lookup."""
+    index: Dict[str, List[str]] = {}
+    for term in SYNONYM_LOOKUP:
+        if " " in term:
+            first_word = term.split()[0]
+            index.setdefault(first_word, []).append(term)
+    return index
 
-    Handles both single-word and multi-word synonym matches.
-    Returns the original terms plus any synonym expansions.
+
+_MULTI_WORD_INDEX: Dict[str, List[str]] = _build_multi_word_index()
+
+# Weight for synonym terms relative to original query terms (1.0).
+# Lower weight means synonyms help recall without dominating scoring.
+SYNONYM_WEIGHT: float = 0.5
+
+
+def expand_terms(terms: List[str]) -> Dict[str, float]:
     """
-    expanded = set(terms)
+    Expand query terms with weighted synonyms for BM25 scoring.
+
+    Returns dict of term -> weight. Original terms get weight 1.0,
+    synonyms get SYNONYM_WEIGHT (0.5) so they boost recall without
+    overpowering the original query intent.
+
+    Only single-word synonyms are added as expansion terms. Multi-word
+    synonyms (e.g. "akutt hjerteinfarkt") are not split into individual
+    words to avoid false matches on common words like "type" or "akutt".
+    """
+    weights: Dict[str, float] = {}
+    for t in terms:
+        weights[t] = weights.get(t, 0.0) + 1.0
+
     query_text = " ".join(terms)
+    matched_spans: List[tuple] = []
 
-    # Check multi-word synonyms against the full query text
-    for term, synonyms in SYNONYM_LOOKUP.items():
-        if " " in term and term in query_text:
-            for syn in synonyms:
-                if syn != term:
-                    expanded.update(syn.split())
+    # Multi-word query matches: if query contains a multi-word synonym,
+    # add single-word synonyms from that group
+    for term in terms:
+        for candidate in _MULTI_WORD_INDEX.get(term, []):
+            start = query_text.find(candidate)
+            if start >= 0:
+                end = start + len(candidate)
+                if not any(s < end and e > start for s, e in matched_spans):
+                    matched_spans.append((start, end))
+                    for syn in SYNONYM_LOOKUP[candidate]:
+                        if syn != candidate and " " not in syn:
+                            if syn not in weights:
+                                weights[syn] = SYNONYM_WEIGHT
 
-    # Check single-word synonyms
-    for term in list(terms):
+    # Single-word synonyms (skip words covered by multi-word match)
+    covered_words = set()
+    for s, e in matched_spans:
+        covered_words.update(query_text[s:e].split())
+
+    for term in terms:
+        if term in covered_words:
+            continue
         if term in SYNONYM_LOOKUP:
             for syn in SYNONYM_LOOKUP[term]:
-                if syn != term:
-                    expanded.update(syn.split())
+                if syn != term and " " not in syn:
+                    if syn not in weights:
+                        weights[syn] = SYNONYM_WEIGHT
 
-    return expanded
+    return weights
