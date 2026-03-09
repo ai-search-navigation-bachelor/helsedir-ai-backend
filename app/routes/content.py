@@ -225,22 +225,41 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
             search_id=search_id,
             content_id=content.id,
         ))
+    should_resolve_related_links = _should_resolve_related_links(content)
+    if should_resolve_related_links:
+        coros.append(run_in_threadpool(_get_report_related_links, content))
     results = await asyncio.gather(*coros, return_exceptions=True)
     links_result = results[0]
     if isinstance(links_result, BaseException):
         raise links_result
     links_response = links_result
-    if len(results) > 1 and isinstance(results[1], BaseException):
-        logger.warning("Failed to log click for search_id=%s: %s", search_id, results[1], exc_info=results[1])
+    next_result_index = 1
+    if search_id:
+        if isinstance(results[next_result_index], BaseException):
+            logger.warning(
+                "Failed to log click for search_id=%s: %s",
+                search_id,
+                results[next_result_index],
+                exc_info=results[next_result_index],
+            )
+        next_result_index += 1
 
     linked_content_response = None
     if content.content_type.lower() == "temaside":
         linked_content_response = _get_theme_page_linked_content(content.id)
 
     related_links_response = None
-    if _should_resolve_related_links(content):
-        related_links_result = await run_in_threadpool(_get_report_related_links, content)
-        related_links_response = related_links_result
+    if should_resolve_related_links:
+        related_links_result = results[next_result_index]
+        if isinstance(related_links_result, BaseException):
+            logger.warning(
+                "Failed to resolve related links for content_id=%s: %s",
+                content.id,
+                related_links_result,
+                exc_info=related_links_result,
+            )
+        else:
+            related_links_response = related_links_result
 
     anbefaling_fields_response = None
     if content.anbefaling_fields:

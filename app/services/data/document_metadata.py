@@ -193,6 +193,9 @@ def extract_related_links_from_public_html(
         except json.JSONDecodeError:
             continue
 
+        if not isinstance(payload, Mapping):
+            continue
+
         props = payload.get("props")
         related_links = props.get("relatedLinks") if isinstance(props, Mapping) else None
         if not isinstance(related_links, list):
@@ -234,7 +237,7 @@ def resolve_public_related_links(
     client: Optional[httpx.Client] = None,
 ) -> List[Dict[str, Any]]:
     """Resolve related links from the public HTML page for textless report pages."""
-    page_url = _build_public_content_url(path, public_url.strip() if isinstance(public_url, str) else public_url)
+    page_url = _build_public_content_url(path, public_url.strip() if isinstance(public_url, str) else None)
     if not page_url:
         return []
 
