@@ -4,11 +4,11 @@ Entity models.
 Core business entities that represent the domain model.
 """
 
-from typing import List, Optional, Self
+from typing import List, Optional
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from app.services.data.document_metadata import has_visible_text, resolve_public_document_url
+from pydantic import BaseModel, ConfigDict, model_validator
+from app.services.data.document_metadata import resolve_public_document_url
 
 
 class ContentLink(BaseModel):
@@ -59,17 +59,15 @@ class ContentItem(BaseModel):
     body: str
     content_type: str
     path: Optional[str] = None
+    forst_publisert: Optional[datetime] = None
+    sist_faglig_oppdatert: Optional[datetime] = None
     role_tags: List[str] = []
     links: List[ContentLink] = []
+    has_text_content: bool = False
+    document_url: Optional[str] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFields] = None
-
-    @model_validator(mode='after')
-    def populate_content_metadata(self) -> Self:
-        """Ensure text metadata is consistent for in-memory content items."""
-        self.has_text_content = bool(has_visible_text(self.body))
-        return self
 
     @property
     def info_type(self) -> str:

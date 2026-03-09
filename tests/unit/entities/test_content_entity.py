@@ -67,7 +67,7 @@ class TestContentItem:
     def test_target_groups_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
         assert item.target_groups == []
-        assert item.has_text_content is True
+        assert item.has_text_content is False  # defaults to False; caller must set explicitly
 
     def test_links_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
@@ -92,8 +92,9 @@ class TestContentItem:
             body="Mye tekst.",
             content_type="anbefaling",
             path="/anbefalinger/full-001",
-            target_groups=["lege", "sykepleier"],
+            role_tags=["lege", "sykepleier"],
             links=[link],
+            has_text_content=True,
             anbefaling_fields=anbefaling,
         )
         assert item.id == "full-001"
