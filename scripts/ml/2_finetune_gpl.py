@@ -200,12 +200,9 @@ def load_or_generate_queries(
     Returns:
         Dict mapping content_id to list of queries
     """
-    # Filter out temasider (they have their own system)
-    content_items = [
-        item for item in content_items
-        if item.get("info_type", "").lower() != "temaside"
-    ]
-    print(f"Filtered content: {len(content_items)} documents (excluding temasider)")
+    # Note: temasider are now included in training. Their passages are enriched
+    # with child/grandchild content in create_training_triplets().
+    print(f"Content: {len(content_items)} documents (including temasider)")
 
     # Try to load from cache
     if cache_path.exists():
@@ -373,6 +370,155 @@ def find_hard_negatives(
     return [cid for cid, _ in similarities[:top_k]]
 
 
+def enrich_temasider_with_children(
+    content_items: List[Dict[str, Any]],
+) -> None:
+    """
+    Enrich temaside content items with linked content from the database.
+
+    Uses theme_page_content junction table (populated by link_theme_pages.py)
+    to find which real content belongs under each temaside. Also includes
+    child temasider's linked content (grandchildren) for richer passages.
+
+    Modifies content_items in-place by adding 'linked_content' to temasider.
+    """
+    from app.services.repositories.base import db_pool
+
+    conn = db_pool.get_connection()
+    if not conn:
+        print("  Warning: No database connection, skipping temaside enrichment")
+        return
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        # Load all theme_page_content links
+        cursor.execute("""
+            SELECT tpc.theme_page_id, c.id, c.tittel, c.tekst, c.info_type
+            FROM theme_page_content tpc
+            JOIN content c ON c.id = tpc.content_id
+            ORDER BY tpc.theme_page_id, tpc.display_order
+        """)
+        rows = cursor.fetchall()
+
+        # Group by theme page
+        theme_to_content: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            theme_id = row["theme_page_id"]
+            theme_to_content.setdefault(theme_id, []).append({
+                "tittel": row["tittel"] or "",
+                "tekst": row["tekst"] or "",
+                "type": row["info_type"] or "",
+            })
+
+        print(f"  Loaded {len(rows)} theme-content links for {len(theme_to_content)} temasider")
+
+    except Exception as e:
+        print(f"  Warning: Could not load theme_page_content: {e}")
+        theme_to_content = {}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    if not theme_to_content:
+        # Fallback: use theme_pages.json hierarchy (temaside titles only)
+        _enrich_from_hierarchy(content_items)
+        return
+
+    # Also build temaside hierarchy for parent pages that have child temasider
+    theme_pages_path = project_root / "data" / "theme_pages.json"
+    child_temaside_ids: Dict[str, List[str]] = {}  # parent_id -> [child_temaside_ids]
+    if theme_pages_path.exists():
+        with open(theme_pages_path, "r", encoding="utf-8") as f:
+            theme_pages = json.load(f)
+
+        path_to_id = {tp["path"].rstrip("/"): tp["id"] for tp in theme_pages}
+        for tp in theme_pages:
+            parent_id = tp["id"]
+            for link in tp.get("links", []):
+                if link.get("rel") == "barn":
+                    child_path = link["href"].rstrip("/")
+                    child_id = path_to_id.get(child_path)
+                    if child_id:
+                        child_temaside_ids.setdefault(parent_id, []).append(child_id)
+
+    enriched_count = 0
+    for item in content_items:
+        info_type = (item.get("info_type") or item.get("content_type") or "").lower()
+        if info_type != "temaside":
+            continue
+
+        item_id = str(item.get("id", ""))
+        linked = []
+
+        # Direct content linked to this temaside
+        if item_id in theme_to_content:
+            linked.extend(theme_to_content[item_id])
+
+        # Also include content from child temasider (grandchildren)
+        for child_id in child_temaside_ids.get(item_id, []):
+            if child_id in theme_to_content:
+                linked.extend(theme_to_content[child_id])
+
+        if linked:
+            item["linked_content"] = linked
+            enriched_count += 1
+
+    print(f"  Enriched {enriched_count} temasider with linked content")
+
+
+def _enrich_from_hierarchy(content_items: List[Dict[str, Any]]) -> None:
+    """Fallback: enrich temasider using theme_pages.json titles only."""
+    theme_pages_path = project_root / "data" / "theme_pages.json"
+    if not theme_pages_path.exists():
+        print("  Warning: theme_pages.json not found, no enrichment possible")
+        return
+
+    with open(theme_pages_path, "r", encoding="utf-8") as f:
+        theme_pages = json.load(f)
+
+    path_to_page = {tp["path"].rstrip("/"): tp for tp in theme_pages}
+    path_to_children: Dict[str, List[str]] = {}
+    for tp in theme_pages:
+        for link in tp.get("links", []):
+            if link.get("rel") == "barn":
+                path_to_children.setdefault(
+                    tp["path"].rstrip("/"), []
+                ).append(link["href"].rstrip("/"))
+
+    id_to_item = {str(item.get("id", "")): item for item in content_items}
+    enriched_count = 0
+
+    for item in content_items:
+        info_type = (item.get("info_type") or item.get("content_type") or "").lower()
+        if info_type != "temaside":
+            continue
+
+        item_path = (item.get("path") or "").rstrip("/")
+        if not item_path:
+            continue
+
+        linked = []
+        # Add child and grandchild temaside titles
+        for child_path in path_to_children.get(item_path, []):
+            child_page = path_to_page.get(child_path)
+            if child_page:
+                linked.append({"tittel": child_page["tittel"], "tekst": "", "type": "temaside"})
+                for gc_path in path_to_children.get(child_path, []):
+                    gc_page = path_to_page.get(gc_path)
+                    if gc_page:
+                        linked.append({"tittel": gc_page["tittel"], "tekst": "", "type": "temaside"})
+
+        if linked:
+            item["linked_content"] = linked
+            enriched_count += 1
+
+    print(f"  Fallback: enriched {enriched_count} temasider with child temaside titles")
+
+
 def create_training_triplets(
     content_items: List[Dict[str, Any]],
     queries: Dict[str, List[str]],
@@ -388,6 +534,9 @@ def create_training_triplets(
 
     Returns triplets with multiple hard negatives for smart batch construction.
     """
+    # Enrich temasider with child content before building passages
+    enrich_temasider_with_children(content_items)
+
     # Load embeddings for hard negative mining
     embeddings = load_embeddings_from_db()
     use_hard_negatives = len(embeddings) > 0
