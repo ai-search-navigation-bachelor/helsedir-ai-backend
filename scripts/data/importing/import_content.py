@@ -119,7 +119,7 @@ def process_links_at_import(links: List[Dict], existing_ids: set) -> List[Dict]:
     return processed
 
 def _enrich_item_from_api(content_id: str, item: dict) -> None:
-    """Fetch detail from API and enrich item in-place with links, koder, maalgruppe, url."""
+    """Fetch detail from API and enrich item in-place with links, koder, maalgruppe, url, dates."""
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
     item["links"] = detailed.get("links")
     if detailed.get("koder") is not None:
@@ -128,6 +128,10 @@ def _enrich_item_from_api(content_id: str, item: dict) -> None:
         item["maalgruppe"] = detailed.get("maalgruppe")
     if detailed.get("url"):
         item["url"] = detailed.get("url")
+    if detailed.get("forstPublisert"):
+        item["forstPublisert"] = detailed["forstPublisert"]
+    if detailed.get("sistFagligOppdatert"):
+        item["sistFagligOppdatert"] = detailed["sistFagligOppdatert"]
 
 
 # Info types to fetch from API (exclude temaside as it only exists locally)

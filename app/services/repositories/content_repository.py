@@ -101,16 +101,13 @@ class ContentRepository:
             document_url = (
                 content["document_url"] if "document_url" in content else document_meta["document_url"]
             )
-            has_text_content_provided = "has_text_content" in content
-            document_url_provided = "document_url" in content
-
             cursor.execute(
                 """
                 INSERT INTO content (
-                    id, tittel, tekst, info_type, koder, role_tags, links, path,
+                    id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
                     has_text_content, document_url
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
@@ -118,15 +115,11 @@ class ContentRepository:
                     koder = COALESCE(VALUES(koder), koder),
                     role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
-                    path = VALUES(path),
-                    has_text_content = CASE
-                        WHEN %s THEN VALUES(has_text_content)
-                        ELSE has_text_content
-                    END,
-                    document_url = CASE
-                        WHEN %s THEN VALUES(document_url)
-                        ELSE document_url
-                    END
+                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                    has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                    document_url = COALESCE(VALUES(document_url), document_url),
+                    path = VALUES(path)
                 """,
                 (
                     content.get("id"),
@@ -136,11 +129,11 @@ class ContentRepository:
                     koder_json,
                     role_tags_json,
                     links_json,
+                    content.get("forstPublisert") or content.get("forst_publisert") or None,
+                    content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert") or None,
                     content.get("path"),
                     has_text_content,
                     document_url,
-                    has_text_content_provided,
-                    document_url_provided,
                 ),
             )
 
@@ -191,16 +184,13 @@ class ContentRepository:
                     document_url = (
                         content["document_url"] if "document_url" in content else document_meta["document_url"]
                     )
-                    has_text_content_provided = "has_text_content" in content
-                    document_url_provided = "document_url" in content
-
                     cursor.execute(
                         """
                         INSERT INTO content (
-                            id, tittel, tekst, info_type, koder, role_tags, links, path,
+                            id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
                             has_text_content, document_url
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
@@ -208,15 +198,11 @@ class ContentRepository:
                             koder = COALESCE(VALUES(koder), koder),
                             role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
-                            path = VALUES(path),
-                            has_text_content = CASE
-                                WHEN %s THEN VALUES(has_text_content)
-                                ELSE has_text_content
-                            END,
-                            document_url = CASE
-                                WHEN %s THEN VALUES(document_url)
-                                ELSE document_url
-                            END
+                            forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                            sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                            has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                            document_url = COALESCE(VALUES(document_url), document_url),
+                            path = VALUES(path)
                         """,
                         (
                             content.get("id"),
@@ -226,11 +212,11 @@ class ContentRepository:
                             koder_json,
                             role_tags_json,
                             links_json,
+                            content.get("forstPublisert") or content.get("forst_publisert"),
+                            content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert"),
                             content.get("path"),
                             has_text_content,
                             document_url,
-                            has_text_content_provided,
-                            document_url_provided,
                         ),
                     )
 
