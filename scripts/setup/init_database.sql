@@ -24,7 +24,13 @@ CREATE TABLE IF NOT EXISTS content (
     koder JSON,
     role_tags JSON,
     links JSON,
+    has_text_content TINYINT(1),
+    document_url TEXT,
     embedding BLOB,
+
+    -- Publishing dates from Helsedir API (not used for temaside)
+    forst_publisert DATETIME DEFAULT NULL,
+    sist_faglig_oppdatert DATETIME DEFAULT NULL,
 
     -- Theme page fields (only used when info_type='temaside')
     -- Also stores helsedirektoratet.no path for regular content (from API url field)
@@ -190,29 +196,30 @@ CREATE TABLE IF NOT EXISTS content_type_config (
 INSERT INTO content_type_config (info_type, searchable, display_name) VALUES
 -- Retningslinjer
 ('retningslinje',                        1, 'Retningslinje'),
-('nasjonalt-forlop',                     1, 'Nasjonalt forløp'),
-('pakkeforlop-anbefaling',               1, 'Pakkeforløp-anbefaling'),
-('normen-dokument',                      1, 'Normen-dokument'),
-('nasjonal-veileder',                    1, 'Nasjonal veileder'),
-('prioriteringsveileder',                1, 'Prioriteringsveileder'),
 -- Faglige råd
 ('anbefaling',                           1, 'Anbefaling'),
 ('rad',                                  1, 'Råd'),
 ('faglig-rad',                           1, 'Faglig råd'),
 ('pico',                                 0, 'PICO'),
--- Veiledere
-('takst-med-merknad',                    1, 'Takst med merknad'),
-('ehelsestandard',                       1, 'E-helsestandard'),
-('tilskudd',                             1, 'Tilskudd'),
+('nasjonalt-forlop',                     1, 'Nasjonalt forløp'),
+('pakkeforlop-anbefaling',               1, 'Pakkeforløp-anbefaling'),
+-- Veiledere og standarder
+('nasjonal-veileder',                    1, 'Nasjonal veileder'),
 ('veileder',                             1, 'Veileder'),
 ('veiledning',                           1, 'Veiledning'),
--- Rundskriv
-('rundskriv',                            1, 'Rundskriv'),
--- Lovfortolkning
+('veiviser',                             1, 'Veiviser'),
+('prioriteringsveileder',                1, 'Prioriteringsveileder'),
+('normen-dokument',                      1, 'Normen-dokument'),
+('ehelsestandard',                       1, 'E-helsestandard'),
+('takst-med-merknad',                    1, 'Takst med merknad'),
+('tilskudd',                             1, 'Tilskudd'),
+-- Regelverk
 ('lov-eller-forskriftstekst-med-kommentar', 1, 'Lov/forskrift med kommentar'),
+('lovfortolkning',                       1, 'Lovfortolkning'),
 ('regelverk-lov-eller-forskrift',        1, 'Regelverk'),
 ('veileder-lov-forskrift',               1, 'Veileder til lov og forskrift'),
 ('paragraf-med-kommentar',               1, 'Paragraf med kommentar'),
+('rundskriv',                            1, 'Rundskriv'),
 -- Statistikk og rapporter
 ('rapport',                              1, 'Rapport'),
 ('statistikkelement',                    1, 'Statistikkelement'),

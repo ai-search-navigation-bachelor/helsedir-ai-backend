@@ -42,6 +42,9 @@ class TestGetContentById:
         assert "title" in data
         assert "body" in data
         assert "content_type" in data
+        assert data["has_text_content"] is True
+        assert data["document_url"] is None
+        assert data["is_pdf_only"] is False
 
     def test_response_id_matches_requested(self, client, mocker):
         mocker.patch(

@@ -197,7 +197,7 @@ class TestKeywordSearchPipeline:
             title="Diabetes for lege",
             body="",
             content_type="retningslinje",
-            target_groups=["lege"],
+            role_tags=["lege"],
         )
         content_service.content.append(restricted)
         content_service.content_by_id["role-001"] = restricted
@@ -214,7 +214,7 @@ class TestKeywordSearchPipeline:
             title="Diabetes for lege guide",
             body="",
             content_type="retningslinje",
-            target_groups=["lege"],
+            role_tags=["lege"],
         )
         content_service.content.append(restricted)
         content_service.content_by_id["role-002"] = restricted

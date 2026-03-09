@@ -19,9 +19,11 @@ from app.dto.response.content import (
 )
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
+from app.services.data.document_metadata import build_content_metadata
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
+from app.exceptions.helsedir import HelseDirectorateAPIError
 from app.constants import get_category_display_name
 
 logger = logging.getLogger(__name__)
@@ -39,17 +41,24 @@ def _id_from_href(href: str) -> Optional[str]:
 
 def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
     """Build ContentLinkResponse list from a content item's barn sub-links."""
-    return [
-        ContentLinkResponse(
+    result = []
+    for gl in links:
+        if gl.rel != "barn":
+            continue
+        last_reviewed_date = None
+        if gl.id:
+            child = content_service.get_content_by_id(gl.id)
+            if child:
+                last_reviewed_date = child.sist_faglig_oppdatert
+        result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
-            tittel=gl.tittel,
+            title=gl.tittel,
             id=gl.id,
             href=gl.href,
-        )
-        for gl in links
-        if gl.rel == "barn"
-    ]
+            last_reviewed_date=last_reviewed_date,
+        ))
+    return result
 
 
 async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLinkResponse]:
@@ -65,49 +74,55 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
     """
     async def _build_link(link: ContentLink) -> ContentLinkResponse:
         children: List[ContentLinkResponse] = []
+        last_reviewed_date = None
+
+        # Look up cached content for id-based links
+        cached = None
+        if link.id:
+            cached = content_service.get_content_by_id(link.id)
+        elif link.href:
+            href_id = _id_from_href(link.href)
+            if href_id:
+                cached = content_service.get_content_by_id(href_id)
+
+        if cached:
+            last_reviewed_date = cached.sist_faglig_oppdatert
 
         if link.rel == "barn":
-            if link.id:
-                # Fast path: in-memory cache
-                child = content_service.get_content_by_id(link.id)
-                if child:
-                    children = _children_from_content_links(child.links)
+            if cached:
+                children = _children_from_content_links(cached.links)
             elif link.href:
-                # Try cache first by extracting the ID from the href URL
-                child = content_service.get_content_by_id(_id_from_href(link.href) or "")
-                if child:
-                    children = _children_from_content_links(child.links)
-                else:
-                    # Fallback: fetch from Helsedir API
-                    try:
-                        data = await helsedir_api_service.get_content_by_href_async(link.href)
-                        children = [
-                            ContentLinkResponse(
-                                rel=al.get("rel", "barn"),
-                                type=al.get("type") or al.get("infoType", ""),
-                                tittel=al.get("tittel"),
-                                id=al.get("id"),
-                                href=al.get("href"),
-                            )
-                            for al in (data.get("links") or [])
-                            if al.get("rel") == "barn"
-                            and (al.get("id") or al.get("href"))
-                        ]
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to fetch children for barn link %s: %s",
-                            link.href,
-                            exc,
-                            exc_info=True,
+                # Fallback: fetch from Helsedir API
+                try:
+                    data = await helsedir_api_service.get_content_by_href_async(link.href)
+                    children = [
+                        ContentLinkResponse(
+                            rel=al.get("rel", "barn"),
+                            type=al.get("type") or al.get("infoType", ""),
+                            title=al.get("tittel"),
+                            id=al.get("id"),
+                            href=al.get("href"),
                         )
+                        for al in (data.get("links") or [])
+                        if al.get("rel") == "barn"
+                        and (al.get("id") or al.get("href"))
+                    ]
+                except (HelseDirectorateAPIError, ValueError) as exc:
+                    logger.warning(
+                        "Failed to fetch children for barn link %s: %s",
+                        link.href,
+                        exc,
+                        exc_info=True,
+                    )
 
         return ContentLinkResponse(
             rel=link.rel,
             type=link.type,
-            tittel=link.tittel,
+            title=link.tittel,
             id=link.id,
             href=link.href,
             path=link.path,
+            last_reviewed_date=last_reviewed_date,
             children=children,
         )
 
@@ -137,12 +152,21 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
         if not info_type:
             continue
 
+        metadata = build_content_metadata(
+            content_item.get('path'),
+            content_item.get('has_text_content'),
+            content_item.get('document_url'),
+        )
+
         # Create LinkedContentItem
         linked_item = LinkedContentItem(
             id=content_item.get('id', ''),
             title=content_item.get('tittel', ''),
             info_type=info_type,
             path=content_item.get('path'),
+            has_text_content=metadata["has_text_content"],
+            document_url=metadata["document_url"],
+            is_pdf_only=metadata["is_pdf_only"],
         )
         grouped[info_type].append(linked_item)
 
@@ -197,7 +221,12 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         body=content.body,
         content_type=content.content_type,
         path=content.path,
+        first_published=content.forst_publisert,
+        last_reviewed_date=content.sist_faglig_oppdatert,
         role_tags=content.role_tags,
+        has_text_content=content.has_text_content,
+        document_url=content.public_document_url,
+        is_pdf_only=content.is_pdf_only,
         links=links_response,
         linked_content=linked_content_response,
         anbefaling_fields=anbefaling_fields_response,

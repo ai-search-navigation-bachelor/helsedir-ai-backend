@@ -29,6 +29,9 @@ def _mock_search_response(
                 id="001",
                 title="Diabetes retningslinje",
                 info_type="retningslinje",
+                has_text_content=False,
+                document_url="https://example.test/doc/1",
+                is_pdf_only=True,
                 score=0.9,
                 explanation="test",
             )
@@ -62,6 +65,9 @@ def _mock_categorized_response(query: str = "diabetes") -> CategorizedSearchResp
                         id="001",
                         title="Diabetes",
                         info_type="retningslinje",
+                        has_text_content=False,
+                        document_url="https://example.test/doc/1",
+                        is_pdf_only=True,
                         score=0.9,
                         explanation="test",
                     )
@@ -114,6 +120,9 @@ class TestSearchRoute:
             assert "title" in result
             assert "score" in result
             assert "info_type" in result
+            assert result["has_text_content"] is False
+            assert result["document_url"] == "https://example.test/doc/1"
+            assert result["is_pdf_only"] is True
 
     def test_invalid_method_returns_400(self, client):
         response = client.get("/search?query=diabetes&method=invalid_method")

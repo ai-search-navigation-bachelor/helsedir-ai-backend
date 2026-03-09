@@ -67,6 +67,7 @@ class TestContentItem:
     def test_target_groups_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
         assert item.target_groups == []
+        assert item.has_text_content is False  # defaults to False; caller must set explicitly
 
     def test_links_defaults_to_empty_list(self):
         item = ContentItem(id="1", title="T", body="B", content_type="veileder")
@@ -79,24 +80,47 @@ class TestContentItem:
     def test_anbefaling_fields_defaults_to_none(self):
         item = ContentItem(id="1", title="T", body="B", content_type="anbefaling")
         assert item.anbefaling_fields is None
+        assert item.document_url is None
+        assert item.is_pdf_only is False
 
     def test_content_item_with_full_fields(self):
+        from datetime import datetime
+
         link = ContentLink(rel="forelder", type="retningslinje", id="parent-001")
         anbefaling = AnbefalingFields(styrke="A", rasjonale="Fordi det virker.")
+        pub_date = datetime(2023, 1, 15, 10, 0, 0)
+        review_date = datetime(2024, 6, 20, 14, 30, 0)
         item = ContentItem(
             id="full-001",
             title="Full item",
             body="Mye tekst.",
             content_type="anbefaling",
             path="/anbefalinger/full-001",
-            target_groups=["lege", "sykepleier"],
+            forst_publisert=pub_date,
+            sist_faglig_oppdatert=review_date,
+            role_tags=["lege", "sykepleier"],
             links=[link],
+            has_text_content=True,
             anbefaling_fields=anbefaling,
         )
         assert item.id == "full-001"
         assert len(item.links) == 1
         assert item.target_groups == ["lege", "sykepleier"]
         assert item.anbefaling_fields.styrke == "A"
+        assert item.has_text_content is True
+        assert item.forst_publisert == pub_date
+        assert item.sist_faglig_oppdatert == review_date
+
+    def test_pdf_only_item_sets_is_pdf_only(self):
+        item = ContentItem(
+            id="pdf-001",
+            title="PDF item",
+            body="",
+            content_type="rapport",
+            document_url="https://helsedirektoratet.no/test.pdf",
+        )
+        assert item.has_text_content is False
+        assert item.is_pdf_only is True
 
 
 @pytest.mark.unit
