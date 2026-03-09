@@ -185,13 +185,14 @@ def resolve_pdf_report_chapter_document_url(
 
     This function is intended for import/backfill flows, not request-time use.
     """
+    normalized_public_url = public_url.strip() if isinstance(public_url, str) else None
     if not (
         is_pdf_report_chapter_path(path)
-        or (public_url and is_pdf_report_chapter_path(urlparse(public_url).path))
+        or (normalized_public_url and is_pdf_report_chapter_path(urlparse(normalized_public_url).path))
     ):
         return None
 
-    page_url = _build_public_content_url(path, public_url)
+    page_url = _build_public_content_url(path, normalized_public_url)
     if not page_url:
         return None
 
@@ -274,7 +275,13 @@ def compute_document_metadata_with_fallback(
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     """
-    Compute metadata and fall back to public HTML scraping for PDF chapters.
+    Compute metadata and, for PDF chapter payloads only, fall back to public
+    HTML scraping when the primary metadata has no document URL.
+
+    Intended for import/backfill flows, not request-time use. This will only
+    attempt the network fallback when `_is_pdf_report_chapter_payload(payload)`
+    is true, and `resolve_pdf_report_chapter_document_url` may perform blocking
+    HTTP calls using the provided timeout/client.
     """
     meta = compute_document_metadata(payload)
     if meta["document_url"] or not _is_pdf_report_chapter_payload(payload):

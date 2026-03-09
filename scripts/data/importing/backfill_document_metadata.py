@@ -118,9 +118,9 @@ def _apply_updates_in_batches(
     return updated_total
 
 
-def _fetch_document_metadata(content_id: str) -> Tuple[str, Optional[str]]:
+def _fetch_document_metadata(content_id: str, client: httpx.Client) -> Tuple[str, Optional[str]]:
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
-    meta = compute_document_metadata_with_fallback(detailed)
+    meta = compute_document_metadata_with_fallback(detailed, client=client)
     return content_id, meta["document_url"]
 
 
@@ -144,20 +144,21 @@ def main():
     local_updates: List[Tuple[int, Optional[str], str]] = []
     api_candidates: List[str] = []
 
-    for index, row in enumerate(rows, start=1):
-        meta = compute_document_metadata_with_fallback(row)
-        has_text = int(meta["has_text_content"])
-        document_url = row.get("document_url") or meta["document_url"]
-        local_updates.append((has_text, document_url, row["id"]))
+    with httpx.Client(timeout=20.0, follow_redirects=True) as shared_client:
+        for index, row in enumerate(rows, start=1):
+            meta = compute_document_metadata_with_fallback(row, client=shared_client)
+            has_text = int(meta["has_text_content"])
+            document_url = row.get("document_url") or meta["document_url"]
+            local_updates.append((has_text, document_url, row["id"]))
 
-        if not has_text and not document_url:
-            api_candidates.append(row["id"])
+            if not has_text and not document_url:
+                api_candidates.append(row["id"])
 
-        if index % 5000 == 0 or index == len(rows):
-            print(
-                f"Prepared local metadata for {index}/{len(rows)} rows; "
-                f"API lookups needed so far: {len(api_candidates)}"
-            )
+            if index % 5000 == 0 or index == len(rows):
+                print(
+                    f"Prepared local metadata for {index}/{len(rows)} rows; "
+                    f"API lookups needed so far: {len(api_candidates)}"
+                )
 
     updated = _apply_updates_in_batches(
         local_updates,
@@ -178,9 +179,9 @@ def main():
     started = time.perf_counter()
     progress_every = max(1, args.progress_every)
 
-    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
+    with httpx.Client(timeout=20.0, follow_redirects=True) as shared_client, ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
         futures = {
-            executor.submit(_fetch_document_metadata, content_id): content_id
+            executor.submit(_fetch_document_metadata, content_id, shared_client): content_id
             for content_id in api_candidates
         }
         for future in as_completed(futures):

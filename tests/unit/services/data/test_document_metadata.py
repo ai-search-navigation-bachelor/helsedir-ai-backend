@@ -243,6 +243,9 @@ class TestDocumentMetadata:
                 assert url == "https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten"
                 return DummyResponse('<a href="/rapporter/test/pdf-av-rapporten/test.pdf">Last ned</a>')
 
+            def close(self):
+                return None
+
         assert (
             resolve_pdf_report_chapter_document_url(
                 "/rapporter/test/pdf-av-rapporten",
@@ -263,6 +266,9 @@ class TestDocumentMetadata:
             def get(self, url):
                 assert url == "https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten"
                 return DummyResponse('<a href="https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten/test.pdf">Last ned</a>')
+
+            def close(self):
+                return None
 
         meta = compute_document_metadata_with_fallback(
             {

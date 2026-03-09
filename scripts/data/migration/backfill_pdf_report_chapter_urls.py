@@ -8,6 +8,7 @@ public Helsedirektoratet HTML page and stored in content.document_url.
 """
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -20,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from app.services.repositories.base import db_pool  # noqa: E402
 from app.services.data.document_metadata import compute_document_metadata_with_fallback  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def _require_db_connection(operation: str):
@@ -87,9 +90,10 @@ def _apply_updates(updates: List[Tuple[Optional[str], int, str]]) -> int:
         conn.close()
 
 
-def _resolve_row(row: Dict) -> Tuple[str, Optional[str], int]:
-    meta = compute_document_metadata_with_fallback(row, timeout=20.0)
-    return row["id"], meta["document_url"], int(meta["has_text_content"])
+def _resolve_row(row: Dict, client: httpx.Client) -> Tuple[str, Optional[str], int]:
+    meta = compute_document_metadata_with_fallback(row, timeout=20.0, client=client)
+    document_url = meta["document_url"] or row.get("document_url")
+    return row["id"], document_url, int(meta["has_text_content"])
 
 
 def main():
@@ -99,7 +103,11 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="Max rows to process (0 = all)")
     parser.add_argument("--workers", type=int, default=8, help="Parallel HTTP workers")
     parser.add_argument("--batch-size", type=int, default=50, help="DB update batch size")
+    parser.add_argument("--progress-every", type=int, default=1, help="Print progress every N rows")
+    parser.add_argument("--verbose", action="store_true", help="Print rows where no PDF URL was found")
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
 
     rows = _fetch_rows(limit=max(0, args.limit), force=args.force)
     if not rows:
@@ -116,9 +124,10 @@ def main():
     written = 0
     pending_updates: List[Tuple[Optional[str], int, str]] = []
     started = time.perf_counter()
+    progress_every = max(1, args.progress_every)
 
-    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
-        futures = {executor.submit(_resolve_row, row): row for row in rows}
+    with httpx.Client(timeout=20.0, follow_redirects=True) as shared_client, ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
+        futures = {executor.submit(_resolve_row, row, shared_client): row for row in rows}
         for future in as_completed(futures):
             row = futures[future]
             processed += 1
@@ -128,7 +137,7 @@ def main():
                     resolved += 1
                 else:
                     warnings += 1
-                    print(f"WARN {content_id}: no PDF URL found for path={row.get('path')}")
+                    logger.info("No PDF URL found for %s path=%s", content_id, row.get("path"))
 
                 pending_updates.append((document_url, has_text_content, content_id))
             except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
@@ -141,12 +150,13 @@ def main():
                     written += _apply_updates(pending_updates)
                 pending_updates.clear()
 
-            elapsed = max(time.perf_counter() - started, 0.001)
-            rate = processed / elapsed
-            print(
-                f"Progress: {processed}/{len(rows)} ({processed / len(rows):.1%}), "
-                f"resolved={resolved}, warnings={warnings}, rate={rate:.1f} rows/s"
-            )
+            if processed % progress_every == 0 or processed == len(rows):
+                elapsed = max(time.perf_counter() - started, 0.001)
+                rate = processed / elapsed
+                print(
+                    f"Progress: {processed}/{len(rows)} ({processed / len(rows):.1%}), "
+                    f"resolved={resolved}, warnings={warnings}, rate={rate:.1f} rows/s"
+                )
 
     if pending_updates and not args.dry_run:
         written += _apply_updates(pending_updates)
