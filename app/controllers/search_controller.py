@@ -572,6 +572,13 @@ class SearchController:
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
+        # Hybrid-specific params have no effect on non-hybrid searches; normalise so
+        # different callers with irrelevant params share the same cache entry.
+        if method != "hybrid":
+            bm25_weight = semantic_weight = rrf_k = None
+            temaside_boost = retningslinje_boost = None
+            role_boost = role_penalty = None
+
         cache_key = (
             query.strip().lower(),
             role,
@@ -713,6 +720,12 @@ class SearchController:
         role_penalty: Optional[float] = None,
     ) -> str:
         """Build a stable signature for the ranking configuration."""
+        # Normalise hybrid-only params so signatures are identical for non-hybrid methods
+        if method != "hybrid":
+            bm25_weight = semantic_weight = rrf_k = None
+            temaside_boost = retningslinje_boost = None
+            role_boost = role_penalty = None
+
         effective_tunables = {
             "method": method.strip().lower(),
             "bm25_weight": round(

@@ -89,6 +89,11 @@ class HybridSearch:
         if settings.ml_ranking_enabled:
             candidates = self._apply_ranking_model(candidates, role)
 
+        # Apply role boost/penalty after potential ML reranking (ML replaces combined_score)
+        for c in candidates:
+            c.combined_score *= c.role_boost
+        candidates.sort(key=lambda c: -c.combined_score)
+
         candidates = self._normalize_combined_scores(candidates)
 
         return self._build_results(candidates, k)
@@ -219,7 +224,8 @@ class HybridSearch:
             if boost != 1.0:
                 c.combined_score *= boost
 
-        # Apply role-based soft boost/penalty
+        # Store role boost/penalty on each candidate; application to combined_score
+        # happens in search() after ML reranking so the multiplier is not lost.
         if role:
             effective_role_boost = role_boost if role_boost is not None else settings.search_role_match_boost
             effective_role_penalty = role_penalty if role_penalty is not None else settings.search_role_mismatch_penalty
@@ -229,7 +235,6 @@ class HybridSearch:
                 elif c.item.role_tags:  # has tags but no match
                     c.role_boost = effective_role_penalty
                 # No tags = neutral (1.0, default)
-                c.combined_score *= c.role_boost
 
         candidates.sort(key=lambda c: -c.combined_score)
 
