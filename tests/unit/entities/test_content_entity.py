@@ -84,14 +84,20 @@ class TestContentItem:
         assert item.is_pdf_only is False
 
     def test_content_item_with_full_fields(self):
+        from datetime import datetime
+
         link = ContentLink(rel="forelder", type="retningslinje", id="parent-001")
         anbefaling = AnbefalingFields(styrke="A", rasjonale="Fordi det virker.")
+        pub_date = datetime(2023, 1, 15, 10, 0, 0)
+        review_date = datetime(2024, 6, 20, 14, 30, 0)
         item = ContentItem(
             id="full-001",
             title="Full item",
             body="Mye tekst.",
             content_type="anbefaling",
             path="/anbefalinger/full-001",
+            forst_publisert=pub_date,
+            sist_faglig_oppdatert=review_date,
             role_tags=["lege", "sykepleier"],
             links=[link],
             has_text_content=True,
@@ -102,6 +108,8 @@ class TestContentItem:
         assert item.target_groups == ["lege", "sykepleier"]
         assert item.anbefaling_fields.styrke == "A"
         assert item.has_text_content is True
+        assert item.forst_publisert == pub_date
+        assert item.sist_faglig_oppdatert == review_date
 
     def test_pdf_only_item_sets_is_pdf_only(self):
         item = ContentItem(

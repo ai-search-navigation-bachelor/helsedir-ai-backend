@@ -23,6 +23,7 @@ from app.services.data.document_metadata import build_content_metadata
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
+from app.exceptions.helsedir import HelseDirectorateAPIError
 from app.constants import get_category_display_name
 
 logger = logging.getLogger(__name__)
@@ -44,18 +45,18 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
     for gl in links:
         if gl.rel != "barn":
             continue
-        sist_faglig_oppdatert = None
+        last_reviewed_date = None
         if gl.id:
             child = content_service.get_content_by_id(gl.id)
             if child:
-                sist_faglig_oppdatert = child.sist_faglig_oppdatert
+                last_reviewed_date = child.sist_faglig_oppdatert
         result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
-            tittel=gl.tittel,
+            title=gl.tittel,
             id=gl.id,
             href=gl.href,
-            sist_faglig_oppdatert=sist_faglig_oppdatert,
+            last_reviewed_date=last_reviewed_date,
         ))
     return result
 
@@ -73,17 +74,19 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
     """
     async def _build_link(link: ContentLink) -> ContentLinkResponse:
         children: List[ContentLinkResponse] = []
-        sist_faglig_oppdatert = None
+        last_reviewed_date = None
 
         # Look up cached content for id-based links
         cached = None
         if link.id:
             cached = content_service.get_content_by_id(link.id)
         elif link.href:
-            cached = content_service.get_content_by_id(_id_from_href(link.href) or "")
+            href_id = _id_from_href(link.href)
+            if href_id:
+                cached = content_service.get_content_by_id(href_id)
 
         if cached:
-            sist_faglig_oppdatert = cached.sist_faglig_oppdatert
+            last_reviewed_date = cached.sist_faglig_oppdatert
 
         if link.rel == "barn":
             if cached:
@@ -96,7 +99,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                         ContentLinkResponse(
                             rel=al.get("rel", "barn"),
                             type=al.get("type") or al.get("infoType", ""),
-                            tittel=al.get("tittel"),
+                            title=al.get("tittel"),
                             id=al.get("id"),
                             href=al.get("href"),
                         )
@@ -104,7 +107,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                         if al.get("rel") == "barn"
                         and (al.get("id") or al.get("href"))
                     ]
-                except Exception as exc:
+                except HelseDirectorateAPIError as exc:
                     logger.warning(
                         "Failed to fetch children for barn link %s: %s",
                         link.href,
@@ -115,11 +118,11 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
         return ContentLinkResponse(
             rel=link.rel,
             type=link.type,
-            tittel=link.tittel,
+            title=link.tittel,
             id=link.id,
             href=link.href,
             path=link.path,
-            sist_faglig_oppdatert=sist_faglig_oppdatert,
+            last_reviewed_date=last_reviewed_date,
             children=children,
         )
 
@@ -218,8 +221,8 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         body=content.body,
         content_type=content.content_type,
         path=content.path,
-        forst_publisert=content.forst_publisert,
-        sist_faglig_oppdatert=content.sist_faglig_oppdatert,
+        first_published=content.forst_publisert,
+        last_reviewed_date=content.sist_faglig_oppdatert,
         role_tags=content.role_tags,
         has_text_content=content.has_text_content,
         document_url=content.public_document_url,

@@ -101,8 +101,7 @@ def get_content_to_backfill(refetch: bool = False):
                 """
                 SELECT id FROM content
                 WHERE info_type != 'temaside'
-                AND forst_publisert IS NULL
-                AND sist_faglig_oppdatert IS NULL
+                AND (forst_publisert IS NULL OR sist_faglig_oppdatert IS NULL)
                 """
             )
         return [row[0] for row in cursor.fetchall()]
@@ -255,7 +254,10 @@ def main():
         if not args.dry_run and len(pending_updates) >= args.batch_size:
             saved = save_dates_batch(pending_updates)
             print(f"  --- Batch saved: {saved} items ---")
-            pending_updates.clear()
+            if saved > 0:
+                pending_updates.clear()
+            else:
+                print("  WARNING: Batch save returned 0, retaining items for retry")
 
         # Summary progress every 100 items
         if i % 100 == 0 and i > 0:
@@ -275,7 +277,10 @@ def main():
     # Flush remaining
     if not args.dry_run and pending_updates:
         saved = save_dates_batch(pending_updates)
-        print(f"  Final batch saved: {saved} items")
+        if saved > 0:
+            print(f"  Final batch saved: {saved} items")
+        else:
+            print(f"  ERROR: Final batch save failed, {len(pending_updates)} items not saved")
 
     elapsed = time.monotonic() - start_time
     print()

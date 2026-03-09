@@ -101,9 +101,6 @@ class ContentRepository:
             document_url = (
                 content["document_url"] if "document_url" in content else document_meta["document_url"]
             )
-            has_text_content_provided = "has_text_content" in content
-            document_url_provided = "document_url" in content
-
             cursor.execute(
                 """
                 INSERT INTO content (
@@ -118,6 +115,10 @@ class ContentRepository:
                     koder = COALESCE(VALUES(koder), koder),
                     role_tags = COALESCE(VALUES(role_tags), role_tags),
                     links = COALESCE(VALUES(links), links),
+                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                    has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                    document_url = COALESCE(VALUES(document_url), document_url),
                     path = VALUES(path)
                 """,
                 (
@@ -133,8 +134,6 @@ class ContentRepository:
                     content.get("path"),
                     has_text_content,
                     document_url,
-                    has_text_content_provided,
-                    document_url_provided,
                 ),
             )
 
@@ -185,9 +184,6 @@ class ContentRepository:
                     document_url = (
                         content["document_url"] if "document_url" in content else document_meta["document_url"]
                     )
-                    has_text_content_provided = "has_text_content" in content
-                    document_url_provided = "document_url" in content
-
                     cursor.execute(
                         """
                         INSERT INTO content (
@@ -202,6 +198,10 @@ class ContentRepository:
                             koder = COALESCE(VALUES(koder), koder),
                             role_tags = COALESCE(VALUES(role_tags), role_tags),
                             links = COALESCE(VALUES(links), links),
+                            forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                            sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                            has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                            document_url = COALESCE(VALUES(document_url), document_url),
                             path = VALUES(path)
                         """,
                         (
@@ -217,8 +217,6 @@ class ContentRepository:
                             content.get("path"),
                             has_text_content,
                             document_url,
-                            has_text_content_provided,
-                            document_url_provided,
                         ),
                     )
 

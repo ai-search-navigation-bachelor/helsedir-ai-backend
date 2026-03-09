@@ -216,6 +216,8 @@ class ContentService:
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
                     path=item.get("path"),
+                    forst_publisert=item.get("forstPublisert") or item.get("forst_publisert"),
+                    sist_faglig_oppdatert=item.get("sistFagligOppdatert") or item.get("sist_faglig_oppdatert"),
                     role_tags=role_tags if isinstance(role_tags, list) else [],
                     links=links,
                     has_text_content=document_meta["has_text_content"],
