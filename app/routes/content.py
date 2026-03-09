@@ -39,17 +39,24 @@ def _id_from_href(href: str) -> Optional[str]:
 
 def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
     """Build ContentLinkResponse list from a content item's barn sub-links."""
-    return [
-        ContentLinkResponse(
+    result = []
+    for gl in links:
+        if gl.rel != "barn":
+            continue
+        sist_faglig_oppdatert = None
+        if gl.id:
+            child = content_service.get_content_by_id(gl.id)
+            if child:
+                sist_faglig_oppdatert = child.sist_faglig_oppdatert
+        result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
             tittel=gl.tittel,
             id=gl.id,
             href=gl.href,
-        )
-        for gl in links
-        if gl.rel == "barn"
-    ]
+            sist_faglig_oppdatert=sist_faglig_oppdatert,
+        ))
+    return result
 
 
 async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLinkResponse]:
@@ -65,41 +72,44 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
     """
     async def _build_link(link: ContentLink) -> ContentLinkResponse:
         children: List[ContentLinkResponse] = []
+        sist_faglig_oppdatert = None
+
+        # Look up cached content for id-based links
+        cached = None
+        if link.id:
+            cached = content_service.get_content_by_id(link.id)
+        elif link.href:
+            cached = content_service.get_content_by_id(_id_from_href(link.href) or "")
+
+        if cached:
+            sist_faglig_oppdatert = cached.sist_faglig_oppdatert
 
         if link.rel == "barn":
-            if link.id:
-                # Fast path: in-memory cache
-                child = content_service.get_content_by_id(link.id)
-                if child:
-                    children = _children_from_content_links(child.links)
+            if cached:
+                children = _children_from_content_links(cached.links)
             elif link.href:
-                # Try cache first by extracting the ID from the href URL
-                child = content_service.get_content_by_id(_id_from_href(link.href) or "")
-                if child:
-                    children = _children_from_content_links(child.links)
-                else:
-                    # Fallback: fetch from Helsedir API
-                    try:
-                        data = await helsedir_api_service.get_content_by_href_async(link.href)
-                        children = [
-                            ContentLinkResponse(
-                                rel=al.get("rel", "barn"),
-                                type=al.get("type") or al.get("infoType", ""),
-                                tittel=al.get("tittel"),
-                                id=al.get("id"),
-                                href=al.get("href"),
-                            )
-                            for al in (data.get("links") or [])
-                            if al.get("rel") == "barn"
-                            and (al.get("id") or al.get("href"))
-                        ]
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to fetch children for barn link %s: %s",
-                            link.href,
-                            exc,
-                            exc_info=True,
+                # Fallback: fetch from Helsedir API
+                try:
+                    data = await helsedir_api_service.get_content_by_href_async(link.href)
+                    children = [
+                        ContentLinkResponse(
+                            rel=al.get("rel", "barn"),
+                            type=al.get("type") or al.get("infoType", ""),
+                            tittel=al.get("tittel"),
+                            id=al.get("id"),
+                            href=al.get("href"),
                         )
+                        for al in (data.get("links") or [])
+                        if al.get("rel") == "barn"
+                        and (al.get("id") or al.get("href"))
+                    ]
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch children for barn link %s: %s",
+                        link.href,
+                        exc,
+                        exc_info=True,
+                    )
 
         return ContentLinkResponse(
             rel=link.rel,
@@ -108,6 +118,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
             id=link.id,
             href=link.href,
             path=link.path,
+            sist_faglig_oppdatert=sist_faglig_oppdatert,
             children=children,
         )
 
@@ -197,6 +208,8 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
         body=content.body,
         content_type=content.content_type,
         path=content.path,
+        forst_publisert=content.forst_publisert,
+        sist_faglig_oppdatert=content.sist_faglig_oppdatert,
         role_tags=content.role_tags,
         links=links_response,
         linked_content=linked_content_response,
