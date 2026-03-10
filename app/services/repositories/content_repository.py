@@ -5,10 +5,11 @@ Repository for content operations.
 import json
 import logging
 from typing import List, Optional, Dict, Any, Set
+import httpx
 import mysql.connector
 
 from app.services.repositories.base import db_pool
-from app.services.data.document_metadata import compute_document_metadata
+from app.services.data.document_metadata import compute_document_metadata_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,8 @@ class ContentRepository:
             role_tags_json = self._serialize_json_field(content.get("role_tags"))
             links_json = self._serialize_json_field(content.get("links"))
             info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
-            document_meta = compute_document_metadata(content)
+            with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                document_meta = compute_document_metadata_with_fallback(content, client=client)
             has_text_content = int(
                 content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
             )
@@ -170,14 +172,19 @@ class ContentRepository:
         try:
             cursor = conn.cursor()
             cached = 0
+            resolved_contents = []
 
-            for content in contents:
+            with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                for content in contents:
+                    document_meta = compute_document_metadata_with_fallback(content, client=client)
+                    resolved_contents.append((content, document_meta))
+
+            for content, document_meta in resolved_contents:
                 try:
                     koder_json = self._serialize_json_field(content.get("koder"))
                     role_tags_json = self._serialize_json_field(content.get("role_tags"))
                     links_json = self._serialize_json_field(content.get("links"))
                     info_type = content.get("info_type") or content.get("infoType") or content.get("dokumentType")
-                    document_meta = compute_document_metadata(content)
                     has_text_content = int(
                         content["has_text_content"] if "has_text_content" in content else document_meta["has_text_content"]
                     )

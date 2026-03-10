@@ -163,23 +163,30 @@ class HealthContentEmbedding:
             if clean_body:
                 sentences.append(clean_body)
 
-        # Linked/related content - append as additional context
+        # Linked/related content - append as additional context.
+        # E5-base has 512 token limit (~2000 chars Norwegian), so we truncate
+        # linked text and cap total passage length to stay within the window.
         linked_content = content_item.get("linked_content", [])
         if linked_content:
+            current_length = sum(len(s) for s in sentences)
+            max_passage_length = 1800  # Leave room for E5 prefix + tokenizer overhead
             related_parts = []
             for linked in linked_content:
+                if current_length >= max_passage_length:
+                    break
                 linked_title = linked.get("tittel", "")
                 linked_text = linked.get("tekst", "")
                 linked_type = linked.get("type", "")
                 if linked_title:
                     clean_text = HealthContentEmbedding.strip_html_tags(linked_text) if linked_text else ""
-                    # Build: "Title (type): text" or "Title (type)" or "Title: text" or "Title"
                     type_part = f" ({linked_type})" if linked_type else ""
                     if clean_text:
-                        clean_text = clean_text.rstrip('.').rstrip()
-                        related_parts.append(f"{linked_title}{type_part}: {clean_text}")
+                        clean_text = clean_text[:200].rstrip('.').rstrip()
+                        part = f"{linked_title}{type_part}: {clean_text}"
                     else:
-                        related_parts.append(f"{linked_title}{type_part}")
+                        part = f"{linked_title}{type_part}"
+                    related_parts.append(part)
+                    current_length += len(part)
 
             if related_parts:
                 sentences.append("Se også: " + "; ".join(related_parts) + ".")

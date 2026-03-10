@@ -61,6 +61,8 @@ class HybridSearch:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
@@ -74,6 +76,8 @@ class HybridSearch:
                 rrf_k=rrf_k,
                 temaside_boost=temaside_boost,
                 retningslinje_boost=retningslinje_boost,
+                role_boost=role_boost,
+                role_penalty=role_penalty,
             )
         except Exception:
             logger.exception("Error in RRF fusion")
@@ -84,6 +88,11 @@ class HybridSearch:
 
         if settings.ml_ranking_enabled:
             candidates = self._apply_ranking_model(candidates, role)
+
+        # Apply role boost/penalty after potential ML reranking (ML replaces combined_score)
+        for c in candidates:
+            c.combined_score *= c.role_boost
+        candidates.sort(key=lambda c: -c.combined_score)
 
         candidates = self._normalize_combined_scores(candidates)
 
@@ -101,6 +110,8 @@ class HybridSearch:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[HybridCandidate]:
         """Retrieve with BM25 + dense and fuse with RRF."""
         t_start = time.perf_counter()
@@ -213,15 +224,17 @@ class HybridSearch:
             if boost != 1.0:
                 c.combined_score *= boost
 
-        # Apply role-based soft boost/penalty
+        # Store role boost/penalty on each candidate; application to combined_score
+        # happens in search() after ML reranking so the multiplier is not lost.
         if role:
+            effective_role_boost = role_boost if role_boost is not None else settings.search_role_match_boost
+            effective_role_penalty = role_penalty if role_penalty is not None else settings.search_role_mismatch_penalty
             for c in candidates:
                 if role in c.item.role_tags:
-                    c.role_boost = settings.search_role_match_boost
+                    c.role_boost = effective_role_boost
                 elif c.item.role_tags:  # has tags but no match
-                    c.role_boost = settings.search_role_mismatch_penalty
+                    c.role_boost = effective_role_penalty
                 # No tags = neutral (1.0, default)
-                c.combined_score *= c.role_boost
 
         candidates.sort(key=lambda c: -c.combined_score)
 
