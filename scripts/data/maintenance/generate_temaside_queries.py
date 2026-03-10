@@ -217,16 +217,17 @@ def main():
     print(f"  Total queries to generate: {total_needed}")
     print(f"  Model: {args.model}")
 
-    # Generate queries
+    # Generate queries (saves to cache_path every 10 items)
     asyncio.run(_generate_all(
         items=items_needing_queries,
         api_key=settings.openai_api_key,
         cached=cached,
         force=args.force,
         model=args.model,
+        cache_path=cache_path,
     ))
 
-    # Save merged cache
+    # Final save
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(cached, f, ensure_ascii=False, indent=2)
 
@@ -253,8 +254,9 @@ async def _generate_all(
     cached: Dict[str, Any],
     force: bool,
     model: str,
+    cache_path: Path = None,
 ) -> None:
-    """Generate queries for all temasider."""
+    """Generate queries for all temasider. Saves intermediate results every 10 items."""
     generated_total = 0
     failed = 0
 
@@ -287,6 +289,10 @@ async def _generate_all(
                 failed += 1
 
             if (i + 1) % 10 == 0:
+                # Save intermediate results
+                if cache_path:
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        json.dump(cached, f, ensure_ascii=False, indent=2)
                 print(f"  [{i + 1}/{len(items)}] Generated: {generated_total}, Failed: {failed}")
 
             # Small delay to respect rate limits
