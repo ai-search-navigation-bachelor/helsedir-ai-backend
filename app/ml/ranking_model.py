@@ -6,12 +6,10 @@ This module replaces the previous TensorFlow binary classifier approach.
 Why this version is better:
 - Trains a *ranking* model (LambdaMART) grouped by search_id (true LTR), not global click classification.
 - Uses IPS (inverse propensity scoring) sample weights to reduce position bias.
-- Uses smoothed CTR as a weak prior (avoids one-click wonders).
 - Works with your existing DB logging tables:
   - search_logs
   - search_results_shown (impressions + per-result features)
-  - click_logs (click + dwell)
-  - content_stats (global clicks/impressions)
+  - click_logs (click events)
 
 Runtime usage:
 1) Generate candidates (BM25 + semantic + RRF fusion), scores carried on SearchResult.
@@ -50,15 +48,7 @@ RERANK_FEATURES: List[str] = [
     "rrf_score",                    # RRF fusion score (0-1)
 
     # Metadata / intent alignment
-    "type_match",                   # content type authority (0-1)
     "role_match",                   # role match score (0-1)
-    "maalgruppe_match",             # target group match (0/1)
-
-    # Popularity prior (windowed CTR - last 30 days)
-    "smoothed_ctr",                 # smoothed CTR in [0..1]
-
-    # Bias/context
-    "position",                     # shown position (1..N)
 ]
 
 
@@ -70,16 +60,6 @@ def _f(x, default: float = 0.0) -> float:
         return float(x)
     except Exception:
         return default
-
-
-def smoothed_ctr(clicks: int, impressions: int, alpha: float = 1.0, beta: float = 20.0) -> float:
-    """
-    Smoothed CTR prevents "one-click wonders" from dominating.
-    (clicks + alpha) / (impressions + alpha + beta)
-    """
-    clicks = max(0, int(clicks))
-    impressions = max(0, int(impressions))
-    return float((clicks + alpha) / (impressions + alpha + beta))
 
 
 def propensity_for_position(pos: int, db_propensities: Optional[Dict[int, float]] = None) -> float:
@@ -136,7 +116,6 @@ def propensity_for_position(pos: int, db_propensities: Optional[Dict[int, float]
 @dataclass
 class RerankCandidate:
     content_id: str
-    position: int
 
     # Retrieval scores
     semantic_score: float = 0.0
@@ -144,12 +123,7 @@ class RerankCandidate:
     rrf_score: float = 0.0
 
     # Metadata alignment
-    type_match: float = 0.0
     role_match: float = 0.0
-    maalgruppe_match: float = 0.0
-
-    # Popularity (windowed CTR)
-    smoothed_ctr: float = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -181,7 +155,6 @@ class HealthContentReranker:
         self,
         *,
         days_back: int = 180,
-        ctr_window_days: int = 30,
         min_group_size: int = 5,
         require_any_click: bool = True,
         use_db_propensity: bool = True,
@@ -190,18 +163,21 @@ class HealthContentReranker:
         """
         Train a LambdaMART reranker from DB logs.
 
+        Uses 4 features (retrieval scores + role match). Position is
+        used only for IPS sample weights (not as a feature). Smoothed CTR
+        is applied as a post-model boost at inference, not during training,
+        to avoid label leakage.
+
         Expected database_service methods:
           - get_ltr_training_rows(days_back) -> list[dict]
-            Each row should include:
-              search_id, content_id, position, clicked,
-              semantic_score, bm25_score, rrf_score,
-              type_match, role_match, maalgruppe_match
-          - get_content_ctr_windowed(days) -> dict[content_id] = smoothed_ctr
           - (optional) get_position_propensities() -> dict[position] = propensity float
 
         Args:
             days_back: Days of training data to use
-            ctr_window_days: Days for windowed CTR calculation (default: 30)
+            min_group_size: Minimum results per search group
+            require_any_click: Only use groups with at least one click
+            use_db_propensity: Use position propensities from DB for IPS
+            verbose: Show training progress
         """
         rows = database_service.get_ltr_training_rows(days_back=days_back)
         if not rows:
@@ -215,10 +191,7 @@ class HealthContentReranker:
                 continue
             groups.setdefault(str(sid), []).append(r)
 
-        # Windowed CTR for recent popularity signal
-        ctr_windowed = database_service.get_content_ctr_windowed(days=ctr_window_days)
-
-        # Optional propensity table from DB
+        # Optional propensity table from DB for IPS weighting
         pos_prop: Dict[int, float] = {}
         if use_db_propensity:
             try:
@@ -250,7 +223,6 @@ class HealthContentReranker:
             any_click = False
 
             for rr in items_sorted:
-                cid = str(rr.get("content_id", ""))
                 pos = int(rr.get("position") or 0)
                 if pos <= 0:
                     pos = 10  # fallback
@@ -260,25 +232,18 @@ class HealthContentReranker:
                 if clicked == 1:
                     any_click = True
 
-                # popularity prior (using windowed CTR for recency)
-                ctr = ctr_windowed.get(cid, 0.05)  # Default prior if no data
-
-                # build feature dict from logged row + priors
+                # 4 features: retrieval scores + role match
                 feat_dict = {
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
                     "rrf_score": _f(rr.get("rrf_score"), 0.0),
-                    "type_match": _f(rr.get("type_match"), 0.0),
                     "role_match": _f(rr.get("role_match"), 0.0),
-                    "maalgruppe_match": _f(rr.get("maalgruppe_match"), 0.0),
-                    "smoothed_ctr": ctr,
-                    "position": float(pos),
                 }
 
                 feat_dicts.append(feat_dict)
                 labels.append(float(clicked))
 
-                # IPS weight to reduce position bias
+                # IPS weight using position (position is NOT a feature, only used for bias correction)
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
                 weights.append(1.0 / max(float(prop), 1e-6))
 
@@ -331,22 +296,14 @@ class HealthContentReranker:
         query: str,
         role: str,
         candidates: Sequence[RerankCandidate],
-        *,
-        ctr_window_days: int = 30,
-        ctr_windowed: Optional[Dict[str, float]] = None,
     ) -> List[Tuple[RerankCandidate, float]]:
         """
-        Rerank a list of candidates.
-
-        Provide candidates with their precomputed features (semantic/keyword/metadata).
-        This method adds popularity prior (windowed CTR) automatically.
+        Rerank a list of candidates using 4 model features.
 
         Args:
             query: Search query
             role: User role
             candidates: List of candidates to rerank
-            ctr_window_days: Days for windowed CTR (default: 30)
-            ctr_windowed: Optional pre-fetched windowed CTR
 
         Returns: list of (candidate, score), sorted by score descending.
         """
@@ -364,29 +321,21 @@ class HealthContentReranker:
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
-        # Fetch windowed CTR (recent popularity)
-        ctr_data = ctr_windowed or database_service.get_content_ctr_windowed(days=ctr_window_days)
-
-        # Build feature matrix
+        # Build feature matrix (4 features)
         X = []
         for c in candidates:
-            c.smoothed_ctr = ctr_data.get(c.content_id, 0.05)  # Windowed CTR
-
             feat_dict = {
                 "semantic_score": _f(c.semantic_score),
                 "bm25_score": _f(c.bm25_score),
                 "rrf_score": _f(c.rrf_score),
-                "type_match": _f(c.type_match),
                 "role_match": _f(c.role_match),
-                "maalgruppe_match": _f(c.maalgruppe_match),
-                "smoothed_ctr": _f(c.smoothed_ctr),
-                "position": float(int(c.position) if c.position else 0),
             }
             X.append([feat_dict[n] for n in self.feature_names])
 
         X_np = np.asarray(X, dtype=np.float32)
-        scores = self.model.predict(X_np)
-        out = list(zip(list(candidates), [float(s) for s in scores]))
+        scores = list(self.model.predict(X_np).astype(float))
+
+        out = list(zip(list(candidates), scores))
         out.sort(key=lambda x: x[1], reverse=True)
         return out
 
@@ -448,9 +397,7 @@ def extract_features_for_candidate(
     semantic_score: float = 0.0,
     bm25_score: float = 0.0,
     rrf_score: float = 0.0,
-    type_match: float = 0.0,
     role_match: float = 0.0,
-    maalgruppe_match: float = 0.0,
 ) -> Dict[str, float]:
     """
     Optional helper if your pipeline builds dict features first.
@@ -460,9 +407,7 @@ def extract_features_for_candidate(
         "semantic_score": float(semantic_score),
         "bm25_score": float(bm25_score),
         "rrf_score": float(rrf_score),
-        "type_match": float(type_match),
         "role_match": float(role_match),
-        "maalgruppe_match": float(maalgruppe_match),
     }
 
 
