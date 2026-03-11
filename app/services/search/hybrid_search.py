@@ -13,7 +13,6 @@ import numpy as np
 from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
-from app.services.data.database_service import database_service
 from app.services.search.bm25_search import bm25_search
 from app.services.search.keyword_search import keyword_search, _normalize_query_keywords
 from app.services.search.rrf_fusion import fuse_ranked_lists
@@ -89,8 +88,20 @@ class HybridSearch:
         if settings.ml_ranking_enabled:
             candidates = self._apply_ranking_model(candidates, role)
 
-        # Apply role boost/penalty after potential ML reranking (ML replaces combined_score)
+        # Apply content type boosts and role boost/penalty AFTER ML reranking
+        # (ML replaces combined_score, so multiplicative boosts must come after)
+        type_boosts = {
+            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
+            "retningslinje": (
+                retningslinje_boost
+                if retningslinje_boost is not None
+                else settings.search_boost_retningslinje
+            ),
+        }
         for c in candidates:
+            boost = type_boosts.get(c.item.content_type.lower(), 1.0)
+            if boost != 1.0:
+                c.combined_score *= boost
             c.combined_score *= c.role_boost
         candidates.sort(key=lambda c: -c.combined_score)
 
@@ -210,22 +221,8 @@ class HybridSearch:
             else:
                 c.keyword_norm = 1.0 if bm25_raw > 0 else 0.0
 
-        # Apply content type boosts
-        type_boosts = {
-            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
-            "retningslinje": (
-                retningslinje_boost
-                if retningslinje_boost is not None
-                else settings.search_boost_retningslinje
-            ),
-        }
-        for c in candidates:
-            boost = type_boosts.get(c.item.content_type.lower(), 1.0)
-            if boost != 1.0:
-                c.combined_score *= boost
-
-        # Store role boost/penalty on each candidate; application to combined_score
-        # happens in search() after ML reranking so the multiplier is not lost.
+        # Store boosts on each candidate for application after ML reranking in search().
+        # If ML is disabled, these are still applied in search() before final sort.
         if role:
             effective_role_boost = role_boost if role_boost is not None else settings.search_role_match_boost
             effective_role_penalty = role_penalty if role_penalty is not None else settings.search_role_mismatch_penalty
@@ -308,15 +305,10 @@ class HybridSearch:
                 if not ml_service.is_ranking_available():
                     return candidates
 
-            # Use windowed CTR (30 days) to match training data
-            ctr_data = database_service.get_content_ctr_windowed(days=30)
-
-            # Extract features for each candidate
+            # Extract 4 features for each candidate
             features_list = []
             for c in candidates:
-                features = self._extract_ranking_features(
-                    c, role, ctr_data.get(c.item.id, 0.0)
-                )
+                features = self._extract_ranking_features(c, role)
                 features_list.append(features)
 
             # Get ranking scores from model
@@ -333,27 +325,13 @@ class HybridSearch:
             logger.exception("Error applying ranking model")
             return candidates
 
+    @staticmethod
     def _extract_ranking_features(
-        self,
         candidate: HybridCandidate,
         role: Optional[str],
-        ctr: float,
     ) -> Dict[str, float]:
-        """Extract features for ranking model from a HybridCandidate."""
+        """Extract 4 features for ranking model from a HybridCandidate."""
         item = candidate.item
-
-        # Content type encoding
-        content_type_map = {
-            "retningslinje": 0.9,
-            "veileder": 0.8,
-            "fagprosedyre": 0.75,
-            "faktaark": 0.6,
-            "artikkel": 0.5,
-        }
-        type_match = content_type_map.get(
-            item.info_type.lower() if item.info_type else None,
-            0.5
-        )
 
         # Role match
         role_match = 0.0
@@ -365,18 +343,11 @@ class HybridSearch:
         elif not item.role_tags:
             role_match = 0.3
 
-        # Maalgruppe match (uses role_tags)
-        maalgruppe_match = 1.0 if role and role in item.role_tags else 0.0
-
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
             "rrf_score": candidate.rrf_raw,
-            "type_match": type_match,
             "role_match": role_match,
-            "maalgruppe_match": maalgruppe_match,
-            "smoothed_ctr": ctr,
-            "position": 0.0,
         }
 
 

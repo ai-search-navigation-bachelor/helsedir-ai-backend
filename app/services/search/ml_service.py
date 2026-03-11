@@ -71,11 +71,10 @@ class MLService:
         if not settings.ml_ranking_enabled:
             return False
 
-        model_path = Path(settings.ml_models_dir) / "ranking" / "model"
-        keras_path = Path(f"{model_path}.keras")
+        model_path = Path(settings.ml_models_dir) / "ranking" / "reranker.json"
 
-        if not keras_path.exists():
-            print(f"Ranking model not found at {keras_path}")
+        if not model_path.exists():
+            print(f"Ranking model not found at {model_path}")
             return False
 
         try:
