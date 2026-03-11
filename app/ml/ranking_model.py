@@ -360,9 +360,6 @@ class HealthContentReranker:
         """
         Predict ranking scores from feature dictionaries.
 
-        This method provides a simpler interface for ml_service.py,
-        accepting feature dicts directly instead of RerankCandidate objects.
-
         Args:
             features: List of feature dictionaries
 
@@ -375,15 +372,60 @@ class HealthContentReranker:
         if not features:
             return []
 
-        # Build feature matrix from dicts
+        X_np = self._build_feature_matrix(features)
+        scores = self.model.predict(X_np)
+        return [float(s) for s in scores]
+
+    def predict_with_contributions(
+        self, features: List[Dict[str, float]]
+    ) -> List[Tuple[float, Dict[str, float]]]:
+        """
+        Predict ranking scores with per-feature contribution explanations.
+
+        Uses XGBoost's built-in SHAP-based feature contributions to explain
+        how each feature influenced the final score.
+
+        Args:
+            features: List of feature dictionaries
+
+        Returns:
+            List of (score, contributions) where contributions maps
+            feature name -> contribution value (positive = helped, negative = hurt)
+        """
+        if self.model is None:
+            empty = {name: 0.0 for name in self.feature_names}
+            return [(0.0, dict(empty)) for _ in features]
+
+        if not features:
+            return []
+
+        X_np = self._build_feature_matrix(features)
+        scores = self.model.predict(X_np)
+
+        # Get SHAP-style feature contributions from XGBoost
+        # Returns shape (n_samples, n_features + 1) where last column is bias
+        booster = self.model.get_booster()
+        import xgboost as xgb
+        dmatrix = xgb.DMatrix(X_np, feature_names=self.feature_names)
+        contribs = booster.predict(dmatrix, pred_contribs=True)
+
+        results = []
+        for i in range(len(features)):
+            contrib_dict = {}
+            for j, name in enumerate(self.feature_names):
+                contrib_dict[name] = round(float(contribs[i][j]), 4)
+            contrib_dict["bias"] = round(float(contribs[i][-1]), 4)
+            results.append((float(scores[i]), contrib_dict))
+
+        return results
+
+    def _build_feature_matrix(self, features: List[Dict[str, float]]) -> np.ndarray:
+        """Build numpy feature matrix from list of feature dicts."""
         X = []
         for feat_dict in features:
             row = [_f(feat_dict.get(name, 0.0)) for name in self.feature_names]
             X.append(row)
-
-        X_np = np.asarray(X, dtype=np.float32)
-        scores = self.model.predict(X_np)
-        return [float(s) for s in scores]
+        return np.asarray(X, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------

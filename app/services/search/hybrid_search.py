@@ -36,6 +36,7 @@ class HybridCandidate:
     role_boost: float = 1.0  # Role boost/penalty multiplier applied (1.0 = neutral)
     pre_rerank_position: int = 0  # Position before ML reranking (1-indexed, 0 = not set)
     rerank_score: Optional[float] = None  # Raw ML model score (None = model not applied)
+    rerank_contributions: Optional[Dict[str, float]] = None  # Per-feature SHAP contributions
 
 
 class HybridSearch:
@@ -299,6 +300,7 @@ class HybridSearch:
                     role_boost=c.role_boost,
                     rerank_score=round(c.rerank_score, 4) if c.rerank_score is not None else None,
                     rank_change=rank_change,
+                    rerank_contributions=c.rerank_contributions,
                 )
             )
         return results
@@ -313,7 +315,7 @@ class HybridSearch:
             from app.services.search.ml_service import ml_service
 
             if not ml_service.is_ranking_available():
-                ml_service.load_ranking_model()
+                ml_service.load_ranking_model(force=True)
                 if not ml_service.is_ranking_available():
                     return candidates
 
@@ -327,13 +329,15 @@ class HybridSearch:
                 features = self._extract_ranking_features(c, role)
                 features_list.append(features)
 
-            # Get ranking scores from model
-            ranking_scores = ml_service.get_ranking_scores(features_list)
+            # Get ranking scores with per-feature contributions
+            results_with_contribs = ml_service.get_ranking_scores_with_contributions(features_list)
 
             # Replace combined score with ranking score and re-sort
             for i, c in enumerate(candidates):
-                c.rerank_score = ranking_scores[i]
-                c.combined_score = ranking_scores[i]
+                score, contribs = results_with_contribs[i]
+                c.rerank_score = score
+                c.rerank_contributions = contribs
+                c.combined_score = score
 
             candidates.sort(key=lambda c: -c.combined_score)
             return candidates

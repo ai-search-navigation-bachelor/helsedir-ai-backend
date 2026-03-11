@@ -61,14 +61,17 @@ class MLService:
             print(f"Error loading embedding model: {e}")
             return False
 
-    def load_ranking_model(self) -> bool:
+    def load_ranking_model(self, force: bool = False) -> bool:
         """
         Load the ranking model from disk.
+
+        Args:
+            force: Load even if ml_ranking_enabled is False (for per-request override)
 
         Returns:
             True if model was loaded successfully
         """
-        if not settings.ml_ranking_enabled:
+        if not force and not settings.ml_ranking_enabled:
             return False
 
         model_path = Path(settings.ml_models_dir) / "ranking" / "reranker.json"
@@ -163,6 +166,25 @@ class MLService:
         except Exception as e:
             print(f"Error computing ranking scores: {e}")
             return [0.0] * len(features)
+
+    def get_ranking_scores_with_contributions(
+        self, features: List[Dict[str, float]]
+    ) -> List[tuple]:
+        """
+        Get ranking scores with per-feature contribution explanations.
+
+        Returns:
+            List of (score, contributions_dict) tuples
+        """
+        if self.ranking_model is None:
+            empty = {name: 0.0 for name in self.ranking_model.feature_names} if self.ranking_model else {}
+            return [(0.0, empty) for _ in features]
+
+        try:
+            return self.ranking_model.predict_with_contributions(features)
+        except Exception as e:
+            print(f"Error computing ranking contributions: {e}")
+            return [(0.0, {}) for _ in features]
 
     def is_embedding_available(self) -> bool:
         """Check if embedding model is loaded and available."""
