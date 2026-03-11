@@ -6,7 +6,8 @@ import asyncio
 import logging
 import re
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional, Dict, List
+from typing import Any, Mapping, Optional, Dict, List
+from urllib.parse import urljoin, urlparse
 
 from collections import defaultdict
 from starlette.concurrency import run_in_threadpool
@@ -16,28 +17,75 @@ from app.dto.response.content import (
     GroupedLinkedContent,
     LinkedContentItem,
     AnbefalingFieldsResponse,
+    EhelsestandardAttachmentResponse,
+    EhelsestandardFieldsResponse,
+    ContentSummaryResponse,
+    ChildGroupResponse,
     RelatedLinkResponse,
 )
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
-from app.services.data.document_metadata import build_content_metadata, resolve_public_related_links
+from app.services.data.document_metadata import (
+    build_content_metadata,
+    has_visible_text,
+    resolve_public_related_links,
+)
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
-from app.exceptions.helsedir import HelseDirectorateAPIError
-from app.constants import get_category_display_name
+from app.constants import get_category_display_name, normalize_content_type
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/content", tags=["content"])
 
 _HELSEDIR_ID_RE = re.compile(r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}[-a-f0-9]+)', re.IGNORECASE)
+_CHILD_GROUP_LABELS = {
+    "chapters": "Kapitler",
+    "references": "Referanser",
+    "related_content": "Relatert innhold",
+}
 
 
 def _id_from_href(href: str) -> Optional[str]:
     """Extract the content ID embedded in a Helsedir API href URL."""
     m = _HELSEDIR_ID_RE.search(href)
     return m.group(1) if m else None
+
+
+def _public_path_from_href(href: str) -> Optional[str]:
+    """Extract a public Helsedirektoratet path from a path or public URL."""
+    if not href:
+        return None
+
+    value = href.strip()
+    if not value:
+        return None
+
+    if value.startswith("/"):
+        return value.rstrip("/") or "/"
+
+    parsed = urlparse(value)
+    public_base = urlparse(settings.helsedir_public_base_url)
+    if parsed.scheme and parsed.netloc:
+        if parsed.netloc != public_base.netloc:
+            return None
+        return (parsed.path or "").rstrip("/") or "/"
+
+    return None
+
+
+def _is_api_href(href: str) -> bool:
+    """Return True when href points to the Helsedir API domain."""
+    if not href:
+        return False
+
+    parsed = urlparse(href.strip())
+    expected = urlparse(settings.helsedir_api_url)
+    return bool(parsed.scheme and parsed.netloc) and (
+        parsed.scheme == expected.scheme and parsed.netloc == expected.netloc
+    )
 
 
 def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
@@ -48,9 +96,9 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
             continue
         last_reviewed_date = None
         if gl.id:
-            child = content_service.get_content_by_id(gl.id)
-            if child:
-                last_reviewed_date = child.sist_faglig_oppdatert
+                child = content_service.get_content_by_id(gl.id)
+                if child:
+                    last_reviewed_date = child.sist_faglig_oppdatert
         result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
@@ -93,28 +141,39 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
             if cached:
                 children = _children_from_content_links(cached.links)
             elif link.href:
-                # Fallback: fetch from Helsedir API
-                try:
-                    data = await helsedir_api_service.get_content_by_href_async(link.href)
-                    children = [
-                        ContentLinkResponse(
-                            rel=al.get("rel", "barn"),
-                            type=al.get("type") or al.get("infoType", ""),
-                            title=al.get("tittel"),
-                            id=al.get("id"),
-                            href=al.get("href"),
-                        )
-                        for al in (data.get("links") or [])
-                        if al.get("rel") == "barn"
-                        and (al.get("id") or al.get("href"))
-                    ]
-                except (HelseDirectorateAPIError, ValueError) as exc:
-                    logger.warning(
-                        "Failed to fetch children for barn link %s: %s",
-                        link.href,
-                        exc,
-                        exc_info=True,
-                    )
+                # Try cache first by extracting the ID from the href URL
+                child = content_service.get_content_by_id(_id_from_href(link.href) or "")
+                if child:
+                    children = _children_from_content_links(child.links)
+                else:
+                    public_path = _public_path_from_href(link.href)
+                    if public_path:
+                        child = content_service.get_content_by_path(public_path)
+                        if child:
+                            children = _children_from_content_links(child.links)
+                    elif _is_api_href(link.href):
+                        # Fallback: fetch from Helsedir API only for API URLs
+                        try:
+                            data = await helsedir_api_service.get_content_by_href_async(link.href)
+                            children = [
+                                ContentLinkResponse(
+                                    rel=al.get("rel", "barn"),
+                                    type=al.get("type") or al.get("infoType", ""),
+                                    title=al.get("tittel"),
+                                    id=al.get("id"),
+                                    href=al.get("href"),
+                                )
+                                for al in (data.get("links") or [])
+                                if al.get("rel") == "barn"
+                                and (al.get("id") or al.get("href"))
+                            ]
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to fetch children for barn link %s: %s",
+                                link.href,
+                                exc,
+                                exc_info=True,
+                            )
 
         return ContentLinkResponse(
             rel=link.rel,
@@ -128,6 +187,124 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
         )
 
     return list(await asyncio.gather(*[_build_link(link) for link in links]))
+
+
+def _get_link_target_id(link: ContentLinkResponse) -> Optional[str]:
+    """Resolve a link to its canonical content ID when possible."""
+    if link.id:
+        return link.id
+    if link.href:
+        return _id_from_href(link.href)
+    return None
+
+
+def _build_content_summary(link: ContentLinkResponse) -> ContentSummaryResponse:
+    """Build a normalized summary object for a related content link."""
+    target_id = _get_link_target_id(link)
+    linked_content = content_service.get_content_by_id(target_id) if target_id else None
+
+    return ContentSummaryResponse(
+        id=linked_content.id if linked_content else target_id,
+        title=linked_content.title if linked_content else (link.title or ""),
+        content_type=normalize_content_type(
+            linked_content.content_type if linked_content else link.type
+        ),
+        path=linked_content.path if linked_content else link.path,
+        href=link.href,
+    )
+
+
+def _classify_child_summary(summary: ContentSummaryResponse) -> str:
+    """Map child content into presentation-friendly groups."""
+    if summary.content_type == "referanse":
+        return "references"
+    if summary.content_type == "kapittel":
+        return "chapters"
+    return "related_content"
+
+
+def _append_unique_summary(
+    items: List[ContentSummaryResponse],
+    seen: set,
+    summary: ContentSummaryResponse,
+) -> None:
+    """Append a summary once per ID/href/content_type combination."""
+    dedupe_key = (summary.id or "", summary.href or "", summary.content_type)
+    if dedupe_key in seen:
+        return
+    seen.add(dedupe_key)
+    items.append(summary)
+
+
+def _build_child_groups(
+    chapters: List[ContentSummaryResponse],
+    references: List[ContentSummaryResponse],
+    related_content: List[ContentSummaryResponse],
+) -> List[ChildGroupResponse]:
+    """Build grouped child payloads for generic frontend rendering."""
+    groups = []
+    for key, items in (
+        ("chapters", chapters),
+        ("references", references),
+        ("related_content", related_content),
+    ):
+        if not items:
+            continue
+        groups.append(
+            ChildGroupResponse(
+                key=key,
+                label=_CHILD_GROUP_LABELS[key],
+                items=items,
+            )
+        )
+    return groups
+
+
+def _normalize_relations(
+    links: List[ContentLinkResponse],
+) -> Dict[str, Optional[object]]:
+    """Normalize raw links into explicit backend-owned relation fields."""
+    parent = None
+    root_publication = None
+    chapters: List[ContentSummaryResponse] = []
+    references: List[ContentSummaryResponse] = []
+    related_content: List[ContentSummaryResponse] = []
+    seen_groups = {
+        "chapters": set(),
+        "references": set(),
+        "related_content": set(),
+    }
+
+    for link in links:
+        summary = _build_content_summary(link)
+
+        if link.rel == "forelder" and parent is None:
+            parent = summary
+            continue
+
+        if link.rel in {"root", "publikasjon"} and root_publication is None:
+            root_publication = summary
+            continue
+
+        if link.rel not in {"barn", "temaside"}:
+            continue
+
+        group_key = _classify_child_summary(summary)
+        target = {
+            "chapters": chapters,
+            "references": references,
+            "related_content": related_content,
+        }[group_key]
+        _append_unique_summary(target, seen_groups[group_key], summary)
+
+    return {
+        "parent": parent,
+        "root_publication": root_publication,
+        "chapters": chapters,
+        "references": references,
+        "related_content": related_content,
+        "child_groups": _build_child_groups(chapters, references, related_content),
+    }
 
 
 def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedLinkedContent]]:
@@ -216,9 +393,191 @@ def _get_report_related_links(content: ContentItem) -> Optional[List[RelatedLink
     ]
 
 
+def _resolve_ehelsestandard_attachment_url(file_uri: Optional[str]) -> Optional[str]:
+    """Return an absolute public attachment URL for e-helsestandard files."""
+    if not file_uri or not file_uri.strip():
+        return None
+
+    normalized = file_uri.strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme and parsed.netloc:
+        return normalized
+
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return urljoin(settings.helsedir_public_base_url, normalized)
+
+
+def _build_public_content_url(path: Optional[str]) -> Optional[str]:
+    """Return the public Helsedirektoratet URL derived from a stored path."""
+    if not path or not path.strip():
+        return None
+    normalized = path.strip()
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return urljoin(settings.helsedir_public_base_url, normalized)
+
+
+def _normalize_ehelsestandard_attachments(
+    payload: Mapping[str, Any],
+) -> List[EhelsestandardAttachmentResponse]:
+    """Map raw Helsedir attachments to a frontend-friendly shape."""
+    raw_attachments = payload.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+
+    normalized_attachments: List[EhelsestandardAttachmentResponse] = []
+    for attachment in raw_attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+
+        attachment_url = _resolve_ehelsestandard_attachment_url(
+            attachment.get("fileUri")
+            if isinstance(attachment.get("fileUri"), str)
+            else attachment.get("file_uri")
+            if isinstance(attachment.get("file_uri"), str)
+            else attachment.get("url")
+            if isinstance(attachment.get("url"), str)
+            else attachment.get("href")
+            if isinstance(attachment.get("href"), str)
+            else None
+        )
+        if not attachment_url:
+            continue
+
+        title = (
+            attachment.get("title")
+            if isinstance(attachment.get("title"), str)
+            else attachment.get("tittel")
+            if isinstance(attachment.get("tittel"), str)
+            else attachment.get("name")
+            if isinstance(attachment.get("name"), str)
+            else attachment_url.rstrip("/").rsplit("/", 1)[-1]
+        )
+        file_type = (
+            attachment.get("fileType")
+            if isinstance(attachment.get("fileType"), str)
+            else attachment.get("file_type")
+            if isinstance(attachment.get("file_type"), str)
+            else attachment.get("type")
+            if isinstance(attachment.get("type"), str)
+            else None
+        )
+        normalized_attachments.append(
+            EhelsestandardAttachmentResponse(
+                title=title.strip(),
+                url=attachment_url,
+                file_type=file_type,
+            )
+        )
+
+    return normalized_attachments
+
+
+def _build_ehelsestandard_response_overrides_from_content(
+    content: ContentItem,
+) -> Optional[Dict[str, Any]]:
+    """Build overrides from stored e-helsestandard DB details when available."""
+    if content.content_type.lower() != "ehelsestandard":
+        return None
+
+    body_has_visible_text = has_visible_text(content.body)
+    stored_fields = content.ehelsestandard_fields
+    has_stored_detail_data = stored_fields is not None
+
+    if not has_stored_detail_data:
+        return None
+
+    response_attachments = [
+        EhelsestandardAttachmentResponse(
+            title=attachment.title,
+            url=attachment.url,
+            file_type=attachment.file_type,
+        )
+        for attachment in (stored_fields.attachments if stored_fields else [])
+    ]
+    purpose_html = stored_fields.purpose_html if stored_fields else None
+    final_body = content.body if body_has_visible_text else (purpose_html or content.body)
+    final_has_text_content = has_visible_text(final_body)
+    first_attachment_url = response_attachments[0].url if response_attachments else None
+
+    return {
+        "body": final_body,
+        "has_text_content": final_has_text_content,
+        "document_url": first_attachment_url or content.document_url,
+        "is_pdf_only": (not final_has_text_content) and bool(first_attachment_url),
+        "first_published": content.forst_publisert,
+        "last_reviewed_date": content.sist_faglig_oppdatert,
+        "url": _build_public_content_url(content.path),
+        "ehelsestandard_fields": (
+            EhelsestandardFieldsResponse(
+                standard_id=stored_fields.standard_id,
+                standard_type=stored_fields.standard_type,
+                purpose_html=final_body if final_has_text_content else None,
+                applies_to_html=stored_fields.applies_to_html,
+                attachments=response_attachments,
+            )
+            if stored_fields
+            else None
+        ),
+    }
+
+
+async def _get_ehelsestandard_response_overrides(
+    content: ContentItem,
+) -> Optional[Dict[str, Any]]:
+    """Build request-time overrides for e-helsestandard detail responses."""
+    if content.content_type.lower() != "ehelsestandard":
+        return None
+
+    db_overrides = _build_ehelsestandard_response_overrides_from_content(content)
+    if db_overrides is not None:
+        return db_overrides
+
+    try:
+        logger.debug("Using runtime HAPI fallback for ehelsestandard content_id=%s", content.id)
+        payload = await helsedir_api_service.get_file_by_id_async(content.id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to enrich ehelsestandard content_id=%s: %s",
+            content.id,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+    data = payload.get("data") if isinstance(payload.get("data"), Mapping) else {}
+    purpose_html = data.get("formalBruksomrade") if isinstance(data.get("formalBruksomrade"), str) else None
+    applies_to_html = data.get("standardenGjelderFor") if isinstance(data.get("standardenGjelderFor"), str) else None
+    body_has_visible_text = has_visible_text(content.body)
+    final_body = content.body if body_has_visible_text else (purpose_html or content.body)
+    final_has_text_content = has_visible_text(final_body)
+    attachments = _normalize_ehelsestandard_attachments(payload)
+    public_url = payload.get("url") if isinstance(payload.get("url"), str) else None
+
+    ehelsestandard_fields = EhelsestandardFieldsResponse(
+        standard_id=data.get("idStandard") if isinstance(data.get("idStandard"), str) else None,
+        standard_type=data.get("typeStandard") if isinstance(data.get("typeStandard"), str) else None,
+        purpose_html=purpose_html,
+        applies_to_html=applies_to_html,
+        attachments=attachments,
+    )
+
+    return {
+        "body": final_body,
+        "has_text_content": final_has_text_content,
+        "document_url": attachments[0].url if attachments else None,
+        "is_pdf_only": (not final_has_text_content) and bool(attachments),
+        "first_published": payload.get("forstPublisert") or content.forst_publisert,
+        "last_reviewed_date": payload.get("sistFagligOppdatert") or content.sist_faglig_oppdatert,
+        "url": public_url or _build_public_content_url(content.path),
+        "ehelsestandard_fields": ehelsestandard_fields,
+    }
+
+
 async def _build_content_response(content: ContentItem, search_id: Optional[str] = None) -> ContentResponse:
     """Build ContentResponse from a ContentItem, with parallel link enrichment and click logging."""
-    coros = [_build_links_with_children(content.links)]
+    coros = [_build_links_with_children(content.links), _get_ehelsestandard_response_overrides(content)]
     if search_id:
         coros.append(run_in_threadpool(
             database_service.log_click,
@@ -233,7 +592,11 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
     if isinstance(links_result, BaseException):
         raise links_result
     links_response = links_result
-    next_result_index = 1
+    overrides_result = results[1]
+    if isinstance(overrides_result, BaseException):
+        raise overrides_result
+    response_overrides = overrides_result or {}
+    next_result_index = 2
     if search_id:
         if isinstance(results[next_result_index], BaseException):
             logger.warning(
@@ -273,22 +636,40 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
             styrke=content.anbefaling_fields.styrke,
         )
 
+    normalized_relations = _normalize_relations(links_response)
+    response_body = response_overrides.get("body", content.body)
+    response_has_text_content = response_overrides.get("has_text_content", content.has_text_content)
+    response_document_url = response_overrides.get("document_url", content.public_document_url)
+    response_is_pdf_only = response_overrides.get("is_pdf_only", content.is_pdf_only)
+    response_first_published = response_overrides.get("first_published", content.forst_publisert)
+    response_last_reviewed_date = response_overrides.get("last_reviewed_date", content.sist_faglig_oppdatert)
+    response_url = response_overrides.get("url")
+    response_ehelsestandard_fields = response_overrides.get("ehelsestandard_fields")
+
     return ContentResponse(
         id=content.id,
         title=content.title,
-        body=content.body,
-        content_type=content.content_type,
+        body=response_body,
+        content_type=normalize_content_type(content.content_type),
         path=content.path,
-        first_published=content.forst_publisert,
-        last_reviewed_date=content.sist_faglig_oppdatert,
+        first_published=response_first_published,
+        last_reviewed_date=response_last_reviewed_date,
         role_tags=content.role_tags,
-        has_text_content=content.has_text_content,
-        document_url=content.public_document_url,
-        is_pdf_only=content.is_pdf_only,
+        has_text_content=response_has_text_content,
+        document_url=response_document_url,
+        is_pdf_only=response_is_pdf_only,
+        url=response_url,
         links=links_response,
+        parent=normalized_relations["parent"],
+        root_publication=normalized_relations["root_publication"],
+        chapters=normalized_relations["chapters"],
+        references=normalized_relations["references"],
+        related_content=normalized_relations["related_content"],
+        child_groups=normalized_relations["child_groups"],
         linked_content=linked_content_response,
         related_links=related_links_response,
         anbefaling_fields=anbefaling_fields_response,
+        ehelsestandard_fields=response_ehelsestandard_fields,
     )
 
 

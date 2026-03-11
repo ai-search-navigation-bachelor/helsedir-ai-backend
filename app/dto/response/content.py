@@ -78,6 +78,22 @@ class RelatedLinkResponse(BaseModel):
     target: Optional[str] = None
 
 
+class EhelsestandardAttachmentResponse(BaseModel):
+    """Normalized attachment metadata for e-helsestandard content."""
+    title: str
+    url: str
+    file_type: Optional[str] = None
+
+
+class EhelsestandardFieldsResponse(BaseModel):
+    """Frontend-friendly fields from Helsedir file payloads."""
+    standard_id: Optional[str] = None
+    standard_type: Optional[str] = None
+    purpose_html: Optional[str] = None
+    applies_to_html: Optional[str] = None
+    attachments: List[EhelsestandardAttachmentResponse] = []
+
+
 class ContentResponse(BaseModel):
     """Response model for content endpoint."""
     id: str
@@ -91,9 +107,11 @@ class ContentResponse(BaseModel):
     has_text_content: bool = False
     document_url: Optional[str] = None
     is_pdf_only: bool = False
+    url: Optional[str] = None
     links: List[ContentLinkResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
     related_links: Optional[List[RelatedLinkResponse]] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFieldsResponse] = None
+    ehelsestandard_fields: Optional[EhelsestandardFieldsResponse] = None
