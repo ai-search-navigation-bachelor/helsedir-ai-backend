@@ -1,19 +1,30 @@
 """
-Generate synthetic training data for ranking model.
+Generate training data for ranking model using real page view data and real search results.
 
-This script creates realistic search logs, clicks, and statistics
-to enable training the ranking model even without real user data.
+Uses the helsedir page view CSV to:
+1. Derive search queries from popular page titles
+2. Run real hybrid searches to get results with real features
+3. Simulate clicks weighted by page popularity (views)
+
+This produces training data grounded in real popularity and real retrieval scores,
+not random numbers.
 
 Usage:
     python scripts/setup/generate_training_data.py
-    python scripts/setup/generate_training_data.py --searches 100 --click-rate 0.3
+    python scripts/setup/generate_training_data.py --top 200 --k 10
+    python scripts/setup/generate_training_data.py --clear
 """
 
-import sys
-from pathlib import Path
+import csv
+import io
 import random
+import re
+import sys
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent.parent
@@ -21,59 +32,118 @@ sys.path.insert(0, str(project_root))
 
 import mysql.connector
 from app.config import settings
+from app.services.search.search_service import search_service
+from app.services.data.content_service import content_service
 
 
-# Sample queries for different user types
-SAMPLE_QUERIES = {
-    "lege": [
-        "diabetes behandling",
-        "astma retningslinjer",
-        "adhd diagnostikk",
-        "covid-19 testing",
-        "influensa vaksine",
-        "hjerteinfarkt",
-        "hjerneslag",
-        "kreft screening",
-        "blodtrykk normaler",
-        "kolesterol grenser",
-    ],
-    "sykepleier": [
-        "sårbehandling",
-        "medikamenthåndtering",
-        "pasientobservasjon",
-        "infeksjonskontroll",
-        "fall forebygging",
-        "ernæring eldre",
-        "palliativ omsorg",
-        "smertevurdering",
-        "diabetes oppfølging",
-        "medisinhåndtering",
-    ],
-    "pasient": [
-        "hodepine",
-        "forkjølelse",
-        "influensa symptomer",
-        "covid-19 symptomer",
-        "allergi",
-        "magesmerter",
-        "kvalme",
-        "feber",
-        "hoste",
-        "utslett",
-    ],
-    None: [  # No role specified
-        "helseinformasjon",
-        "vaksiner",
-        "kosthold",
-        "trening",
-        "søvn",
-        "stress",
-        "mental helse",
-        "fysisk aktivitet",
-        "ernæring",
-        "forebygging",
-    ],
+# ---------------------------------------------------------------------------
+# CSV parsing & query derivation (shared with eval script)
+# ---------------------------------------------------------------------------
+
+STOP_WORDS = {
+    "helsedirektoratet", "og", "i", "for", "av", "til", "med", "om",
+    "på", "en", "et", "er", "det", "de", "den", "som", "ved", "fra",
+    "kan", "har", "skal", "vil", "bli", "ble", "blitt", "eller",
+    "andre", "denne", "dette", "disse", "alle", "noen", "hva",
+    "hvordan", "når", "hvor", "the", "and", "of", "in", "for", "to",
+    "-", "–",
 }
+
+
+def parse_page_view_csv(csv_path: str) -> List[Dict]:
+    """Parse the helsedir page view CSV."""
+    rows = []
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        for line_no, raw_line in enumerate(f):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+
+            if raw_line.startswith('"') and raw_line.endswith('"'):
+                raw_line = raw_line[1:-1]
+            raw_line = raw_line.replace('""', '"')
+
+            reader = csv.reader(io.StringIO(raw_line))
+            for fields in reader:
+                if len(fields) < 5:
+                    continue
+                if line_no == 0 and fields[0].strip().lower() == "title":
+                    continue
+
+                try:
+                    views = int(fields[4].strip())
+                except (ValueError, IndexError):
+                    continue
+
+                title = fields[0].strip()
+                url = fields[1].strip()
+
+                if not url or "helsedirektoratet.no" not in url:
+                    continue
+
+                path = urlparse(url).path.rstrip("/") or "/"
+
+                rows.append({
+                    "title": title,
+                    "url": url,
+                    "views": views,
+                    "path": path,
+                })
+
+    return rows
+
+
+def derive_query(title: str) -> Optional[str]:
+    """Derive a search query from a page title."""
+    title = re.sub(r'\s*[-–]\s*Helsedirektoratet\s*$', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\([^)]*\)', '', title)
+    words = [w for w in title.split() if w.lower() not in STOP_WORDS and len(w) > 1]
+
+    if len(words) < 1:
+        return None
+
+    return " ".join(words[:4]).strip()
+
+
+def match_csv_to_content(csv_rows: List[Dict]) -> List[Dict]:
+    """Match CSV rows to content in our database via path."""
+    all_content = content_service.get_all_content()
+    path_to_id = {}
+    for item in all_content:
+        if item.path:
+            path_to_id[item.path] = item.id
+
+    matched = []
+    for row in csv_rows:
+        if row["path"] in path_to_id:
+            row["content_id"] = path_to_id[row["path"]]
+            matched.append(row)
+
+    return matched
+
+
+# ---------------------------------------------------------------------------
+# Role match (same logic as search_controller)
+# ---------------------------------------------------------------------------
+
+def compute_role_match(role: Optional[str], role_tags: Optional[List[str]]) -> float:
+    """Compute role match score."""
+    role_tags = role_tags or []
+    if role and role_tags:
+        if role in role_tags:
+            return 1.0 / len(role_tags)
+    elif not role and not role_tags:
+        return 0.5
+    elif not role_tags:
+        return 0.3
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Data generation
+# ---------------------------------------------------------------------------
+
+ROLES = ["Lege", "Sykepleier", None]
 
 
 def get_connection():
@@ -93,265 +163,236 @@ def get_connection():
         sys.exit(1)
 
 
-def get_content_ids(conn):
-    """Get all content IDs from database."""
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM content")
-    ids = [row[0] for row in cursor.fetchall()]
-    cursor.close()
-    return ids
-
-
-def generate_search_logs(conn, num_searches=100, click_rate=0.3):
+def generate_training_data(conn, pages: List[Dict], k: int = 10):
     """
-    Generate synthetic search logs with realistic click patterns.
+    Generate training data by running real searches for popular pages.
 
-    Args:
-        conn: Database connection
-        num_searches: Number of searches to generate
-        click_rate: Probability of clicking on a result (0-1)
+    For each page:
+    1. Derive a query from the title
+    2. Run hybrid search to get real results with real features
+    3. Log the search and results
+    4. Simulate clicks: the target page (if found) is clicked with high probability,
+       other results are clicked with lower probability weighted by position bias
     """
-    content_ids = get_content_ids(conn)
-    
-    if not content_ids:
-        print("Error: No content in database. Run import_content.py first.")
-        return
-
     cursor = conn.cursor()
-    
-    print(f"\nGenerating {num_searches} searches...")
-    
+
+    # Build content_id -> role_tags lookup
+    all_content = content_service.get_all_content()
+    content_role_tags = {item.id: item.role_tags or [] for item in all_content}
+
+    # Normalize views for click probability
+    max_views = max(p["views"] for p in pages) if pages else 1
+
     searches_created = 0
-    clicks_created = 0
     results_shown = 0
-    
-    start_date = datetime.now() - timedelta(days=30)  # 30 days of history
-    
-    for i in range(num_searches):
-        # Pick random role and query
-        role = random.choice([None, "lege", "sykepleier", "pasient"])
-        query = random.choice(SAMPLE_QUERIES[role])
-        
-        # Generate unique search_id
+    clicks_created = 0
+    skipped = 0
+
+    start_date = datetime.now() - timedelta(days=30)
+
+    for i, page in enumerate(pages):
+        query = derive_query(page["title"])
+        if not query:
+            skipped += 1
+            continue
+
+        target_id = page["content_id"]
+        view_weight = page["views"] / max_views  # 0-1, higher = more popular
+
+        # Pick a random role for this search
+        role = random.choice(ROLES)
+
+        # Run real hybrid search
+        try:
+            results = search_service.search_hybrid(query=query, role=role, k=k)
+        except Exception as e:
+            print(f"  Search failed for '{query}': {e}")
+            skipped += 1
+            continue
+
+        if not results:
+            skipped += 1
+            continue
+
         search_id = str(uuid.uuid4())
-        
-        # Random timestamp within last 30 days
-        timestamp = start_date + timedelta(
-            seconds=random.randint(0, 30 * 24 * 60 * 60)
-        )
-        
-        # Simulate search results (5-10 results shown)
-        num_results = random.randint(5, 10)
-        shown_content = random.sample(content_ids, min(num_results, len(content_ids)))
-        
+        timestamp = start_date + timedelta(seconds=random.randint(0, 30 * 24 * 60 * 60))
+
         # Insert search log
         cursor.execute(
-            """
-            INSERT INTO search_logs (search_id, query, role, results_count, timestamp)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (search_id, query, role, num_results, timestamp),
+            "INSERT INTO search_logs (search_id, query, role, timestamp) VALUES (%s, %s, %s, %s)",
+            (search_id, query, role, timestamp),
         )
         searches_created += 1
-        
-        # Insert results shown
-        for position, content_id in enumerate(shown_content, start=1):
-            # Score decreases with position (simulating ranking)
-            score = random.uniform(0.5, 1.0) / position
-            
+
+        # Insert results shown with real features
+        for position, result in enumerate(results, start=1):
+            role_match = compute_role_match(role, content_role_tags.get(result.id, []))
+
             cursor.execute(
                 """
-                INSERT INTO search_results_shown (search_id, content_id, position, score)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO search_results_shown
+                    (search_id, content_id, position, score,
+                     semantic_score, bm25_score, rrf_score, role_match)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (search_id, content_id, position, score),
+                (
+                    search_id, result.id, position, result.score,
+                    result.semantic_score or 0.0,
+                    result.bm25_score or 0.0,
+                    result.rrf_score or 0.0,
+                    role_match,
+                ),
             )
             results_shown += 1
-            
-            # Simulate clicks (higher positions more likely to be clicked)
-            # Position bias: position 1 has 50% click rate, decreases for lower positions
+
+            # Simulate clicks
+            is_target = result.id == target_id
             position_bias = 1.0 / position
-            click_probability = click_rate * position_bias
-            
-            if random.random() < click_probability:
-                # Insert click log
+
+            if is_target:
+                # Popular target page: high click probability scaled by views
+                click_prob = 0.5 + 0.4 * view_weight  # 0.5 - 0.9
+            else:
+                # Non-target: low click probability with position bias
+                click_prob = 0.15 * position_bias
+
+            if random.random() < click_prob:
                 cursor.execute(
-                    """
-                    INSERT INTO click_logs (search_id, content_id, position, query, role, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (search_id, content_id, position, query, role, timestamp),
+                    "INSERT INTO click_logs (search_id, content_id, position, timestamp) VALUES (%s, %s, %s, %s)",
+                    (search_id, result.id, position, timestamp),
                 )
                 clicks_created += 1
-        
-        # Commit every 10 searches
-        if (i + 1) % 10 == 0:
+
+        # Commit every 20 searches
+        if (i + 1) % 20 == 0:
             conn.commit()
-            print(f"  Progress: {i + 1}/{num_searches} searches generated...")
-    
-    # Final commit
+            print(f"  [{i + 1}/{len(pages)}] {searches_created} searches, {clicks_created} clicks")
+
     conn.commit()
     cursor.close()
-    
-    print(f"\n✓ Generated:")
-    print(f"  {searches_created} searches")
-    print(f"  {results_shown} results shown")
-    print(f"  {clicks_created} clicks")
 
-
-def update_content_stats(conn):
-    """Calculate and update content statistics."""
-    print("\nUpdating content statistics...")
-    
-    cursor = conn.cursor()
-    
-    # Clear existing stats
-    cursor.execute("DELETE FROM content_stats")
-    
-    # Calculate impressions and clicks per content
-    cursor.execute(
-        """
-        INSERT INTO content_stats (content_id, impressions, clicks)
-        SELECT 
-            s.content_id,
-            COUNT(DISTINCT s.id) as impressions,
-            COUNT(DISTINCT c.id) as clicks
-        FROM search_results_shown s
-        LEFT JOIN click_logs c ON s.search_id = c.search_id AND s.content_id = c.content_id
-        GROUP BY s.content_id
-        """
-    )
-    
-    stats_count = cursor.rowcount
-    conn.commit()
-    cursor.close()
-    
-    print(f"✓ Updated statistics for {stats_count} content items")
+    print(f"\n  Generated:")
+    print(f"    {searches_created} searches (skipped {skipped})")
+    print(f"    {results_shown} results shown")
+    print(f"    {clicks_created} clicks")
 
 
 def verify_data(conn):
     """Verify generated data."""
     cursor = conn.cursor(dictionary=True)
-    
-    print("\n" + "="*60)
-    print("Training Data Verification:")
-    print("="*60)
-    
-    # Count searches
+
+    print("\n" + "=" * 60)
+    print("  Training Data Verification")
+    print("=" * 60)
+
     cursor.execute("SELECT COUNT(*) as count FROM search_logs")
     search_count = cursor.fetchone()["count"]
-    print(f"✓ Searches: {search_count}")
-    
-    # Count clicks
-    cursor.execute("SELECT COUNT(*) as count FROM click_logs")
-    click_count = cursor.fetchone()["count"]
-    print(f"✓ Clicks: {click_count}")
-    
-    # Count results shown
+    print(f"  Searches: {search_count}")
+
     cursor.execute("SELECT COUNT(*) as count FROM search_results_shown")
     shown_count = cursor.fetchone()["count"]
-    print(f"✓ Results shown: {shown_count}")
-    
-    # Content stats
-    cursor.execute("SELECT COUNT(*) as count FROM content_stats")
-    stats_count = cursor.fetchone()["count"]
-    print(f"✓ Content stats: {stats_count}")
-    
-    # Click-through rate
+    print(f"  Results shown: {shown_count}")
+
+    cursor.execute("SELECT COUNT(*) as count FROM click_logs")
+    click_count = cursor.fetchone()["count"]
+    print(f"  Clicks: {click_count}")
+
     if shown_count > 0:
         ctr = (click_count / shown_count) * 100
-        print(f"✓ Overall CTR: {ctr:.2f}%")
-    
-    # Sample high CTR content
+        print(f"  Overall CTR: {ctr:.1f}%")
+
+    # Count unique search groups with clicks (what LTR training needs)
     cursor.execute(
         """
-        SELECT content_id, impressions, clicks, ctr
-        FROM content_stats
-        WHERE impressions > 5
-        ORDER BY ctr DESC
-        LIMIT 5
+        SELECT COUNT(DISTINCT sl.search_id) as count
+        FROM search_logs sl
+        INNER JOIN click_logs cl ON sl.search_id = cl.search_id
+        INNER JOIN search_results_shown srs ON sl.search_id = srs.search_id
+        GROUP BY sl.search_id
+        HAVING COUNT(DISTINCT srs.id) >= 5
         """
     )
-    top_content = cursor.fetchall()
-    
-    if top_content:
-        print(f"\nTop 5 content by CTR:")
-        for row in top_content:
-            print(f"  {row['content_id']}: {row['clicks']}/{row['impressions']} clicks (CTR: {row['ctr']*100:.1f}%)")
-    
-    print("="*60)
-    
-    # Check if we have enough data for training
-    if search_count >= 50 and click_count >= 20:
-        print("\n✓ Sufficient data for ranking model training!")
+    groups = cursor.fetchall()
+    print(f"  Training groups (searches with clicks + 5+ results): {len(groups)}")
+
+    print("=" * 60)
+
+    if len(groups) >= 20:
+        print("\n  Sufficient data for ranking model training!")
         print("  Run: python scripts/train/train_ranking_model.py")
     else:
-        print(f"\n⚠ Need more data for training:")
-        print(f"  Minimum: 50 searches, 20 clicks")
-        print(f"  Current: {search_count} searches, {click_count} clicks")
-    
+        print(f"\n  Need more data. Try increasing --top.")
+
     cursor.close()
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
-    """Main function."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
-        description="Generate synthetic training data for ranking model"
+        description="Generate training data from page view CSV + real searches"
     )
     parser.add_argument(
-        "--searches",
-        type=int,
-        default=100,
-        help="Number of searches to generate (default: 100)",
+        "--csv",
+        default=str(project_root / "scripts" / "data" / "importing" / "helsedir_page_view.csv"),
+        help="Path to page view CSV file",
     )
-    parser.add_argument(
-        "--click-rate",
-        type=float,
-        default=0.3,
-        help="Base click rate 0-1 (default: 0.3 = 30%%)",
-    )
-    parser.add_argument(
-        "--clear",
-        action="store_true",
-        help="Clear existing logs before generating new data",
-    )
+    parser.add_argument("--top", type=int, default=200, help="Use top N most viewed pages (default: 200)")
+    parser.add_argument("--k", type=int, default=10, help="Results per search (default: 10)")
+    parser.add_argument("--clear", action="store_true", help="Clear existing logs first")
     args = parser.parse_args()
-    
-    print("\n" + "="*60)
-    print("Generate Training Data for Ranking Model")
-    print("="*60 + "\n")
-    
-    print(f"Configuration:")
-    print(f"  Searches: {args.searches}")
-    print(f"  Click rate: {args.click_rate * 100:.0f}%")
+
+    print("\n" + "=" * 60)
+    print("  Generate Training Data for Ranking Model")
+    print("=" * 60)
+
+    # Parse CSV
+    print(f"\nParsing CSV...")
+    csv_rows = parse_page_view_csv(args.csv)
+    print(f"  {len(csv_rows)} pages with views")
+
+    # Match to content
+    print("Matching to content database...")
+    matched = match_csv_to_content(csv_rows)
+    print(f"  {len(matched)} pages matched to content")
+
+    if not matched:
+        print("\nNo pages matched. Check that content is loaded.")
+        return
+
+    # Take top N by views
+    matched.sort(key=lambda x: -x["views"])
+    pages = matched[:args.top]
+    print(f"\nUsing top {len(pages)} pages (views: {pages[0]['views']:,} - {pages[-1]['views']:,})")
+
+    print(f"\nConfiguration:")
+    print(f"  Results per search: {args.k}")
     print(f"  Clear existing: {args.clear}")
-    print()
-    
+
     # Connect to database
     conn = get_connection()
-    
+
     try:
-        # Clear existing data if requested
         if args.clear:
-            print("Clearing existing logs...")
+            print("\nClearing existing logs...")
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM click_logs")
-            cursor.execute("DELETE FROM search_results_shown")
-            cursor.execute("DELETE FROM search_logs")
-            cursor.execute("DELETE FROM content_stats")
+            cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+            cursor.execute("TRUNCATE TABLE click_logs")
+            cursor.execute("TRUNCATE TABLE search_results_shown")
+            cursor.execute("TRUNCATE TABLE search_logs")
+            cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
             conn.commit()
             cursor.close()
-            print("✓ Existing logs cleared\n")
-        
-        # Generate data
-        generate_search_logs(conn, args.searches, args.click_rate)
-        update_content_stats(conn)
+            print("  Existing logs cleared")
+
+        print("\nGenerating training data (running real searches)...")
+        generate_training_data(conn, pages, k=args.k)
         verify_data(conn)
-        
-        print("\n✓ Training data generation completed!")
-        
+
     finally:
         conn.close()
 
