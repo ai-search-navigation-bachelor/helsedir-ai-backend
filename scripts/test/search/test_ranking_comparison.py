@@ -196,7 +196,7 @@ def main():
     # Check if ranking model is available
     from app.services.search.ml_service import ml_service
     
-    model_path = Path("models/ranking/model.keras")
+    model_path = Path("models/ranking/reranker.json")
     if not model_path.exists():
         print("\n❌ Error: Ranking model not found!")
         print(f"   Expected at: {model_path}")
