@@ -890,21 +890,6 @@ class SearchController:
         return SuggestionResponse(suggestions=suggestions)
 
     @staticmethod
-    def _compute_type_match(info_type: Optional[str]) -> float:
-        """Content type authority score."""
-        content_type_map = {
-            "retningslinje": 0.9,
-            "veileder": 0.8,
-            "fagprosedyre": 0.75,
-            "faktaark": 0.6,
-            "artikkel": 0.5,
-        }
-        return content_type_map.get(
-            info_type.lower() if info_type else None,
-            0.5,
-        )
-
-    @staticmethod
     def _compute_role_match(role: Optional[str], role_tags: Optional[List[str]]) -> float:
         """Role match score."""
         role_tags = role_tags or []
@@ -943,14 +928,9 @@ class SearchController:
             position = max_position + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
-            # Metadata features from content item (lightweight)
-            type_match = 0.5
             role_match = 0.0
-            maalgruppe_match = 0
             if content_item:
-                type_match = self._compute_type_match(content_item.info_type)
                 role_match = self._compute_role_match(role, content_item.role_tags)
-                maalgruppe_match = 1 if role and role in (content_item.role_tags or []) else 0
 
             results_to_log.append({
                 "content_id": result.id,
@@ -959,9 +939,7 @@ class SearchController:
                 "semantic_score": result.semantic_score or 0.0,
                 "bm25_score": result.bm25_score or 0.0,
                 "rrf_score": result.rrf_score or 0.0,
-                "type_match": type_match,
                 "role_match": role_match,
-                "maalgruppe_match": maalgruppe_match,
             })
 
         database_service.log_search_results(search_id, results_to_log)
