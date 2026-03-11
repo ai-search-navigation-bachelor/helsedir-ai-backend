@@ -271,17 +271,26 @@ class HybridSearch:
     @staticmethod
     def _build_results(candidates: List[HybridCandidate], k: int) -> List[SearchResult]:
         """Build API search results from candidates."""
+        from app.dto.response.search import PipelineScores, RerankInfo
+
         results = []
         for position, c in enumerate(candidates[:k], start=1):
-            explanation = (
-                f"BM25={c.keyword_norm:.2f} | Semantic={c.semantic_norm:.2f} | "
-                f"RRF final={c.combined_score:.2f}"
-            )
+            # Build rerank info if model was applied
+            rerank_info = None
+            if c.rerank_score is not None and c.pre_rerank_position > 0:
+                rerank_info = RerankInfo(
+                    score=round(c.rerank_score, 4),
+                    rank_change=c.pre_rerank_position - position,
+                    contributions=c.rerank_contributions or {},
+                )
 
-            # Compute rank change if reranking was applied
-            rank_change = None
-            if c.pre_rerank_position > 0:
-                rank_change = c.pre_rerank_position - position  # positive = moved up
+            pipeline = PipelineScores(
+                bm25=round(c.keyword_norm, 4),
+                semantic=round(c.semantic_norm, 4),
+                rrf=round(c.rrf_raw, 6),
+                role_boost=round(c.role_boost, 4),
+                rerank=rerank_info,
+            )
 
             results.append(
                 SearchResult(
@@ -293,14 +302,7 @@ class HybridSearch:
                     document_url=c.item.public_document_url,
                     is_pdf_only=c.item.is_pdf_only,
                     score=round(c.combined_score, 3),
-                    explanation=explanation,
-                    bm25_score=c.keyword_norm,
-                    semantic_score=c.semantic_norm,
-                    rrf_score=c.rrf_raw,
-                    role_boost=c.role_boost,
-                    rerank_score=round(c.rerank_score, 4) if c.rerank_score is not None else None,
-                    rank_change=rank_change,
-                    rerank_contributions=c.rerank_contributions,
+                    pipeline=pipeline,
                 )
             )
         return results

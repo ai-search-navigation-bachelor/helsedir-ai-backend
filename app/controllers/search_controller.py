@@ -938,13 +938,14 @@ class SearchController:
             if content_item:
                 role_match = self._compute_role_match(role, content_item.role_tags)
 
+            p = result.pipeline
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
                 "score": result.score,
-                "semantic_score": result.semantic_score or 0.0,
-                "bm25_score": result.bm25_score or 0.0,
-                "rrf_score": result.rrf_score or 0.0,
+                "semantic_score": p.semantic if p else 0.0,
+                "bm25_score": p.bm25 if p else 0.0,
+                "rrf_score": p.rrf if p else 0.0,
                 "role_match": role_match,
             })
 

@@ -237,9 +237,9 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
                 """,
                 (
                     search_id, result.id, position, result.score,
-                    result.semantic_score or 0.0,
-                    result.bm25_score or 0.0,
-                    result.rrf_score or 0.0,
+                    result.pipeline.semantic if result.pipeline else 0.0,
+                    result.pipeline.bm25 if result.pipeline else 0.0,
+                    result.pipeline.rrf if result.pipeline else 0.0,
                     role_match,
                 ),
             )

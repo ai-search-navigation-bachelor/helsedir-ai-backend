@@ -26,8 +26,7 @@ def format_result(result, rank: int) -> str:
     """Format a search result for display."""
     return (
         f"{rank}. [{result.score:.3f}] {result.title[:60]}\n"
-        f"   ID: {result.id}\n"
-        f"   {result.explanation[:100]}"
+        f"   ID: {result.id}"
     )
 
 
