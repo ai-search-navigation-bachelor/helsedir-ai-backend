@@ -34,6 +34,8 @@ class HybridCandidate:
     semantic_norm: float
     rrf_raw: float = 0.0  # Original RRF score, preserved when ML ranking overwrites combined_score
     role_boost: float = 1.0  # Role boost/penalty multiplier applied (1.0 = neutral)
+    pre_rerank_position: int = 0  # Position before ML reranking (1-indexed, 0 = not set)
+    rerank_score: Optional[float] = None  # Raw ML model score (None = model not applied)
 
 
 class HybridSearch:
@@ -269,11 +271,16 @@ class HybridSearch:
     def _build_results(candidates: List[HybridCandidate], k: int) -> List[SearchResult]:
         """Build API search results from candidates."""
         results = []
-        for c in candidates[:k]:
+        for position, c in enumerate(candidates[:k], start=1):
             explanation = (
                 f"BM25={c.keyword_norm:.2f} | Semantic={c.semantic_norm:.2f} | "
                 f"RRF final={c.combined_score:.2f}"
             )
+
+            # Compute rank change if reranking was applied
+            rank_change = None
+            if c.pre_rerank_position > 0:
+                rank_change = c.pre_rerank_position - position  # positive = moved up
 
             results.append(
                 SearchResult(
@@ -290,6 +297,8 @@ class HybridSearch:
                     semantic_score=c.semantic_norm,
                     rrf_score=c.rrf_raw,
                     role_boost=c.role_boost,
+                    rerank_score=round(c.rerank_score, 4) if c.rerank_score is not None else None,
+                    rank_change=rank_change,
                 )
             )
         return results
@@ -308,6 +317,10 @@ class HybridSearch:
                 if not ml_service.is_ranking_available():
                     return candidates
 
+            # Save pre-rerank positions (1-indexed)
+            for i, c in enumerate(candidates):
+                c.pre_rerank_position = i + 1
+
             # Extract 4 features for each candidate
             features_list = []
             for c in candidates:
@@ -319,6 +332,7 @@ class HybridSearch:
 
             # Replace combined score with ranking score and re-sort
             for i, c in enumerate(candidates):
+                c.rerank_score = ranking_scores[i]
                 c.combined_score = ranking_scores[i]
 
             candidates.sort(key=lambda c: -c.combined_score)

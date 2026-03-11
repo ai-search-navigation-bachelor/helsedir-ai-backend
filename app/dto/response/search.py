@@ -31,6 +31,8 @@ class SearchResult(BaseModel):
     semantic_score: Optional[float] = Field(default=None)
     rrf_score: Optional[float] = Field(default=None)
     role_boost: Optional[float] = Field(default=None)  # Role boost/penalty multiplier (1.15=match, 0.85=mismatch, 1.0=neutral/no role)
+    rerank_score: Optional[float] = Field(default=None)  # Raw ML model score (None = model not applied)
+    rank_change: Optional[int] = Field(default=None)  # Position change from reranking (positive = moved up, negative = moved down)
 
 
 class SearchResponse(BaseModel):
