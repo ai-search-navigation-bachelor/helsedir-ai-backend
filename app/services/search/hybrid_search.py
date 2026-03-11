@@ -62,6 +62,7 @@ class HybridSearch:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
@@ -85,7 +86,9 @@ class HybridSearch:
         if not candidates:
             return []
 
-        if settings.ml_ranking_enabled:
+        # rerank=None means use global setting, True/False overrides per-request
+        use_rerank = rerank if rerank is not None else settings.ml_ranking_enabled
+        if use_rerank:
             candidates = self._apply_ranking_model(candidates, role)
 
         # Apply content type boosts and role boost/penalty AFTER ML reranking

@@ -74,6 +74,7 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -115,6 +116,7 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
         )
 
         # Coerce None to empty list
@@ -562,6 +564,7 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -578,6 +581,7 @@ class SearchController:
             bm25_weight = semantic_weight = rrf_k = None
             temaside_boost = retningslinje_boost = None
             role_boost = role_penalty = None
+            rerank = None
 
         cache_key = (
             query.strip().lower(),
@@ -591,6 +595,7 @@ class SearchController:
             retningslinje_boost,
             role_boost,
             role_penalty,
+            rerank,
         )
         now = time.monotonic()
 
@@ -622,6 +627,7 @@ class SearchController:
                 retningslinje_boost=retningslinje_boost,
                 role_boost=role_boost,
                 role_penalty=role_penalty,
+                rerank=rerank,
             )
 
         # Coerce None to empty list

@@ -22,6 +22,7 @@ async def search(
     search_boost_retningslinje: Optional[float] = Query(None, include_in_schema=False),
     role_boost: Optional[float] = Query(None, description="Score multiplier for documents matching the role"),
     role_penalty: Optional[float] = Query(None, description="Score multiplier for documents not matching the role"),
+    rerank: Optional[bool] = Query(None, include_in_schema=False),
     method: Optional[str] = Query(None, include_in_schema=False),
 ):
     """
@@ -73,6 +74,7 @@ async def search(
             retningslinje_boost=effective_retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
