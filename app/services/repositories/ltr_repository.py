@@ -113,9 +113,7 @@ class LtrRepository:
                     srs.semantic_score,
                     srs.bm25_score,
                     srs.rrf_score,
-                    srs.type_match,
                     srs.role_match,
-                    srs.maalgruppe_match,
                     CASE WHEN EXISTS(
                         SELECT 1 FROM click_logs cl
                         WHERE cl.search_id = srs.search_id AND cl.content_id = srs.content_id
