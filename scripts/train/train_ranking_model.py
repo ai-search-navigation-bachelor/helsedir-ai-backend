@@ -48,9 +48,9 @@ def main():
         model_path.parent.mkdir(parents=True, exist_ok=True)
         
         reranker.save(str(model_path))
-        print(f"\n✓ Model saved to: {model_path}")
+        print(f"\nModel saved to: {model_path}")
     else:
-        print("\n✗ Training failed - not enough data")
+        print("\nTraining failed - not enough data")
         print("  Make sure you have:")
         print("  - Search logs with results shown (search_results_shown table)")
         print("  - Click logs (click_logs table)")

@@ -201,7 +201,6 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
-        w_all: List[float] = []
         group_sizes: List[int] = []
 
         used_groups = 0
@@ -241,11 +240,12 @@ class HealthContentReranker:
                 }
 
                 feat_dicts.append(feat_dict)
-                labels.append(float(clicked))
 
-                # IPS weight using position (position is NOT a feature, only used for bias correction)
+                # IPS-adjusted label: weight clicked results by inverse propensity
+                # so clicks at lower positions count more (they overcame position bias)
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                weights.append(1.0 / max(float(prop), 1e-6))
+                ips_weight = 1.0 / max(float(prop), 1e-6)
+                labels.append(float(clicked) * ips_weight)
 
             if not any_pos:
                 continue
@@ -259,7 +259,6 @@ class HealthContentReranker:
 
             X_all.extend(feats)
             y_all.extend(labels)
-            w_all.extend(weights)
             group_sizes.append(len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -269,10 +268,9 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
-        w = np.asarray(w_all, dtype=np.float32)
 
         self.model = xgb.XGBRanker(
-            objective="rank:ndcg",
+            objective="rank:pairwise",
             learning_rate=0.08,
             max_depth=6,
             n_estimators=350,
@@ -283,7 +281,7 @@ class HealthContentReranker:
             tree_method="hist",
         )
 
-        self.model.fit(X, y, sample_weight=w, group=group_sizes, verbose=verbose)
+        self.model.fit(X, y, group=group_sizes, verbose=verbose)
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
 
