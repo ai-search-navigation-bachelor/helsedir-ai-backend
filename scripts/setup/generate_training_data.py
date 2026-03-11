@@ -248,12 +248,19 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
             # Simulate clicks
             is_target = result.id == target_id
             position_bias = 1.0 / position
+            info_type = (result.info_type or "").lower()
 
             if is_target:
                 # Popular target page: high click probability scaled by views
                 click_prob = 0.5 + 0.4 * view_weight  # 0.5 - 0.9
+            elif info_type == "temaside":
+                # Temasider are high-value overview pages users often click
+                click_prob = 0.35 * position_bias
+            elif info_type == "retningslinje":
+                # Retningslinjer are authoritative and frequently clicked
+                click_prob = 0.30 * position_bias
             else:
-                # Non-target: low click probability with position bias
+                # Other content: lower click probability
                 click_prob = 0.15 * position_bias
 
             if random.random() < click_prob:
