@@ -5,7 +5,7 @@ This module replaces the previous TensorFlow binary classifier approach.
 
 Why this version is better:
 - Trains a *ranking* model (LambdaMART) grouped by search_id (true LTR), not global click classification.
-- Uses IPS (inverse propensity scoring) sample weights to reduce position bias.
+- Uses IPS (inverse propensity scoring) via sample_weight to reduce position bias.
 - Works with your existing DB logging tables:
   - search_logs
   - search_results_shown (impressions + per-result features)
@@ -85,9 +85,12 @@ def _compute_freshness(sist_faglig_oppdatert) -> float:
             dt = sist_faglig_oppdatert
         else:
             dt = datetime.fromisoformat(str(sist_faglig_oppdatert))
+        # Strip timezone info for safe subtraction with naive datetime.now()
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
         days = max(0, (datetime.now() - dt).days)
         return 1.0 / (1.0 + days / 365.0)
-    except Exception:
+    except (ValueError, TypeError):
         return 0.5
 
 
@@ -241,6 +244,7 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
+        w_all: List[float] = []
         group_sizes: List[int] = []
 
         used_groups = 0
@@ -261,6 +265,7 @@ class HealthContentReranker:
             # First pass: build feature dicts
             feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
+            weights: List[float] = []
 
             any_pos = False
             any_click = False
@@ -300,11 +305,13 @@ class HealthContentReranker:
 
                 feat_dicts.append(feat_dict)
 
-                # IPS-adjusted label: weight clicked results by inverse propensity
-                # so clicks at lower positions count more (they overcame position bias)
+                # Binary label: 1 if clicked, 0 otherwise
+                labels.append(float(clicked))
+
+                # IPS sample weight: clicks at lower positions get higher weight
+                # because they overcame position bias
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_weight = 1.0 / max(float(prop), 1e-6)
-                labels.append(float(clicked) * ips_weight)
+                weights.append(1.0 / max(float(prop), 1e-6))
 
             if not any_pos:
                 continue
@@ -318,6 +325,7 @@ class HealthContentReranker:
 
             X_all.extend(feats)
             y_all.extend(labels)
+            w_all.extend(weights)
             group_sizes.append(len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -327,6 +335,7 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
+        w = np.asarray(w_all, dtype=np.float32)
 
         self.model = xgb.XGBRanker(
             objective="rank:pairwise",
@@ -340,7 +349,7 @@ class HealthContentReranker:
             tree_method="hist",
         )
 
-        self.model.fit(X, y, group=group_sizes, verbose=verbose)
+        self.model.fit(X, y, group=group_sizes, sample_weight=w, verbose=verbose)
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
 
@@ -372,6 +381,7 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
+        w_all: List[float] = []
         group_sizes: List[int] = []
         used_groups = 0
         used_rows = 0
@@ -387,6 +397,7 @@ class HealthContentReranker:
 
             feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
+            weights: List[float] = []
             any_pos = False
             any_click = False
 
@@ -420,9 +431,9 @@ class HealthContentReranker:
                     "content_freshness": freshness,
                 })
 
+                labels.append(float(clicked))
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_weight = 1.0 / max(float(prop), 1e-6)
-                labels.append(float(clicked) * ips_weight)
+                weights.append(1.0 / max(float(prop), 1e-6))
 
             if not any_pos:
                 continue
@@ -432,6 +443,7 @@ class HealthContentReranker:
             feats = [[fd[n] for n in self.feature_names] for fd in feat_dicts]
             X_all.extend(feats)
             y_all.extend(labels)
+            w_all.extend(weights)
             group_sizes.append(len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -441,6 +453,7 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
+        w = np.asarray(w_all, dtype=np.float32)
 
         self.model = xgb.XGBRanker(
             objective="rank:pairwise",
@@ -453,7 +466,7 @@ class HealthContentReranker:
             random_state=42,
             tree_method="hist",
         )
-        self.model.fit(X, y, group=group_sizes, verbose=verbose)
+        self.model.fit(X, y, group=group_sizes, sample_weight=w, verbose=verbose)
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
 
