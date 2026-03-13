@@ -195,8 +195,9 @@ def main():
     
     # Check if ranking model is available
     from app.services.search.ml_service import ml_service
-    
-    model_path = Path("models/ranking/reranker.json")
+    from app.config import settings
+
+    model_path = Path(settings.ml_models_dir) / "ranking" / "reranker.json"
     if not model_path.exists():
         print("\n❌ Error: Ranking model not found!")
         print(f"   Expected at: {model_path}")

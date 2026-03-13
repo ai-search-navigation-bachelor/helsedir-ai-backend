@@ -204,7 +204,7 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
 
         # Run real hybrid search
         try:
-            results = search_service.search_hybrid(query=query, role=role, k=k)
+            results = search_service.search_hybrid(query=query, role=role, k=k, rerank=False)
         except Exception as e:
             print(f"  Search failed for '{query}': {e}")
             skipped += 1
@@ -371,9 +371,16 @@ def main():
         print("\nNo pages matched. Check that content is loaded.")
         return
 
+    if args.top <= 0:
+        print("\nError: --top must be a positive integer.")
+        return
+
     # Take top N by views
     matched.sort(key=lambda x: -x["views"])
     pages = matched[:args.top]
+    if not pages:
+        print("\nNo pages after slicing. Check --top value.")
+        return
     print(f"\nUsing top {len(pages)} pages (views: {pages[0]['views']:,} - {pages[-1]['views']:,})")
 
     print("\nConfiguration:")

@@ -23,7 +23,7 @@ import io
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 # Add project root to Python path
@@ -156,7 +156,7 @@ def evaluate(
     method: str = "hybrid",
     k: int = 10,
     verbose: bool = True,
-) -> Dict[str, float]:
+) -> Tuple[Dict[str, float], List[Dict[str, Any]]]:
     """
     Evaluate search recall for popular pages.
 
