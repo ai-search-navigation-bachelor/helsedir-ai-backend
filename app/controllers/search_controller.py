@@ -75,6 +75,7 @@ class SearchController:
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -117,6 +118,7 @@ class SearchController:
             role_boost=role_boost,
             role_penalty=role_penalty,
             rerank=rerank,
+            explain=explain,
         )
 
         # Coerce None to empty list
@@ -164,6 +166,7 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            background_tasks=background_tasks,
         )
 
         # Extract ML features and log results (skip for prefetch requests)
@@ -565,6 +568,7 @@ class SearchController:
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -582,6 +586,7 @@ class SearchController:
             temaside_boost = retningslinje_boost = None
             role_boost = role_penalty = None
             rerank = None
+            explain = False
 
         cache_key = (
             query.strip().lower(),
@@ -596,6 +601,7 @@ class SearchController:
             role_boost,
             role_penalty,
             rerank,
+            explain,
         )
         now = time.monotonic()
 
@@ -628,6 +634,7 @@ class SearchController:
                 role_boost=role_boost,
                 role_penalty=role_penalty,
                 rerank=rerank,
+                explain=explain,
             )
 
         # Coerce None to empty list
@@ -667,8 +674,13 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> str:
-        """Generate new search_id or validate existing one."""
+        """Generate new search_id or validate existing one.
+
+        DB writes (log_search) are deferred to background_tasks when available
+        so they don't block the response.
+        """
         expected_signature = self._build_search_signature(
             method=method,
             bm25_weight=bm25_weight,
@@ -680,10 +692,16 @@ class SearchController:
             role_penalty=role_penalty,
         )
 
+        def _log_new_search(sid: str):
+            database_service.log_search(search_id=sid, query=query, role=role)
+
         if not search_id:
             # New search
             search_id = self._build_signed_search_id(expected_signature)
-            database_service.log_search(search_id=search_id, query=query, role=role)
+            if background_tasks:
+                background_tasks.add_task(_log_new_search, search_id)
+            else:
+                _log_new_search(search_id)
         else:
             # Validate existing search_id
             stored_search = database_service.get_search_by_id(search_id)
@@ -709,7 +727,10 @@ class SearchController:
             if stored_query != query.strip().lower() or stored_role != incoming_role:
                 # Query or role changed — start a fresh search
                 search_id = self._build_signed_search_id(expected_signature)
-                database_service.log_search(search_id=search_id, query=query, role=role)
+                if background_tasks:
+                    background_tasks.add_task(_log_new_search, search_id)
+                else:
+                    _log_new_search(search_id)
 
         return search_id
 

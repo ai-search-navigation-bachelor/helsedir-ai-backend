@@ -5,7 +5,9 @@ Hybrid search combining keyword and semantic search.
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional, Dict
 
 import numpy as np
@@ -66,6 +68,7 @@ class HybridSearch:
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
@@ -92,7 +95,16 @@ class HybridSearch:
         # rerank=None means use global setting, True/False overrides per-request
         use_rerank = rerank if rerank is not None else settings.ml_ranking_enabled
         if use_rerank:
-            candidates = self._apply_ranking_model(candidates, role)
+            # Only rerank top candidates — items ranked low by RRF are unlikely to surface
+            rerank_cutoff = min(max(k * 10, 100), len(candidates))
+            candidates = self._apply_ranking_model(
+                candidates[:rerank_cutoff], role, query_lower, query_keywords,
+                explain=explain,
+            )
+
+        # Trim to reasonable size before applying boosts and normalization
+        if not use_rerank:
+            candidates = candidates[:k]
 
         # Apply content type boosts and role boost/penalty AFTER ML reranking
         # (ML replaces combined_score, so multiplicative boosts must come after)
@@ -138,16 +150,22 @@ class HybridSearch:
             self.max_candidate_pool,
         )
 
-        t0 = time.perf_counter()
-        bm25_hits = bm25_search.search(query, role, k=candidate_pool)
-        t_bm25 = time.perf_counter() - t0
-
-        semantic_hits = []
         semantic_available = semantic_search.is_available()
+
         t0 = time.perf_counter()
         if semantic_available:
-            semantic_hits = semantic_search.search(query=query, role=role, k=candidate_pool)
-        t_semantic = time.perf_counter() - t0
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                bm25_future = executor.submit(bm25_search.search, query, role, candidate_pool)
+                sem_future = executor.submit(semantic_search.search, query=query, role=role, k=candidate_pool)
+                bm25_hits = bm25_future.result()
+                semantic_hits = sem_future.result()
+            t_bm25 = time.perf_counter() - t0
+            t_semantic = t_bm25  # parallel, so same wall time
+        else:
+            bm25_hits = bm25_search.search(query, role, k=candidate_pool)
+            t_bm25 = time.perf_counter() - t0
+            semantic_hits = []
+            t_semantic = 0.0
 
         if not bm25_hits and not semantic_hits:
             return []
@@ -311,8 +329,12 @@ class HybridSearch:
         self,
         candidates: List[HybridCandidate],
         role: Optional[str],
+        query_lower: str = "",
+        query_keywords: Optional[set] = None,
+        explain: bool = False,
     ) -> List[HybridCandidate]:
         """Apply ranking model to re-rank results."""
+        t_start = time.perf_counter()
         try:
             from app.services.search.ml_service import ml_service
 
@@ -326,25 +348,42 @@ class HybridSearch:
                 c.pre_rerank_position = i + 1
 
             # Fetch cached CTR map for popularity signal
+            t0 = time.perf_counter()
             ctr_map = ml_service.get_ctr_map()
+            t_ctr = time.perf_counter() - t0
 
-            # Extract 4 features for each candidate
+            # Extract 7 features for each candidate
+            t0 = time.perf_counter()
             features_list = []
             for c in candidates:
-                features = self._extract_ranking_features(c, role, ctr_map)
+                features = self._extract_ranking_features(c, role, ctr_map, query_lower, query_keywords)
                 features_list.append(features)
+            t_features = time.perf_counter() - t0
 
-            # Get ranking scores with per-feature contributions
-            results_with_contribs = ml_service.get_ranking_scores_with_contributions(features_list)
-
-            # Replace combined score with ranking score and re-sort
-            for i, c in enumerate(candidates):
-                score, contribs = results_with_contribs[i]
-                c.rerank_score = score
-                c.rerank_contributions = contribs
-                c.combined_score = score
+            t0 = time.perf_counter()
+            if explain:
+                # Slow path: include per-feature SHAP contributions
+                results_with_contribs = ml_service.get_ranking_scores_with_contributions(features_list)
+                for i, c in enumerate(candidates):
+                    score, contribs = results_with_contribs[i]
+                    c.rerank_score = score
+                    c.rerank_contributions = contribs
+                    c.combined_score = score
+            else:
+                # Fast path: scores only
+                scores = ml_service.get_ranking_scores(features_list)
+                for i, c in enumerate(candidates):
+                    c.rerank_score = scores[i]
+                    c.combined_score = scores[i]
+            t_predict = time.perf_counter() - t0
 
             candidates.sort(key=lambda c: -c.combined_score)
+
+            t_total = time.perf_counter() - t_start
+            logger.info(
+                "Reranking timings: CTR=%.0fms  Features=%.0fms  Predict=%.0fms  Total=%.0fms",
+                t_ctr * 1000, t_features * 1000, t_predict * 1000, t_total * 1000,
+            )
             return candidates
 
         except Exception:
@@ -356,8 +395,10 @@ class HybridSearch:
         candidate: HybridCandidate,
         role: Optional[str],
         ctr_map: Optional[Dict[str, float]] = None,
+        query_lower: str = "",
+        query_keywords: Optional[set] = None,
     ) -> Dict[str, float]:
-        """Extract 4 features for ranking model from a HybridCandidate."""
+        """Extract 7 features for ranking model from a HybridCandidate."""
         item = candidate.item
 
         # Role match
@@ -374,11 +415,37 @@ class HybridSearch:
         default_ctr = 1.0 / 21.0
         smoothed_ctr = (ctr_map or {}).get(item.id, default_ctr)
 
+        # Query length
+        q_terms = query_keywords or set()
+        query_length = float(len(q_terms))
+
+        # Title-query Jaccard overlap
+        title_terms = set(re.findall(r'\w+', item.title.lower())) if item.title else set()
+        if q_terms or title_terms:
+            title_query_overlap = len(q_terms & title_terms) / max(len(q_terms | title_terms), 1)
+        else:
+            title_query_overlap = 0.0
+
+        # Content freshness
+        content_freshness = 0.5
+        if item.sist_faglig_oppdatert:
+            try:
+                dt = item.sist_faglig_oppdatert
+                if not isinstance(dt, datetime):
+                    dt = datetime.fromisoformat(str(dt))
+                days = max(0, (datetime.now() - dt).days)
+                content_freshness = 1.0 / (1.0 + days / 365.0)
+            except Exception:
+                pass
+
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
             "smoothed_ctr": smoothed_ctr,
             "role_match": role_match,
+            "query_length": query_length,
+            "title_query_overlap": title_query_overlap,
+            "content_freshness": content_freshness,
         }
 
 

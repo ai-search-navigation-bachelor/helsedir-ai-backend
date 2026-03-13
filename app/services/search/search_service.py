@@ -58,6 +58,7 @@ class SearchService:
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval (RRF fusion)."""
         return self._hybrid.search(
@@ -72,6 +73,7 @@ class SearchService:
             role_boost=role_boost,
             role_penalty=role_penalty,
             rerank=rerank,
+            explain=explain,
         )
 
     # ==================== Utility Methods ====================
