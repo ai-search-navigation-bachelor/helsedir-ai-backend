@@ -126,14 +126,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     def get_infobit_by_id(
         self,
@@ -171,14 +171,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     def get_file_by_id(
         self,
@@ -233,14 +233,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     async def get_infobit_by_id_async(
         self,
@@ -297,14 +297,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     async def get_kapittel_by_id_async(
         self,
@@ -351,14 +351,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     async def get_file_by_id_async(
         self,
@@ -413,14 +413,14 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
-            )
+            ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
-            )
+            ) from e
 
     async def get_content_by_href_async(
         self,

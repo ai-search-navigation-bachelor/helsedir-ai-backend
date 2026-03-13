@@ -50,6 +50,7 @@ class ContentRepository:
         has_text_content,
         document_url,
         attachments_json,
+        ehelsestandard_fields_json,
     ) -> None:
         """Insert/update content, with compatibility fallback for older schemas."""
         try:
@@ -57,9 +58,9 @@ class ContentRepository:
                 """
                 INSERT INTO content (
                     id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
-                    has_text_content, document_url, attachments_json
+                    has_text_content, document_url, attachments_json, ehelsestandard_fields_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
@@ -72,6 +73,9 @@ class ContentRepository:
                     has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
                     document_url = COALESCE(VALUES(document_url), document_url),
                     attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
+                    ehelsestandard_fields_json = COALESCE(
+                        VALUES(ehelsestandard_fields_json), ehelsestandard_fields_json
+                    ),
                     path = VALUES(path)
                 """,
                 (
@@ -88,15 +92,20 @@ class ContentRepository:
                     has_text_content,
                     document_url,
                     attachments_json,
+                    ehelsestandard_fields_json,
                 ),
             )
         except mysql.connector.Error as e:
-            if not self._is_unknown_column_error(e, "attachments_json"):
+            missing_attachments_json = self._is_unknown_column_error(e, "attachments_json")
+            missing_ehelsestandard_fields_json = self._is_unknown_column_error(
+                e, "ehelsestandard_fields_json"
+            )
+            if not (missing_attachments_json or missing_ehelsestandard_fields_json):
                 raise
 
             if not self._warned_missing_attachments_json:
                 logger.warning(
-                    "content schema is missing attachments_json; retrying without that column until migration is applied: %s",
+                    "content schema is missing ehelsestandard metadata columns; retrying without them until migration is applied: %s",
                     e,
                 )
                 self._warned_missing_attachments_json = True
@@ -216,6 +225,7 @@ class ContentRepository:
                 content["document_url"] if "document_url" in content else document_meta["document_url"]
             )
             attachments_json = self._serialize_json_field(content.get("attachments_json"))
+            ehelsestandard_fields_json = self._serialize_json_field(content.get("ehelsestandard_fields_json"))
             self._execute_content_upsert(
                 cursor,
                 content_id=content.get("id"),
@@ -231,6 +241,7 @@ class ContentRepository:
                 has_text_content=has_text_content,
                 document_url=document_url,
                 attachments_json=attachments_json,
+                ehelsestandard_fields_json=ehelsestandard_fields_json,
             )
 
             # If anbefaling, also save anbefaling-specific details
@@ -286,6 +297,9 @@ class ContentRepository:
                         content["document_url"] if "document_url" in content else document_meta["document_url"]
                     )
                     attachments_json = self._serialize_json_field(content.get("attachments_json"))
+                    ehelsestandard_fields_json = self._serialize_json_field(
+                        content.get("ehelsestandard_fields_json")
+                    )
                     self._execute_content_upsert(
                         cursor,
                         content_id=content.get("id"),
@@ -301,6 +315,7 @@ class ContentRepository:
                         has_text_content=has_text_content,
                         document_url=document_url,
                         attachments_json=attachments_json,
+                        ehelsestandard_fields_json=ehelsestandard_fields_json,
                     )
 
                     # If anbefaling, also save anbefaling-specific details

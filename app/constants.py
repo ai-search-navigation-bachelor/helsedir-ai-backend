@@ -55,6 +55,7 @@ CANONICAL_CONTENT_TYPE_MAP = {
     "pakkeforlop-anbefaling": "anbefaling",
     "rad": "rad",
     "faglig-rad": "rad",
+    "e-helsestandard": "ehelsestandard",
     "referanse": "referanse",
     "pico": "pico",
     "kapittel": "kapittel",

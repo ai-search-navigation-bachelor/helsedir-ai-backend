@@ -6,7 +6,7 @@ Loads content from database cache or Helsedirektoratet API.
 
 import json
 import logging
-from typing import List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from pydantic import ValidationError
 from app.entities.content import (
     ContentItem,
@@ -18,7 +18,7 @@ from app.entities.content import (
 from app.services.data.database_service import database_service
 from app.services.data.document_metadata import compute_document_metadata
 from app.services.repositories.content_repository import content_repository
-from app.constants import ALLOWED_INFO_TYPES_SET
+from app.constants import ALLOWED_INFO_TYPES_SET, normalize_content_type
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,17 @@ class ContentService:
                     continue
         return result
 
-    def _parse_ehelsestandard_fields(self, item) -> Optional[EhelsestandardFields]:
-        """Parse stored e-helsestandard attachment data from a content row."""
-        if item.get("attachments_json") is None:
+    def _parse_ehelsestandard_fields(self, item: Dict[str, Any]) -> Optional[EhelsestandardFields]:
+        """Parse stored e-helsestandard fields from a content row."""
+        fields_data = self._parse_json_field(item.get("ehelsestandard_fields_json"), None)
+        if isinstance(fields_data, dict):
+            attachments_data = fields_data.get("attachments")
+        elif item.get("attachments_json") is None:
             return None
+        else:
+            fields_data = {}
+            attachments_data = self._parse_json_field(item.get("attachments_json"), [])
 
-        attachments_data = self._parse_json_field(item.get("attachments_json"), [])
         attachments: List[EhelsestandardAttachment] = []
         if isinstance(attachments_data, list):
             for attachment in attachments_data:
@@ -97,6 +102,16 @@ class ContentService:
                     )
                 )
         return EhelsestandardFields(
+            standard_id=fields_data.get("standard_id") if isinstance(fields_data.get("standard_id"), str) else None,
+            standard_type=(
+                fields_data.get("standard_type") if isinstance(fields_data.get("standard_type"), str) else None
+            ),
+            purpose_html=fields_data.get("purpose_html") if isinstance(fields_data.get("purpose_html"), str) else None,
+            applies_to_html=(
+                fields_data.get("applies_to_html")
+                if isinstance(fields_data.get("applies_to_html"), str)
+                else None
+            ),
             attachments=attachments,
         )
 
@@ -116,6 +131,9 @@ class ContentService:
 
         self.content = []
         for item in db_content:
+            raw_info_type = item.get("info_type") or ""
+            canonical_info_type = normalize_content_type(raw_info_type)
+
             # Parse JSON fields
             role_tags = self._parse_json_field(item.get("role_tags"), [])
             links = self._parse_links(item.get("links"))
@@ -124,7 +142,7 @@ class ContentService:
 
             # Parse anbefaling-specific fields if this is an anbefaling
             anbefaling_fields = None
-            if item.get("info_type") == "anbefaling":
+            if canonical_info_type == "anbefaling":
                 # Check if any anbefaling field has data (from LEFT JOIN)
                 if any([
                     item.get("praktisk"),
@@ -146,14 +164,14 @@ class ContentService:
                     )
 
             ehelsestandard_fields = None
-            if item.get("info_type") == "ehelsestandard":
+            if canonical_info_type == "ehelsestandard":
                 ehelsestandard_fields = self._parse_ehelsestandard_fields(item)
 
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
                 body=item.get("tekst") or "",
-                content_type=item.get("info_type") or "unknown",
+                content_type=canonical_info_type or "unknown",
                 path=item.get("path"),
                 forst_publisert=item.get("forst_publisert"),
                 sist_faglig_oppdatert=item.get("sist_faglig_oppdatert"),

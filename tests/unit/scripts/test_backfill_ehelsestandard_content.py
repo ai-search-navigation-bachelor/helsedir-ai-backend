@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from scripts.data.importing.backfill_ehelsestandard_content import (
     _compute_update,
@@ -62,5 +63,21 @@ def test_compute_update_uses_formal_bruksomrade_when_existing_text_is_empty():
         "2014-06-15T00:00:00",
         "2025-12-15T00:00:00",
         '[{"title": "Standard.pdf", "url": "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf", "file_type": "PDF"}]',
+        json.dumps(
+            {
+                "standard_id": None,
+                "standard_type": None,
+                "purpose_html": "<p>Dokumentet beskriver ...</p>",
+                "applies_to_html": None,
+                "attachments": [
+                    {
+                        "title": "Standard.pdf",
+                        "url": "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf",
+                        "file_type": "PDF",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
         "file-1",
     )

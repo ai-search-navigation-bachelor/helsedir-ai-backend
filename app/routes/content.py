@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from fastapi import APIRouter, HTTPException, Query
-from typing import Any, Mapping, Optional, Dict, List
+from typing import Any, Mapping, Optional, Dict, List, TypedDict
 from urllib.parse import urljoin, urlparse
 
 from collections import defaultdict
@@ -30,6 +30,7 @@ from app.services.data.document_metadata import (
     has_visible_text,
     resolve_public_related_links,
 )
+from app.services.data.ehelsestandard_utils import normalize_attachment_entry
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
@@ -46,6 +47,15 @@ _CHILD_GROUP_LABELS = {
     "references": "Referanser",
     "related_content": "Relatert innhold",
 }
+
+
+class NormalizedRelations(TypedDict):
+    parent: Optional[ContentSummaryResponse]
+    root_publication: Optional[ContentSummaryResponse]
+    chapters: List[ContentSummaryResponse]
+    references: List[ContentSummaryResponse]
+    related_content: List[ContentSummaryResponse]
+    child_groups: List[ChildGroupResponse]
 
 
 def _id_from_href(href: str) -> Optional[str]:
@@ -262,7 +272,7 @@ def _build_child_groups(
 
 def _normalize_relations(
     links: List[ContentLinkResponse],
-) -> Dict[str, Optional[object]]:
+) -> NormalizedRelations:
     """Normalize raw links into explicit backend-owned relation fields."""
     parent = None
     root_publication = None
@@ -276,6 +286,8 @@ def _normalize_relations(
     }
 
     for link in links:
+        if not _get_link_target_id(link) and not link.href:
+            continue
         summary = _build_content_summary(link)
 
         if link.rel == "forelder" and parent is None:
@@ -447,44 +459,14 @@ def _normalize_ehelsestandard_attachments(
     for attachment in raw_attachments:
         if not isinstance(attachment, Mapping):
             continue
-
-        attachment_url = _resolve_ehelsestandard_attachment_url(
-            attachment.get("fileUri")
-            if isinstance(attachment.get("fileUri"), str)
-            else attachment.get("file_uri")
-            if isinstance(attachment.get("file_uri"), str)
-            else attachment.get("url")
-            if isinstance(attachment.get("url"), str)
-            else attachment.get("href")
-            if isinstance(attachment.get("href"), str)
-            else None
-        )
-        if not attachment_url:
+        normalized_attachment = normalize_attachment_entry(attachment)
+        if normalized_attachment is None:
             continue
-
-        title = (
-            attachment.get("title")
-            if isinstance(attachment.get("title"), str)
-            else attachment.get("tittel")
-            if isinstance(attachment.get("tittel"), str)
-            else attachment.get("name")
-            if isinstance(attachment.get("name"), str)
-            else attachment_url.rstrip("/").rsplit("/", 1)[-1]
-        )
-        file_type = (
-            attachment.get("fileType")
-            if isinstance(attachment.get("fileType"), str)
-            else attachment.get("file_type")
-            if isinstance(attachment.get("file_type"), str)
-            else attachment.get("type")
-            if isinstance(attachment.get("type"), str)
-            else None
-        )
         normalized_attachments.append(
             EhelsestandardAttachmentResponse(
-                title=title.strip(),
-                url=attachment_url,
-                file_type=file_type,
+                title=normalized_attachment["title"],
+                url=normalized_attachment["url"],
+                file_type=normalized_attachment["file_type"],
             )
         )
 

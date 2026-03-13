@@ -102,3 +102,28 @@ def test_log_search_results_skips_content_stats_when_table_is_missing(mocker):
         ],
     ) is True
     conn.commit.assert_called_once()
+
+
+def test_log_click_commits_when_content_stats_table_is_missing(mocker):
+    cursor = MagicMock()
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    missing_table = mysql.connector.Error(msg="Table 'helsedir_ai.content_stats' doesn't exist")
+    missing_table.errno = 1146
+
+    cursor.fetchone.return_value = (1,)
+    cursor.execute.side_effect = [
+        None,
+        None,
+        missing_table,
+    ]
+    mocker.patch(
+        "app.services.repositories.search_repository.db_pool.get_connection",
+        return_value=conn,
+    )
+
+    repo = SearchRepository()
+
+    assert repo.log_click("sid", "abc") is True
+    conn.commit.assert_called_once()

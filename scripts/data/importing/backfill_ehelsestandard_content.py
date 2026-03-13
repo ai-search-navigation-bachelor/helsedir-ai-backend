@@ -18,15 +18,14 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from app.config import settings  # noqa: E402
 from app.services.external.helsedir_api_service import (  # noqa: E402
     HelseDirectorateAPIError,
     helsedir_api_service,
 )
+from app.services.data.ehelsestandard_utils import normalize_attachment_list  # noqa: E402
 from app.services.repositories.base import db_pool  # noqa: E402
 from app.services.data.document_metadata import has_visible_text  # noqa: E402
 
@@ -38,65 +37,8 @@ def _require_db_connection(operation: str):
     return conn
 
 
-def _resolve_attachment_url(file_uri: Optional[str]) -> Optional[str]:
-    if not file_uri or not file_uri.strip():
-        return None
-
-    normalized = file_uri.strip()
-    parsed = urlparse(normalized)
-    if parsed.scheme and parsed.netloc:
-        return normalized
-
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-    return urljoin(settings.helsedir_public_base_url, normalized)
-
-
 def _normalize_attachments(payload: Dict) -> List[Dict[str, Optional[str]]]:
-    attachments = payload.get("attachments")
-    if not isinstance(attachments, list):
-        return []
-
-    normalized = []
-    for attachment in attachments:
-        if not isinstance(attachment, dict):
-            continue
-        url = _resolve_attachment_url(
-            attachment.get("fileUri")
-            if isinstance(attachment.get("fileUri"), str)
-            else attachment.get("file_uri")
-            if isinstance(attachment.get("file_uri"), str)
-            else attachment.get("url")
-            if isinstance(attachment.get("url"), str)
-            else attachment.get("href")
-            if isinstance(attachment.get("href"), str)
-            else None
-        )
-        if not url:
-            continue
-        title = (
-            attachment.get("title")
-            if isinstance(attachment.get("title"), str)
-            else attachment.get("tittel")
-            if isinstance(attachment.get("tittel"), str)
-            else attachment.get("name")
-            if isinstance(attachment.get("name"), str)
-            else url.rstrip("/").rsplit("/", 1)[-1]
-        )
-        normalized.append(
-            {
-                "title": title.strip(),
-                "url": url,
-                "file_type": attachment.get("fileType")
-                if isinstance(attachment.get("fileType"), str)
-                else attachment.get("file_type")
-                if isinstance(attachment.get("file_type"), str)
-                else attachment.get("type")
-                if isinstance(attachment.get("type"), str)
-                else None,
-            }
-        )
-    return normalized
+    return normalize_attachment_list(payload.get("attachments"))
 
 
 def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
@@ -106,6 +48,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
         cursor = conn.cursor(dictionary=True)
         query = """
             SELECT id, tekst, has_text_content, document_url, attachments_json,
+                   ehelsestandard_fields_json,
                    forst_publisert, sist_faglig_oppdatert
             FROM content
             WHERE info_type = 'ehelsestandard'
@@ -117,6 +60,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
                   OR document_url IS NULL
                   OR has_text_content IS NULL
                   OR has_text_content = 0
+                  OR ehelsestandard_fields_json IS NULL
                   OR forst_publisert IS NULL
                   OR sist_faglig_oppdatert IS NULL
               )
@@ -137,7 +81,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
 def _compute_update(
     row: Dict,
     payload: Dict,
-) -> Tuple[str, int, Optional[str], Optional[str], Optional[str], str, str]:
+) -> Tuple[str, int, Optional[str], Optional[str], Optional[str], str, str, str]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     purpose_html = data.get("formalBruksomrade") if isinstance(data.get("formalBruksomrade"), str) else None
     existing_text = row.get("tekst") or ""
@@ -146,6 +90,20 @@ def _compute_update(
     document_url = attachments[0]["url"] if attachments else row.get("document_url")
     has_text_content = int(has_visible_text(final_text))
     attachments_json = json.dumps(attachments, ensure_ascii=False)
+    ehelsestandard_fields_json = json.dumps(
+        {
+            "standard_id": data.get("idStandard") if isinstance(data.get("idStandard"), str) else None,
+            "standard_type": data.get("typeStandard") if isinstance(data.get("typeStandard"), str) else None,
+            "purpose_html": purpose_html,
+            "applies_to_html": (
+                data.get("standardenGjelderFor")
+                if isinstance(data.get("standardenGjelderFor"), str)
+                else None
+            ),
+            "attachments": attachments,
+        },
+        ensure_ascii=False,
+    )
 
     return (
         final_text,
@@ -154,6 +112,7 @@ def _compute_update(
         payload.get("forstPublisert") or row.get("forst_publisert"),
         payload.get("sistFagligOppdatert") or row.get("sist_faglig_oppdatert"),
         attachments_json,
+        ehelsestandard_fields_json,
         row["id"],
     )
 
@@ -163,7 +122,9 @@ def _fetch_and_compute(row: Dict):
     return _compute_update(row, payload)
 
 
-def _apply_updates(updates: List[Tuple[str, int, Optional[str], Optional[str], Optional[str], str, str]]) -> int:
+def _apply_updates(
+    updates: List[Tuple[str, int, Optional[str], Optional[str], Optional[str], str, str, str]]
+) -> int:
     if not updates:
         return 0
 
@@ -179,7 +140,8 @@ def _apply_updates(updates: List[Tuple[str, int, Optional[str], Optional[str], O
                 document_url = %s,
                 forst_publisert = %s,
                 sist_faglig_oppdatert = %s,
-                attachments_json = %s
+                attachments_json = %s,
+                ehelsestandard_fields_json = %s
             WHERE id = %s
             """,
             updates,

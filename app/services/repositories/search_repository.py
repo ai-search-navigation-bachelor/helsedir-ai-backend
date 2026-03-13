@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SearchRepository:
     """Repository for search and click logging."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._warned_missing_search_log_columns = False
         self._warned_legacy_results_schema = False
         self._warned_missing_content_stats = False
@@ -304,6 +304,7 @@ class SearchRepository:
             return True
         except mysql.connector.Error as e:
             if self._is_missing_table_error(e, "content_stats"):
+                conn.commit()
                 if not self._warned_missing_content_stats:
                     logger.warning(
                         "content_stats table is missing; skipping click updates until migration is applied: %s",

@@ -78,7 +78,7 @@ class ContentSummaryResponse(BaseModel):
     href: Optional[str] = None
 
     @model_validator(mode='after')
-    def validate_id_or_href(self):
+    def validate_id_or_href(self) -> "ContentSummaryResponse":
         """Ensure the summary can still identify external-only content."""
         has_id = self.id is not None and self.id.strip() != ""
         has_href = self.href is not None and self.href.strip() != ""
