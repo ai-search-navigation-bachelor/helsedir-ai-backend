@@ -157,8 +157,19 @@ class HybridSearch:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 bm25_future = executor.submit(bm25_search.search, query, role, candidate_pool)
                 sem_future = executor.submit(semantic_search.search, query=query, role=role, k=candidate_pool)
-                bm25_hits = bm25_future.result()
-                semantic_hits = sem_future.result()
+
+                try:
+                    bm25_hits = bm25_future.result()
+                except Exception:
+                    logger.exception("BM25 search failed in parallel execution")
+                    bm25_hits = []
+
+                try:
+                    semantic_hits = sem_future.result()
+                except Exception:
+                    logger.exception("Semantic search failed in parallel execution")
+                    semantic_hits = []
+
             t_bm25 = time.perf_counter() - t0
             t_semantic = t_bm25  # parallel, so same wall time
         else:

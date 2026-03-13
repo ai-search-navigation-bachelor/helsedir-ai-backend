@@ -187,8 +187,7 @@ class MLService:
             List of (score, contributions_dict) tuples
         """
         if self.ranking_model is None:
-            empty = {name: 0.0 for name in self.ranking_model.feature_names} if self.ranking_model else {}
-            return [(0.0, empty) for _ in features]
+            return [(0.0, {}) for _ in features]
 
         try:
             return self.ranking_model.predict_with_contributions(features)
