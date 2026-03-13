@@ -1,0 +1,101 @@
+import pytest
+import json
+
+from scripts.data.importing.backfill_ehelsestandard_content import (
+    _compute_update,
+    _fetch_rows,
+    _normalize_attachments,
+)
+
+
+@pytest.mark.unit
+def test_normalize_attachments_builds_absolute_public_urls():
+    attachments = _normalize_attachments(
+        {
+            "attachments": [
+                {
+                    "title": "Standard.pdf",
+                    "fileUri": "/guillotine/helsedir/standard.pdf",
+                    "fileType": "PDF",
+                }
+            ]
+        }
+    )
+
+    assert attachments == [
+        {
+            "title": "Standard.pdf",
+            "url": "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf",
+            "file_type": "PDF",
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_compute_update_uses_formal_bruksomrade_when_existing_text_is_empty():
+    update = _compute_update(
+        {
+            "id": "file-1",
+            "tekst": "<p>&nbsp;</p>",
+            "document_url": None,
+            "forst_publisert": None,
+            "sist_faglig_oppdatert": None,
+        },
+        {
+            "forstPublisert": "2014-06-15T00:00:00",
+            "sistFagligOppdatert": "2025-12-15T00:00:00",
+            "data": {
+                "formalBruksomrade": "<p>Dokumentet beskriver ...</p>",
+            },
+            "attachments": [
+                {
+                    "title": "Standard.pdf",
+                    "fileUri": "/guillotine/helsedir/standard.pdf",
+                    "fileType": "PDF",
+                }
+            ],
+        },
+    )
+
+    assert update == (
+        "<p>Dokumentet beskriver ...</p>",
+        1,
+        "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf",
+        "2014-06-15T00:00:00",
+        "2025-12-15T00:00:00",
+        '[{"title": "Standard.pdf", "url": "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf", "file_type": "PDF"}]',
+        json.dumps(
+            {
+                "standard_id": None,
+                "standard_type": None,
+                "purpose_html": "<p>Dokumentet beskriver ...</p>",
+                "applies_to_html": None,
+                "attachments": [
+                    {
+                        "title": "Standard.pdf",
+                        "url": "https://www.helsedirektoratet.no/guillotine/helsedir/standard.pdf",
+                        "file_type": "PDF",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        "file-1",
+    )
+
+
+@pytest.mark.unit
+def test_fetch_rows_includes_hyphenated_and_canonical_info_types(mocker):
+    cursor = mocker.MagicMock()
+    cursor.fetchall.return_value = []
+    conn = mocker.MagicMock()
+    conn.cursor.return_value = cursor
+    mocker.patch(
+        "scripts.data.importing.backfill_ehelsestandard_content.db_pool.get_connection",
+        return_value=conn,
+    )
+
+    _fetch_rows()
+
+    executed_query = cursor.execute.call_args.args[0]
+    assert "info_type IN ('ehelsestandard', 'e-helsestandard')" in executed_query

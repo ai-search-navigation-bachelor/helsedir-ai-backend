@@ -50,6 +50,22 @@ class AnbefalingFields(BaseModel):
     styrke: Optional[str] = None
 
 
+class EhelsestandardAttachment(BaseModel):
+    """Normalized attachment metadata stored for e-helsestandard content."""
+    title: str
+    url: str
+    file_type: Optional[str] = None
+
+
+class EhelsestandardFields(BaseModel):
+    """Stored e-helsestandard fields loaded from the database."""
+    standard_id: Optional[str] = None
+    standard_type: Optional[str] = None
+    purpose_html: Optional[str] = None
+    applies_to_html: Optional[str] = None
+    attachments: List[EhelsestandardAttachment] = []
+
+
 class ContentItem(BaseModel):
     """Content item entity."""
     model_config = ConfigDict(populate_by_name=True)
@@ -65,9 +81,11 @@ class ContentItem(BaseModel):
     links: List[ContentLink] = []
     has_text_content: bool = False
     document_url: Optional[str] = None
+    url: Optional[str] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFields] = None
+    ehelsestandard_fields: Optional[EhelsestandardFields] = None
 
     @property
     def info_type(self) -> str:

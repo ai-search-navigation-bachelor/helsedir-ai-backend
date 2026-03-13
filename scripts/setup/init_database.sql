@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS content (
     links JSON,
     has_text_content TINYINT(1),
     document_url TEXT,
+    attachments_json JSON,
+    ehelsestandard_fields_json JSON,
     embedding BLOB,
 
     -- Publishing dates from Helsedir API (not used for temaside)

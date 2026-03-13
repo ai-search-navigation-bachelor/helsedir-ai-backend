@@ -68,6 +68,34 @@ class AnbefalingFieldsResponse(BaseModel):
     styrke: Optional[str] = None
 
 
+class ContentSummaryResponse(BaseModel):
+    """Presentation-friendly summary for related content."""
+    detail_level: str = "summary"
+    id: Optional[str] = None
+    title: str = ""
+    content_type: str
+    path: Optional[str] = None
+    href: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_id_or_href(self) -> "ContentSummaryResponse":
+        """Ensure the summary can still identify external-only content."""
+        has_id = self.id is not None and self.id.strip() != ""
+        has_href = self.href is not None and self.href.strip() != ""
+
+        if not has_id and not has_href:
+            raise ValueError("ContentSummaryResponse must have either 'id' or 'href'")
+
+        return self
+
+
+class ChildGroupResponse(BaseModel):
+    """Presentation-ready grouped child content."""
+    key: str
+    label: str
+    items: List[ContentSummaryResponse]
+
+
 class RelatedLinkResponse(BaseModel):
     """Related report/document link resolved from public Helsedir pages."""
     title: str
@@ -76,10 +104,29 @@ class RelatedLinkResponse(BaseModel):
     file_type: Optional[str] = None
     url_type: Optional[str] = None
     target: Optional[str] = None
+    path: Optional[str] = None
+    content_id: Optional[str] = None
+
+
+class EhelsestandardAttachmentResponse(BaseModel):
+    """Normalized attachment metadata for e-helsestandard content."""
+    title: str
+    url: str
+    file_type: Optional[str] = None
+
+
+class EhelsestandardFieldsResponse(BaseModel):
+    """Frontend-friendly fields from Helsedir file payloads."""
+    standard_id: Optional[str] = None
+    standard_type: Optional[str] = None
+    purpose_html: Optional[str] = None
+    applies_to_html: Optional[str] = None
+    attachments: List[EhelsestandardAttachmentResponse] = []
 
 
 class ContentResponse(BaseModel):
     """Response model for content endpoint."""
+    detail_level: str = "full"
     id: str
     title: str
     body: str
@@ -91,9 +138,17 @@ class ContentResponse(BaseModel):
     has_text_content: bool = False
     document_url: Optional[str] = None
     is_pdf_only: bool = False
+    url: Optional[str] = None
     links: List[ContentLinkResponse] = []
+    parent: Optional[ContentSummaryResponse] = None
+    root_publication: Optional[ContentSummaryResponse] = None
+    chapters: List[ContentSummaryResponse] = []
+    references: List[ContentSummaryResponse] = []
+    related_content: List[ContentSummaryResponse] = []
+    child_groups: List[ChildGroupResponse] = []
     linked_content: Optional[List[GroupedLinkedContent]] = None  # For theme pages
     related_links: Optional[List[RelatedLinkResponse]] = None
 
     # Info type-specific fields (extensible pattern for future types)
     anbefaling_fields: Optional[AnbefalingFieldsResponse] = None
+    ehelsestandard_fields: Optional[EhelsestandardFieldsResponse] = None
