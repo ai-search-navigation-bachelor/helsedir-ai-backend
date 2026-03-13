@@ -45,7 +45,7 @@ STOP_WORDS = {
     "på", "en", "et", "er", "det", "de", "den", "som", "ved", "fra",
     "kan", "har", "skal", "vil", "bli", "ble", "blitt", "eller",
     "andre", "denne", "dette", "disse", "alle", "noen", "hva",
-    "hvordan", "når", "hvor", "the", "and", "of", "in", "for", "to",
+    "hvordan", "når", "hvor", "the", "and", "of", "in", "to",
     "-", "–",
 }
 
@@ -278,7 +278,7 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
     conn.commit()
     cursor.close()
 
-    print(f"\n  Generated:")
+    print("\n  Generated:")
     print(f"    {searches_created} searches (skipped {skipped})")
     print(f"    {results_shown} results shown")
     print(f"    {clicks_created} clicks")
@@ -328,7 +328,7 @@ def verify_data(conn):
         print("\n  Sufficient data for ranking model training!")
         print("  Run: python scripts/train/train_ranking_model.py")
     else:
-        print(f"\n  Need more data. Try increasing --top.")
+        print("\n  Need more data. Try increasing --top.")
 
     cursor.close()
 
@@ -358,7 +358,7 @@ def main():
     print("=" * 60)
 
     # Parse CSV
-    print(f"\nParsing CSV...")
+    print("\nParsing CSV...")
     csv_rows = parse_page_view_csv(args.csv)
     print(f"  {len(csv_rows)} pages with views")
 
@@ -376,7 +376,7 @@ def main():
     pages = matched[:args.top]
     print(f"\nUsing top {len(pages)} pages (views: {pages[0]['views']:,} - {pages[-1]['views']:,})")
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Results per search: {args.k}")
     print(f"  Clear existing: {args.clear}")
 

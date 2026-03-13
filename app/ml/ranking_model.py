@@ -344,6 +344,119 @@ class HealthContentReranker:
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
 
+    def train_from_groups(
+        self,
+        *,
+        groups: Dict[str, List[dict]],
+        ctr_map: Optional[Dict[str, float]] = None,
+        min_group_size: int = 5,
+        require_any_click: bool = True,
+        use_db_propensity: bool = True,
+        verbose: bool = True,
+    ) -> Dict[str, float]:
+        """
+        Train from pre-split groups (avoids data leakage in evaluation).
+
+        Same logic as train_from_database but accepts groups directly.
+        """
+        if ctr_map is None:
+            ctr_map = {}
+        default_ctr = 1.0 / 21.0
+
+        pos_prop: Dict[int, float] = {}
+        if use_db_propensity:
+            try:
+                pos_prop = database_service.get_position_propensities()
+            except Exception:
+                pos_prop = {}
+
+        X_all: List[List[float]] = []
+        y_all: List[float] = []
+        group_sizes: List[int] = []
+        used_groups = 0
+        used_rows = 0
+
+        for sid, items in groups.items():
+            if len(items) < min_group_size:
+                continue
+
+            items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
+            query_text = str(items_sorted[0].get("query", "")).lower()
+            query_terms = set(re.findall(r'\w+', query_text))
+            query_len = float(len(query_terms))
+
+            feat_dicts: List[Dict[str, float]] = []
+            labels: List[int] = []
+            any_pos = False
+            any_click = False
+
+            for rr in items_sorted:
+                pos = int(rr.get("position") or 0)
+                if pos <= 0:
+                    pos = 10
+                any_pos = True
+
+                clicked = int(rr.get("clicked") or 0)
+                if clicked == 1:
+                    any_click = True
+
+                content_id = rr.get("content_id", "")
+                title_text = str(rr.get("title", "")).lower()
+                title_terms = set(re.findall(r'\w+', title_text))
+                if query_terms or title_terms:
+                    overlap = len(query_terms & title_terms) / max(len(query_terms | title_terms), 1)
+                else:
+                    overlap = 0.0
+
+                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
+
+                feat_dicts.append({
+                    "semantic_score": _f(rr.get("semantic_score"), 0.0),
+                    "bm25_score": _f(rr.get("bm25_score"), 0.0),
+                    "smoothed_ctr": ctr_map.get(content_id, default_ctr),
+                    "role_match": _f(rr.get("role_match"), 0.0),
+                    "query_length": query_len,
+                    "title_query_overlap": overlap,
+                    "content_freshness": freshness,
+                })
+
+                prop = propensity_for_position(pos, pos_prop if pos_prop else None)
+                ips_weight = 1.0 / max(float(prop), 1e-6)
+                labels.append(float(clicked) * ips_weight)
+
+            if not any_pos:
+                continue
+            if require_any_click and not any_click:
+                continue
+
+            feats = [[fd[n] for n in self.feature_names] for fd in feat_dicts]
+            X_all.extend(feats)
+            y_all.extend(labels)
+            group_sizes.append(len(labels))
+            used_groups += 1
+            used_rows += len(labels)
+
+        if used_groups == 0:
+            return {"trained": 0.0, "groups": 0.0, "rows": 0.0}
+
+        X = np.asarray(X_all, dtype=np.float32)
+        y = np.asarray(y_all, dtype=np.float32)
+
+        self.model = xgb.XGBRanker(
+            objective="rank:pairwise",
+            learning_rate=0.08,
+            max_depth=6,
+            n_estimators=350,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            random_state=42,
+            tree_method="hist",
+        )
+        self.model.fit(X, y, group=group_sizes, verbose=verbose)
+
+        return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
+
     # -------------------------
     # Inference
     # -------------------------

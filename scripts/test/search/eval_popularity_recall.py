@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 # Add project root to Python path
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
 from app.services.search.search_service import search_service

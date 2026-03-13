@@ -49,6 +49,13 @@ def main():
         
         reranker.save(str(model_path))
         print(f"\nModel saved to: {model_path}")
+
+        # Verify saved model loads correctly
+        print("Verifying saved model...")
+        loaded = HealthContentReranker.load(str(model_path))
+        assert loaded.model is not None, "Loaded model is None"
+        assert len(loaded.feature_names) == len(reranker.feature_names), "Feature count mismatch"
+        print(f"  Model verified: {len(loaded.feature_names)} features")
     else:
         print("\nTraining failed - not enough data")
         print("  Make sure you have:")

@@ -41,7 +41,6 @@ app/
 **Repositories** (`app/services/repositories/`):
 - `base.py` - MySQL connection pool
 - `content_repository.py` - Content CRUD operations
-- `stats_repository.py` - CTR, impressions, clicks statistics
 - `search_repository.py` - Search and click logging
 - `ltr_repository.py` - Learning-to-rank training data
 
@@ -114,7 +113,6 @@ helsedir-ai-backend/
 │   │   ├── repositories/          # Data access layer
 │   │   │   ├── base.py            # Connection pool
 │   │   │   ├── content_repository.py
-│   │   │   ├── stats_repository.py
 │   │   │   ├── search_repository.py
 │   │   │   └── ltr_repository.py
 │   │   │
@@ -217,7 +215,6 @@ GET /content/abc123?search_id=uuid
 ## Database Tables
 
 - `content` - Cached content from Helsedir API
-- `content_stats` - All-time clicks/impressions per content
 - `search_logs` - Search events (search_id, query, role)
 - `search_results_shown` - Results shown with ML features
 - `click_logs` - Click events with position

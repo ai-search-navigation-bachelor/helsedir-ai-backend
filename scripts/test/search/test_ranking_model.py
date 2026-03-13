@@ -44,6 +44,9 @@ try:
         bm25_score=0.72,
         smoothed_ctr=0.10,
         role_match=1.0,
+        query_length=3.0,
+        title_query_overlap=0.4,
+        content_freshness=0.8,
     )
     print("✓ Successfully created RerankCandidate")
     print(f"  Content ID: {candidate.content_id}")

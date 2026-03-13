@@ -178,12 +178,13 @@ def main():
     else:
         print(f"\nNo model found at {model_path}, skipping current model evaluation.")
 
-    # 3. Retrained model (optional)
+    # 3. Retrained model (optional) — trained strictly on train_groups to avoid data leakage
     if args.retrain:
         print("\nTraining new model on train split...")
         new_model = HealthContentReranker()
-        train_result = new_model.train_from_database(
-            days_back=args.days,
+        train_result = new_model.train_from_groups(
+            groups=train_groups,
+            ctr_map=ctr_map,
             min_group_size=5,
             require_any_click=True,
             verbose=False,

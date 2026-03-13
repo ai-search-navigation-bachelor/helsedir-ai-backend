@@ -5,8 +5,8 @@ This script runs the same queries with ML ranking enabled and disabled
 to show how the ranking model affects result ordering.
 
 Usage:
-    python scripts/test_ranking_comparison.py
-    python scripts/test_ranking_comparison.py --query "diabetes behandling"
+    python scripts/test/search/test_ranking_comparison.py
+    python scripts/test/search/test_ranking_comparison.py --query "diabetes behandling"
 """
 
 import sys
