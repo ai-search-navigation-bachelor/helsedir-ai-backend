@@ -135,6 +135,56 @@ class LtrRepository:
             if conn is not None:
                 conn.close()
 
+    def get_content_ctr_map(self, days_back: int = 30) -> Dict[str, float]:
+        """
+        Compute smoothed CTR per content_id over the last N days.
+
+        Uses Bayesian smoothing: (clicks + 1) / (impressions + 21)
+        This pulls the CTR toward a low prior for items with few impressions.
+
+        Args:
+            days_back: Number of days to look back
+
+        Returns:
+            Dict mapping content_id to smoothed CTR value
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return {}
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """
+                SELECT
+                    srs.content_id,
+                    COUNT(DISTINCT CONCAT(srs.search_id, '-', srs.content_id)) AS impressions,
+                    COUNT(DISTINCT cl.id) AS clicks
+                FROM search_results_shown srs
+                INNER JOIN search_logs sl ON srs.search_id = sl.search_id
+                LEFT JOIN click_logs cl
+                    ON srs.search_id = cl.search_id
+                    AND srs.content_id = cl.content_id
+                WHERE sl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                GROUP BY srs.content_id
+                """,
+                (days_back,),
+            )
+            rows = cursor.fetchall()
+            return {
+                row["content_id"]: (int(row["clicks"]) + 1) / (int(row["impressions"]) + 21)
+                for row in rows
+            }
+        except mysql.connector.Error as e:
+            print(f"Error getting content CTR map: {e}")
+            return {}
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
+
     def get_position_propensities(self) -> Dict[int, float]:
         """Get position propensities from database."""
         conn = db_pool.get_connection()

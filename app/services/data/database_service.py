@@ -96,6 +96,9 @@ class DatabaseService:
     def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:
         return self._ltr.get_ltr_training_rows(days_back)
 
+    def get_content_ctr_map(self, days_back: int = 30) -> Dict[str, float]:
+        return self._ltr.get_content_ctr_map(days_back)
+
     def get_position_propensities(self) -> Dict[int, float]:
         return self._ltr.get_position_propensities()
 
