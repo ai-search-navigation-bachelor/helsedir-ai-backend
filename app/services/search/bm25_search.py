@@ -14,6 +14,7 @@ from app.config import settings
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
 from app.services.search.bm25_hierarchy import BM25HierarchyConfig, BM25HierarchyIndex
+from app.services.search.synonyms import expand_terms
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class BM25Search:
         if not text:
             return []
         return re.findall(r"\w+", text.lower())
+
 
     def _needs_rebuild(self) -> bool:
         return content_service._content_version != self._content_version
@@ -153,7 +155,7 @@ class BM25Search:
         if not query_terms:
             return []
 
-        query_tf = Counter(query_terms)
+        query_tf = expand_terms(query_terms)
         direct_scores = np.zeros(len(self._items), dtype=np.float32)
 
         for term, q_weight in query_tf.items():

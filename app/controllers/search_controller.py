@@ -72,6 +72,8 @@ class SearchController:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -111,6 +113,8 @@ class SearchController:
             rrf_k=rrf_k,
             temaside_boost=temaside_boost,
             retningslinje_boost=retningslinje_boost,
+            role_boost=role_boost,
+            role_penalty=role_penalty,
         )
 
         # Coerce None to empty list
@@ -156,6 +160,8 @@ class SearchController:
             rrf_k=rrf_k,
             temaside_boost=temaside_boost,
             retningslinje_boost=retningslinje_boost,
+            role_boost=role_boost,
+            role_penalty=role_penalty,
         )
 
         # Extract ML features and log results (skip for prefetch requests)
@@ -554,6 +560,8 @@ class SearchController:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -564,6 +572,13 @@ class SearchController:
 
         Theme pages are BM25/semantic-first with controlled fuzzy fallback.
         """
+        # Hybrid-specific params have no effect on non-hybrid searches; normalise so
+        # different callers with irrelevant params share the same cache entry.
+        if method != "hybrid":
+            bm25_weight = semantic_weight = rrf_k = None
+            temaside_boost = retningslinje_boost = None
+            role_boost = role_penalty = None
+
         cache_key = (
             query.strip().lower(),
             role,
@@ -574,6 +589,8 @@ class SearchController:
             rrf_k,
             temaside_boost,
             retningslinje_boost,
+            role_boost,
+            role_penalty,
         )
         now = time.monotonic()
 
@@ -603,6 +620,8 @@ class SearchController:
                 rrf_k=max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
                 temaside_boost=temaside_boost,
                 retningslinje_boost=retningslinje_boost,
+                role_boost=role_boost,
+                role_penalty=role_penalty,
             )
 
         # Coerce None to empty list
@@ -640,6 +659,8 @@ class SearchController:
         rrf_k: Optional[int] = None,
         temaside_boost: Optional[float] = None,
         retningslinje_boost: Optional[float] = None,
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> str:
         """Generate new search_id or validate existing one."""
         expected_signature = self._build_search_signature(
@@ -649,6 +670,8 @@ class SearchController:
             rrf_k=rrf_k,
             temaside_boost=temaside_boost,
             retningslinje_boost=retningslinje_boost,
+            role_boost=role_boost,
+            role_penalty=role_penalty,
         )
 
         if not search_id:
@@ -693,8 +716,16 @@ class SearchController:
         rrf_k: Optional[int],
         temaside_boost: Optional[float],
         retningslinje_boost: Optional[float],
+        role_boost: Optional[float] = None,
+        role_penalty: Optional[float] = None,
     ) -> str:
         """Build a stable signature for the ranking configuration."""
+        # Normalise hybrid-only params so signatures are identical for non-hybrid methods
+        if method != "hybrid":
+            bm25_weight = semantic_weight = rrf_k = None
+            temaside_boost = retningslinje_boost = None
+            role_boost = role_penalty = None
+
         effective_tunables = {
             "method": method.strip().lower(),
             "bm25_weight": round(
@@ -727,6 +758,22 @@ class SearchController:
                     retningslinje_boost
                     if retningslinje_boost is not None
                     else settings.search_boost_retningslinje
+                ),
+                6,
+            ),
+            "role_boost": round(
+                float(
+                    role_boost
+                    if role_boost is not None
+                    else settings.search_role_match_boost
+                ),
+                6,
+            ),
+            "role_penalty": round(
+                float(
+                    role_penalty
+                    if role_penalty is not None
+                    else settings.search_role_mismatch_penalty
                 ),
                 6,
             ),

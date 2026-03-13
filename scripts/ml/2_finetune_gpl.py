@@ -6,11 +6,11 @@ GPL uses an LLM to generate synthetic queries for each document, then trains
 the embedding model contrastively to match queries to their source documents.
 
 OPTIMIZATIONS:
-1. Smart Batch Construction with Multiple Hard Negatives
-   - Mines top-K hard negatives using pre-computed embeddings (cosine similarity)
-   - Includes ALL hard negatives in batches as "fake positives"
-   - MNRL treats them as in-batch negatives → actually uses hard-mined negatives!
-   - Effective batch size: batch_size * (1 + num_hard_negatives)
+1. Per-Query Hard Negative Mining with Native MNRL
+   - Encodes all queries with base model, computes similarity against document embeddings
+   - Mines top-K hard negatives per query (not per document)
+   - Each InputExample = [query, positive, neg1, neg2, ...] — MNRL pushes away from
+     both explicit hard negatives AND in-batch negatives from other examples
 
 2. Mixed Precision Training (AMP)
    - 2x faster training with same quality
@@ -62,6 +62,8 @@ from typing import List, Dict, Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+from scripts.ml.utils import enrich_temasider_with_children, enrich_with_child_content  # noqa: E402
 
 
 def generate_queries_with_groq(
@@ -200,12 +202,9 @@ def load_or_generate_queries(
     Returns:
         Dict mapping content_id to list of queries
     """
-    # Filter out temasider (they have their own system)
-    content_items = [
-        item for item in content_items
-        if item.get("info_type", "").lower() != "temaside"
-    ]
-    print(f"Filtered content: {len(content_items)} documents (excluding temasider)")
+    # Note: temasider are now included in training. Their passages are enriched
+    # with child/grandchild content in create_training_triplets().
+    print(f"Content: {len(content_items)} documents (including temasider)")
 
     # Try to load from cache
     if cache_path.exists():
@@ -373,62 +372,131 @@ def find_hard_negatives(
     return [cid for cid, _ in similarities[:top_k]]
 
 
+
 def create_training_triplets(
     content_items: List[Dict[str, Any]],
     queries: Dict[str, List[str]],
-    format_passage_fn,
+    id_to_passage: Dict[str, str],
     num_hard_negatives: int = 5,
+    model=None,
 ) -> List[Dict[str, Any]]:
     """
     Create (query, positive, hard_negatives) triplets for contrastive training.
 
     For each query:
     - Positive = the document the query was generated from
-    - Hard negatives = top-K most similar embeddings that aren't the positive
+    - Hard negatives = most similar documents that aren't the positive
 
-    Returns triplets with multiple hard negatives for smart batch construction.
+    When a model is provided, hard negatives are mined per-query (each query
+    gets its own hard negatives based on query-document similarity). Otherwise
+    falls back to per-document mining using precomputed embeddings from the DB.
+
+    Returns triplets with positive_id for evaluation corpus building.
     """
+    import numpy as np
+
     # Load embeddings for hard negative mining
     embeddings = load_embeddings_from_db()
-    use_hard_negatives = len(embeddings) > 0
 
-    if use_hard_negatives:
-        print(f"  Using hard negative mining (top-{num_hard_negatives} most similar non-positive documents)")
-    else:
-        print(f"  Falling back to random negatives (no embeddings found)")
-
+    id_to_item = {str(item["id"]): item for item in content_items}
+    all_ids = list(id_to_passage.keys())
     triplets = []
 
-    # Create id -> item mapping
-    id_to_item = {str(item["id"]): item for item in content_items}
+    if model and embeddings:
+        # --- Per-query hard negative mining ---
+        # Each query gets its own hard negatives based on query-document similarity,
+        # rather than all queries for a document sharing the same negatives.
+        print(f"  Mining per-query hard negatives using base model...")
 
-    # Create id -> passage mapping
-    id_to_passage = {str(item["id"]): format_passage_fn(item) for item in content_items}
+        # Build document embedding matrix from DB embeddings
+        valid_ids = [cid for cid in all_ids if cid in embeddings]
+        doc_matrix = np.stack([embeddings[cid] for cid in valid_ids])
+        id_to_doc_idx = {cid: i for i, cid in enumerate(valid_ids)}
+        print(f"  Document embedding matrix: {doc_matrix.shape}")
 
-    all_ids = list(id_to_passage.keys())
+        # Collect all queries with their positive document IDs
+        all_query_texts = []
+        all_query_pos_ids = []
+        for content_id, query_list in queries.items():
+            if content_id not in id_to_item:
+                continue
+            for query in query_list:
+                all_query_texts.append(query)
+                all_query_pos_ids.append(content_id)
 
-    for content_id, query_list in queries.items():
-        if content_id not in id_to_item:
-            continue
+        # Encode all queries in one efficient batch
+        print(f"  Encoding {len(all_query_texts)} queries...")
+        query_embs = model.encode(
+            all_query_texts,
+            batch_size=256,
+            show_progress_bar=True,
+            normalize_embeddings=True,
+        )
 
-        positive_passage = id_to_passage[content_id]
-        candidate_ids = [cid for cid in all_ids if cid != content_id]
+        # Mine per-query hard negatives in chunks to limit memory
+        chunk_size = 5000
+        for chunk_start in range(0, len(all_query_texts), chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(all_query_texts))
+            chunk_embs = query_embs[chunk_start:chunk_end]
+            chunk_sims = chunk_embs @ doc_matrix.T
 
-        # Find top-K hard negatives per document
+            for qi_local in range(len(chunk_embs)):
+                qi = chunk_start + qi_local
+                pos_id = all_query_pos_ids[qi]
+
+                sims = chunk_sims[qi_local].copy()
+                pos_doc_idx = id_to_doc_idx.get(pos_id)
+                if pos_doc_idx is not None:
+                    sims[pos_doc_idx] = -np.inf  # Exclude positive
+
+                top_indices = np.argsort(sims)[-num_hard_negatives:][::-1]
+                hard_neg_ids = [valid_ids[i] for i in top_indices]
+                hard_neg_passages = [
+                    id_to_passage[nid] for nid in hard_neg_ids if nid in id_to_passage
+                ]
+
+                triplets.append({
+                    "query": all_query_texts[qi],
+                    "positive": id_to_passage[pos_id],
+                    "positive_id": pos_id,
+                    "hard_negatives": hard_neg_passages,
+                })
+
+        print(f"  Per-query mining complete: {len(triplets)} triplets")
+
+    else:
+        # --- Fallback: per-document hard negatives ---
+        use_hard_negatives = len(embeddings) > 0
         if use_hard_negatives:
-            hard_neg_ids = find_hard_negatives(content_id, candidate_ids, embeddings, top_k=num_hard_negatives)
+            print(f"  Using per-document hard negatives (top-{num_hard_negatives})")
         else:
-            hard_neg_ids = random.sample(candidate_ids, min(num_hard_negatives, len(candidate_ids)))
+            print(f"  Falling back to random negatives (no embeddings found)")
 
-        # Convert IDs to passages
-        hard_negative_passages = [id_to_passage[neg_id] for neg_id in hard_neg_ids]
+        for content_id, query_list in queries.items():
+            if content_id not in id_to_item:
+                continue
 
-        for query in query_list:
-            triplets.append({
-                "query": query,
-                "positive": positive_passage,
-                "hard_negatives": hard_negative_passages,  # List of passages
-            })
+            positive_passage = id_to_passage[content_id]
+            candidate_ids = [cid for cid in all_ids if cid != content_id]
+
+            if use_hard_negatives:
+                hard_neg_ids = find_hard_negatives(
+                    content_id, candidate_ids, embeddings, top_k=num_hard_negatives,
+                )
+            else:
+                hard_neg_ids = random.sample(
+                    candidate_ids, min(num_hard_negatives, len(candidate_ids)),
+                )
+
+            hard_negative_passages = [id_to_passage[neg_id] for neg_id in hard_neg_ids]
+
+            for query in query_list:
+                triplets.append({
+                    "query": query,
+                    "positive": positive_passage,
+                    "positive_id": content_id,
+                    "hard_negatives": hard_negative_passages,
+                })
 
     return triplets
 
@@ -558,13 +626,31 @@ def main():
             for q in query_list[:3]:
                 print(f"    - {q}")
 
-    # Create training triplets
+    # Load base model (needed for per-query hard negative mining)
+    print(f"\nLoading base model: {args.base_model}")
+    model = SentenceTransformer(args.base_model)
+
+    # Enrich content before building passages (same logic as 3_generate_embeddings.py)
+    print("\nEnriching temasider with linked content...")
+    enrich_temasider_with_children(content_items)
+
+    print("\nEnriching content with child content...")
+    enrich_with_child_content(content_items)
+
+    # Build passage mapping for all content
+    id_to_passage = {
+        str(item["id"]): HealthContentEmbedding.format_passage(item)
+        for item in content_items
+    }
+
+    # Create training triplets with per-query hard negative mining
     print("\nCreating training triplets...")
     triplets = create_training_triplets(
         content_items,
         queries,
-        HealthContentEmbedding.format_passage,
+        id_to_passage,
         num_hard_negatives=args.num_hard_negatives,
+        model=model,
     )
     print(f"Created {len(triplets)} triplets")
 
@@ -577,10 +663,6 @@ def main():
         print(f"  Hard negatives ({len(ex['hard_negatives'])}):")
         for i, neg in enumerate(ex['hard_negatives'][:3], 1):
             print(f"    {i}. {neg[:80]}...")
-
-    # Load base model
-    print(f"\nLoading base model: {args.base_model}")
-    model = SentenceTransformer(args.base_model)
 
     # Split into train / validation / test (70/15/15)
     random.shuffle(triplets)
@@ -595,31 +677,24 @@ def main():
 
     print(f"  Train: {len(train_triplets)}, Validation: {len(val_triplets)}, Test: {len(test_triplets)}")
 
-    # Create training examples using STRATEGY 3: Smart Batch Construction
-    # Include hard negatives as "fake positives" so they become in-batch negatives
-    # This ensures MNRL actually uses our hard-mined negatives!
-    print(f"\nBuilding training batches with {args.num_hard_negatives} hard negatives per query...")
+    # Create training examples with native MNRL hard negatives.
+    # Each InputExample contains [query, positive, neg1, neg2, ...].
+    # MNRL explicitly pushes the anchor toward the positive and away from
+    # both the explicit hard negatives AND in-batch negatives from other
+    # examples — giving the best of both worlds.
+    print(f"\nBuilding training examples with {args.num_hard_negatives} hard negatives per query...")
     train_examples = []
 
     for t in train_triplets:
-        # Real positive pair
         train_examples.append(
-            InputExample(texts=[t["query"], t["positive"]])
+            InputExample(texts=[t["query"], t["positive"]] + t["hard_negatives"])
         )
 
-        # Add ALL hard negatives as "fake positive" pairs
-        # These will be treated as in-batch negatives by MNRL
-        for hard_neg in t["hard_negatives"]:
-            train_examples.append(
-                InputExample(texts=[t["query"], hard_neg])
-            )
-
-    # Shuffle to mix real and fake pairs
     random.shuffle(train_examples)
 
-    print(f"  Original triplets: {len(train_triplets)}")
-    print(f"  Training examples: {len(train_examples)} ({len(train_triplets)} real + {len(train_triplets) * args.num_hard_negatives} hard negatives)")
-    print(f"  Effective batch multiplier: {1 + args.num_hard_negatives}x")
+    print(f"  Training examples: {len(train_examples)}")
+    print(f"  Texts per example: 1 query + 1 positive + {args.num_hard_negatives} hard negatives")
+    print(f"  Negatives per query: {args.num_hard_negatives} explicit + ~{args.batch_size - 1} in-batch")
 
     train_dataloader = DataLoader(
         train_examples,
@@ -647,28 +722,38 @@ def main():
     )
 
     # InformationRetrievalEvaluator: Realistic search metrics (NDCG, MAP, MRR, Recall)
+    # Uses a shared corpus so the model must find the right document among many,
+    # not just among 6 hand-picked candidates.
     print("\nCreating Information Retrieval evaluators...")
+
+    # Build shared corpus: sample up to 2000 random passages + ensure all
+    # relevant documents are included. This gives a realistic retrieval task
+    # without making evaluation too slow.
+    corpus_sample_size = 2000
+    all_passage_ids = list(id_to_passage.keys())
+
+    # Collect IDs of all relevant documents in val and test sets
+    val_relevant_ids = {t["positive_id"] for t in val_triplets}
+    test_relevant_ids = {t["positive_id"] for t in test_triplets}
+    required_ids = val_relevant_ids | test_relevant_ids
+
+    # Sample random IDs for corpus padding
+    available_for_sampling = [cid for cid in all_passage_ids if cid not in required_ids]
+    n_sample = min(corpus_sample_size, len(available_for_sampling))
+    sampled_ids = set(random.sample(available_for_sampling, n_sample))
+
+    shared_corpus_ids = required_ids | sampled_ids
+    shared_corpus = {cid: id_to_passage[cid] for cid in shared_corpus_ids}
 
     # Validation set
     val_queries = {f"q{i}": t["query"] for i, t in enumerate(val_triplets)}
-    val_corpus = {}
     val_relevant_docs = {}
-
     for i, t in enumerate(val_triplets):
-        query_id = f"q{i}"
-        pos_id = f"pos{i}"
-
-        # Corpus includes positive + all hard negatives
-        val_corpus[pos_id] = t["positive"]
-        for j, hard_neg in enumerate(t["hard_negatives"]):
-            val_corpus[f"neg{i}_{j}"] = hard_neg
-
-        # Only positive is relevant
-        val_relevant_docs[query_id] = {pos_id}
+        val_relevant_docs[f"q{i}"] = {t["positive_id"]}
 
     evaluator_ir_val = InformationRetrievalEvaluator(
         val_queries,
-        val_corpus,
+        shared_corpus,
         val_relevant_docs,
         name="ir-val",
         show_progress_bar=False,
@@ -676,29 +761,21 @@ def main():
 
     # Test set
     test_queries = {f"q{i}": t["query"] for i, t in enumerate(test_triplets)}
-    test_corpus = {}
     test_relevant_docs = {}
-
     for i, t in enumerate(test_triplets):
-        query_id = f"q{i}"
-        pos_id = f"pos{i}"
-
-        test_corpus[pos_id] = t["positive"]
-        for j, hard_neg in enumerate(t["hard_negatives"]):
-            test_corpus[f"neg{i}_{j}"] = hard_neg
-
-        test_relevant_docs[query_id] = {pos_id}
+        test_relevant_docs[f"q{i}"] = {t["positive_id"]}
 
     evaluator_ir_test = InformationRetrievalEvaluator(
         test_queries,
-        test_corpus,
+        shared_corpus,
         test_relevant_docs,
         name="ir-test",
         show_progress_bar=False,
     )
 
-    print(f"  Validation: {len(val_queries)} queries, {len(val_corpus)} corpus items")
-    print(f"  Test: {len(test_queries)} queries, {len(test_corpus)} corpus items")
+    print(f"  Shared corpus: {len(shared_corpus)} documents (sampled {n_sample} + {len(required_ids)} relevant)")
+    print(f"  Validation: {len(val_queries)} queries")
+    print(f"  Test: {len(test_queries)} queries")
 
     # Use IR evaluator for training (more informative metrics)
     evaluator_val = evaluator_ir_val
@@ -731,7 +808,6 @@ def main():
     # Pre-training sanity check
     print(f"\nPre-training sanity check:")
     sample = triplets[0]
-    from sentence_transformers import util
     emb_q = model.encode(sample["query"])
     emb_p = model.encode(sample["positive"])
     emb_n = model.encode(sample["hard_negatives"][0])  # Use hardest negative
@@ -842,8 +918,8 @@ def main():
 
    Tips:
    - More hard negatives → harder training, better discrimination
-   - Reduce batch-size if GPU memory issues (effective batch = batch_size * (1 + num_hard_negatives))
-   - Current effective batch size: {args.batch_size * (1 + args.num_hard_negatives)}
+   - Reduce batch-size if GPU memory issues
+   - Each example has {1 + args.num_hard_negatives} texts (query + positive + hard negatives)
 """)
 
 

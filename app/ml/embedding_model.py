@@ -116,8 +116,14 @@ class HealthContentEmbedding:
         content_type = content_item.get("content_type") or content_item.get("info_type") or content_item.get("type") or ""
 
         # Build opening sentence with title and type
+        is_temaside = (content_type or "").lower() == "temaside"
         if title:
-            if content_type:
+            if is_temaside:
+                # Repeat title in a natural sentence to boost the title signal.
+                # Temasider often have empty body text, so without this the title
+                # is a tiny fraction of the passage and gets drowned out.
+                sentences.append(f"{title}. Dette er en temaside om {title.lower()}.")
+            elif content_type:
                 sentences.append(f"{title}. Dette er en {content_type}.")
             else:
                 sentences.append(f"{title}.")
@@ -163,26 +169,52 @@ class HealthContentEmbedding:
             if clean_body:
                 sentences.append(clean_body)
 
-        # Linked/related content - append as additional context
+        # Linked/related content - append as additional context.
+        # E5-base has 512 token limit (~2000 chars Norwegian), so we truncate
+        # linked text and cap total passage length to stay within the window.
         linked_content = content_item.get("linked_content", [])
-        if linked_content:
-            related_parts = []
-            for linked in linked_content:
-                linked_title = linked.get("tittel", "")
-                linked_text = linked.get("tekst", "")
-                linked_type = linked.get("type", "")
-                if linked_title:
-                    clean_text = HealthContentEmbedding.strip_html_tags(linked_text) if linked_text else ""
-                    # Build: "Title (type): text" or "Title (type)" or "Title: text" or "Title"
-                    type_part = f" ({linked_type})" if linked_type else ""
-                    if clean_text:
-                        clean_text = clean_text.rstrip('.').rstrip()
-                        related_parts.append(f"{linked_title}{type_part}: {clean_text}")
-                    else:
-                        related_parts.append(f"{linked_title}{type_part}")
 
-            if related_parts:
-                sentences.append("Se også: " + "; ".join(related_parts) + ".")
+        if linked_content:
+            current_length = sum(len(s) for s in sentences)
+            max_passage_length = 1800  # Leave room for E5 prefix + tokenizer overhead
+
+            if is_temaside:
+                # Temasider: use only child titles (no body text) to keep the
+                # passage focused on the temaside's own identity. Including
+                # body snippets from children dilutes the title signal and
+                # causes poor semantic match when searching for the temaside name.
+                child_titles = []
+                for linked in linked_content:
+                    if current_length >= max_passage_length:
+                        break
+                    linked_title = linked.get("tittel", "")
+                    if linked_title:
+                        child_titles.append(linked_title)
+                        current_length += len(linked_title) + 2  # +2 for ", "
+
+                if child_titles:
+                    sentences.append("Undertema: " + ", ".join(child_titles) + ".")
+            else:
+                related_parts = []
+                for linked in linked_content:
+                    if current_length >= max_passage_length:
+                        break
+                    linked_title = linked.get("tittel", "")
+                    linked_text = linked.get("tekst", "")
+                    linked_type = linked.get("type", "")
+                    if linked_title:
+                        clean_text = HealthContentEmbedding.strip_html_tags(linked_text) if linked_text else ""
+                        type_part = f" ({linked_type})" if linked_type else ""
+                        if clean_text:
+                            clean_text = clean_text[:200].rstrip('.').rstrip()
+                            part = f"{linked_title}{type_part}: {clean_text}"
+                        else:
+                            part = f"{linked_title}{type_part}"
+                        related_parts.append(part)
+                        current_length += len(part)
+
+                if related_parts:
+                    sentences.append("Se også: " + "; ".join(related_parts) + ".")
 
         return " ".join(sentences)
 
