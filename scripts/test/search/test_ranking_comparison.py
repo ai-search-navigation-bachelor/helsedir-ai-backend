@@ -5,8 +5,8 @@ This script runs the same queries with ML ranking enabled and disabled
 to show how the ranking model affects result ordering.
 
 Usage:
-    python scripts/test_ranking_comparison.py
-    python scripts/test_ranking_comparison.py --query "diabetes behandling"
+    python scripts/test/search/test_ranking_comparison.py
+    python scripts/test/search/test_ranking_comparison.py --query "diabetes behandling"
 """
 
 import sys
@@ -26,8 +26,7 @@ def format_result(result, rank: int) -> str:
     """Format a search result for display."""
     return (
         f"{rank}. [{result.score:.3f}] {result.title[:60]}\n"
-        f"   ID: {result.id}\n"
-        f"   {result.explanation[:100]}"
+        f"   ID: {result.id}"
     )
 
 
@@ -196,8 +195,9 @@ def main():
     
     # Check if ranking model is available
     from app.services.search.ml_service import ml_service
-    
-    model_path = Path("models/ranking/model.keras")
+    from app.config import settings
+
+    model_path = Path(settings.ml_models_dir) / "ranking" / "reranker.json"
     if not model_path.exists():
         print("\n❌ Error: Ranking model not found!")
         print(f"   Expected at: {model_path}")

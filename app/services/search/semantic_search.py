@@ -2,6 +2,7 @@
 Semantic search functionality using embeddings.
 """
 
+from collections import OrderedDict
 from typing import List, Optional, Dict
 from pathlib import Path
 
@@ -18,7 +19,8 @@ class SemanticSearch:
         self.embedding_model = None
         self.content_embeddings: Dict[str, np.ndarray] = {}
         self._embeddings_loaded = False
-        self._query_embedding_cache: Dict[str, np.ndarray] = {}
+        self._query_embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._query_cache_max_size: int = 100
 
         # Cached embeddings matrix for fast vectorized search
         self._embeddings_matrix: Optional[np.ndarray] = None
@@ -98,8 +100,12 @@ class SemanticSearch:
         if not self.load_embedding_model():
             return None
 
-        if query not in self._query_embedding_cache:
-            self._query_embedding_cache = {query: self.embedding_model.encode_query(query)}
+        if query in self._query_embedding_cache:
+            self._query_embedding_cache.move_to_end(query)
+        else:
+            self._query_embedding_cache[query] = self.embedding_model.encode_query(query)
+            if len(self._query_embedding_cache) > self._query_cache_max_size:
+                self._query_embedding_cache.popitem(last=False)
 
         return self._query_embedding_cache[query]
 
@@ -185,7 +191,6 @@ class SemanticSearch:
                     document_url=item.public_document_url,
                     is_pdf_only=item.is_pdf_only,
                     score=round(norm_score, 3),
-                    explanation=f"Semantic: {sem_score:.3f} → {norm_score:.2f}",
                 )
             )
 

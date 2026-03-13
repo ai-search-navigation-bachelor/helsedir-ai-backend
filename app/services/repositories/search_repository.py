@@ -19,8 +19,6 @@ class SearchRepository:
         search_id: str,
         query: str,
         role: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> bool:
         """
         Log a new search event to search_logs.
@@ -29,8 +27,6 @@ class SearchRepository:
             search_id: Unique ID for this search (UUID)
             query: The search query
             role: Optional user role
-            session_id: Optional session ID
-            user_id: Optional user ID
 
         Returns:
             True if logged successfully
@@ -44,11 +40,11 @@ class SearchRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO search_logs (search_id, query, role, session_id, user_id)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO search_logs (search_id, query, role)
+                VALUES (%s, %s, %s)
                 ON DUPLICATE KEY UPDATE query = VALUES(query)
                 """,
-                (search_id, query, role, session_id, user_id),
+                (search_id, query, role),
             )
             conn.commit()
             return True
@@ -123,9 +119,9 @@ class SearchRepository:
                     INSERT INTO search_results_shown (
                         search_id, content_id, position, score,
                         semantic_score, bm25_score, rrf_score,
-                        type_match, role_match, maalgruppe_match
+                        role_match
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         search_id,
@@ -135,30 +131,9 @@ class SearchRepository:
                         result.get("semantic_score"),
                         result.get("bm25_score"),
                         result.get("rrf_score"),
-                        result.get("type_match"),
                         result.get("role_match"),
-                        result.get("maalgruppe_match", 0),
                     ),
                 )
-
-            # Also update content_stats impressions (inline to avoid nested connection)
-            seen_ids = set()
-            for r in results:
-                content_id = r.get("content_id")
-                if not content_id or content_id in seen_ids:
-                    continue
-                seen_ids.add(content_id)
-                try:
-                    cursor.execute(
-                        """
-                        INSERT INTO content_stats (content_id, impressions, clicks)
-                        VALUES (%s, 1, 0)
-                        ON DUPLICATE KEY UPDATE impressions = impressions + 1
-                        """,
-                        (content_id,),
-                    )
-                except mysql.connector.Error as e:
-                    logger.warning("Failed to update content_stats for %s: %s", content_id, e)
 
             conn.commit()
             return True
@@ -209,16 +184,6 @@ class SearchRepository:
                 VALUES (%s, %s, %s)
                 """,
                 (search_id, content_id, position),
-            )
-
-            # Also update content_stats clicks (inline to avoid nested connection)
-            cursor.execute(
-                """
-                INSERT INTO content_stats (content_id, impressions, clicks)
-                VALUES (%s, 0, 1)
-                ON DUPLICATE KEY UPDATE clicks = clicks + 1
-                """,
-                (content_id,),
             )
 
             conn.commit()

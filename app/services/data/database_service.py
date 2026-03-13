@@ -8,7 +8,6 @@ from typing import List, Optional, Dict, Any
 
 from app.services.repositories.base import db_pool
 from app.services.repositories.content_repository import content_repository
-from app.services.repositories.stats_repository import stats_repository
 from app.services.repositories.search_repository import search_repository
 from app.services.repositories.ltr_repository import ltr_repository
 
@@ -22,7 +21,6 @@ class DatabaseService:
 
     def __init__(self):
         self._content = content_repository
-        self._stats = stats_repository
         self._search = search_repository
         self._ltr = ltr_repository
 
@@ -59,35 +57,6 @@ class DatabaseService:
     def get_all_content_ids(self) -> List[str]:
         return self._content.get_all_content_ids()
 
-    # ==================== Statistics Operations ====================
-
-    def record_impression(self, content_id: str) -> bool:
-        return self._stats.record_impression(content_id)
-
-    def record_impressions_batch(self, content_ids: List[str]) -> int:
-        return self._stats.record_impressions_batch(content_ids)
-
-    def record_click(self, content_id: str) -> bool:
-        return self._stats.record_click(content_id)
-
-    def get_content_stats(self, content_id: str) -> Optional[Dict[str, Any]]:
-        return self._stats.get_content_stats(content_id)
-
-    def get_all_stats(self) -> List[Dict[str, Any]]:
-        return self._stats.get_all_stats()
-
-    def get_ctr(self, content_id: str) -> float:
-        return self._stats.get_ctr(content_id)
-
-    def get_content_ctr(self) -> Dict[str, float]:
-        return self._stats.get_content_ctr()
-
-    def get_content_ctr_windowed(self, days: int = 30) -> Dict[str, float]:
-        return self._stats.get_content_ctr_windowed(days)
-
-    def get_content_stats_bulk(self) -> Dict[str, Dict[str, int]]:
-        return self._stats.get_content_stats_bulk()
-
     # ==================== Search Logging Operations ====================
 
     def log_search(
@@ -95,10 +64,8 @@ class DatabaseService:
         search_id: str,
         query: str,
         role: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> bool:
-        return self._search.log_search(search_id, query, role, session_id, user_id)
+        return self._search.log_search(search_id, query, role)
 
     def get_search_by_id(self, search_id: str) -> Optional[Dict[str, Any]]:
         return self._search.get_search_by_id(search_id)
@@ -128,6 +95,9 @@ class DatabaseService:
 
     def get_ltr_training_rows(self, days_back: int = 180) -> List[Dict[str, Any]]:
         return self._ltr.get_ltr_training_rows(days_back)
+
+    def get_content_ctr_map(self, days_back: int = 30) -> Dict[str, float]:
+        return self._ltr.get_content_ctr_map(days_back)
 
     def get_position_propensities(self) -> Dict[int, float]:
         return self._ltr.get_position_propensities()

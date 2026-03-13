@@ -139,8 +139,6 @@ class KeywordSearch:
         normalized = []
         for item, raw_score, breakdown in results[:k]:
             norm_score = raw_score / max_score if max_score > 0 else 0
-            explanation = self._create_explanation(breakdown, role)
-            explanation += f" | Score: {raw_score:.1f} → {norm_score:.2f}"
             normalized.append(
                 SearchResult(
                     id=item.id,
@@ -151,7 +149,6 @@ class KeywordSearch:
                     document_url=item.public_document_url,
                     is_pdf_only=item.is_pdf_only,
                     score=round(norm_score, 3),
-                    explanation=explanation,
                 )
             )
         return normalized
@@ -203,25 +200,6 @@ class KeywordSearch:
             breakdown["full_title_coverage"] = pts
 
         return score, breakdown
-
-    def _create_explanation(
-        self,
-        breakdown: Dict[str, Any],
-        role: Optional[str],
-    ) -> str:
-        parts = []
-
-        if "exact_title" in breakdown:
-            parts.append(f"Exact title match (+{breakdown['exact_title']:.1f})")
-        if "full_title_coverage" in breakdown:
-            parts.append(f"Full title coverage (+{breakdown['full_title_coverage']:.1f})")
-        if "title_keywords" in breakdown:
-            kw = breakdown["title_keywords"]
-            parts.append(f"Title words: {', '.join(kw['matches'][:3])} (+{kw['points']:.1f})")
-        if role:
-            parts.append(f"Role: {role}")
-
-        return " | ".join(parts) if parts else "Match"
 
 
 # Global instance

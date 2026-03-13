@@ -41,7 +41,6 @@ app/
 **Repositories** (`app/services/repositories/`):
 - `base.py` - MySQL connection pool
 - `content_repository.py` - Content CRUD operations
-- `stats_repository.py` - CTR, impressions, clicks statistics
 - `search_repository.py` - Search and click logging
 - `ltr_repository.py` - Learning-to-rank training data
 
@@ -74,15 +73,14 @@ SEARCH_KEYWORD_TITLE_WEIGHT=3.0
 
 XGBoost LambdaMART model trained on click data.
 
-**Features (8):**
+**Features (7):**
 1. `semantic_score` - Normalized semantic similarity (0-1)
 2. `bm25_score` - Normalized BM25 score (0-1)
-3. `rrf_score` - RRF fusion score (0-1)
-4. `type_match` - Content type authority (retningslinje=0.9, veileder=0.8, etc.)
-5. `role_match` - User role match with target groups
-6. `maalgruppe_match` - Target group match
-7. `smoothed_ctr` - Windowed CTR (last 30 days, runtime-only)
-8. `position` - Shown position (for IPS weighting)
+3. `smoothed_ctr` - Windowed CTR (last 30 days, Bayesian-smoothed)
+4. `role_match` - User role match with target groups
+5. `query_length` - Number of terms in query
+6. `title_query_overlap` - Jaccard overlap between query and title terms
+7. `content_freshness` - Decay function on `sist_faglig_oppdatert`
 
 **Training:**
 - Groups by `search_id` (LTR requires grouping)
@@ -115,7 +113,6 @@ helsedir-ai-backend/
 │   │   ├── repositories/          # Data access layer
 │   │   │   ├── base.py            # Connection pool
 │   │   │   ├── content_repository.py
-│   │   │   ├── stats_repository.py
 │   │   │   ├── search_repository.py
 │   │   │   └── ltr_repository.py
 │   │   │
@@ -218,7 +215,6 @@ GET /content/abc123?search_id=uuid
 ## Database Tables
 
 - `content` - Cached content from Helsedir API
-- `content_stats` - All-time clicks/impressions per content
 - `search_logs` - Search events (search_id, query, role)
 - `search_results_shown` - Results shown with ML features
 - `click_logs` - Click events with position
