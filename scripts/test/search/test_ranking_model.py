@@ -42,7 +42,7 @@ try:
         content_id="test-123",
         semantic_score=0.85,
         bm25_score=0.72,
-        rrf_score=0.80,
+        smoothed_ctr=0.10,
         role_match=1.0,
     )
     print("✓ Successfully created RerankCandidate")

@@ -84,14 +84,14 @@ try:
             content_id="diabetes-001",
             semantic_score=0.85,
             bm25_score=0.72,
-            rrf_score=0.80,
+            smoothed_ctr=0.10,
             role_match=1.0,
         ),
         RerankCandidate(
             content_id="astma-001",
             semantic_score=0.45,
             bm25_score=0.30,
-            rrf_score=0.40,
+            smoothed_ctr=0.05,
             role_match=1.0,
         ),
     ]

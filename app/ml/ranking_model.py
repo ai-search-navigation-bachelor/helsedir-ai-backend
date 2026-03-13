@@ -45,7 +45,9 @@ RERANK_FEATURES: List[str] = [
     # Retrieval scores
     "semantic_score",               # normalized semantic similarity (0-1)
     "bm25_score",                   # normalized BM25 score (0-1)
-    "rrf_score",                    # RRF fusion score (0-1)
+
+    # Popularity signal
+    "smoothed_ctr",                 # Bayesian-smoothed CTR last 30 days (0-1)
 
     # Metadata / intent alignment
     "role_match",                   # role match score (0-1)
@@ -120,7 +122,9 @@ class RerankCandidate:
     # Retrieval scores
     semantic_score: float = 0.0
     bm25_score: float = 0.0
-    rrf_score: float = 0.0
+
+    # Popularity signal
+    smoothed_ctr: float = 0.0
 
     # Metadata alignment
     role_match: float = 0.0
@@ -183,6 +187,10 @@ class HealthContentReranker:
         if not rows:
             return {"trained": 0.0, "groups": 0.0, "rows": 0.0}
 
+        # Fetch smoothed CTR (last 30 days) as an orthogonal popularity signal
+        ctr_map = database_service.get_content_ctr_map(days_back=30)
+        default_ctr = 1.0 / 21.0  # prior: 0 clicks, 0 impressions
+
         # Group by search_id
         groups: Dict[str, List[dict]] = {}
         for r in rows:
@@ -231,11 +239,12 @@ class HealthContentReranker:
                 if clicked == 1:
                     any_click = True
 
-                # 4 features: retrieval scores + role match
+                # 4 features: retrieval scores + popularity + role match
+                content_id = rr.get("content_id", "")
                 feat_dict = {
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
-                    "rrf_score": _f(rr.get("rrf_score"), 0.0),
+                    "smoothed_ctr": ctr_map.get(content_id, default_ctr),
                     "role_match": _f(rr.get("role_match"), 0.0),
                 }
 
@@ -309,11 +318,11 @@ class HealthContentReranker:
             return []
 
         if self.model is None:
-            # Safe fallback: blend semantic and RRF scores to preserve hybrid ordering
+            # Safe fallback: blend semantic and BM25 scores
             _FALLBACK_ALPHA = 0.6
             scored = [
                 (c, _FALLBACK_ALPHA * float(c.semantic_score)
-                     + (1 - _FALLBACK_ALPHA) * float(c.rrf_score or 0.0))
+                     + (1 - _FALLBACK_ALPHA) * float(c.bm25_score))
                 for c in candidates
             ]
             scored.sort(key=lambda x: x[1], reverse=True)
@@ -325,7 +334,7 @@ class HealthContentReranker:
             feat_dict = {
                 "semantic_score": _f(c.semantic_score),
                 "bm25_score": _f(c.bm25_score),
-                "rrf_score": _f(c.rrf_score),
+                "smoothed_ctr": _f(c.smoothed_ctr),
                 "role_match": _f(c.role_match),
             }
             X.append([feat_dict[n] for n in self.feature_names])
@@ -436,7 +445,7 @@ def extract_features_for_candidate(
     *,
     semantic_score: float = 0.0,
     bm25_score: float = 0.0,
-    rrf_score: float = 0.0,
+    smoothed_ctr: float = 0.0,
     role_match: float = 0.0,
 ) -> Dict[str, float]:
     """
@@ -446,7 +455,7 @@ def extract_features_for_candidate(
     return {
         "semantic_score": float(semantic_score),
         "bm25_score": float(bm25_score),
-        "rrf_score": float(rrf_score),
+        "smoothed_ctr": float(smoothed_ctr),
         "role_match": float(role_match),
     }
 

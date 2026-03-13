@@ -325,10 +325,13 @@ class HybridSearch:
             for i, c in enumerate(candidates):
                 c.pre_rerank_position = i + 1
 
+            # Fetch cached CTR map for popularity signal
+            ctr_map = ml_service.get_ctr_map()
+
             # Extract 4 features for each candidate
             features_list = []
             for c in candidates:
-                features = self._extract_ranking_features(c, role)
+                features = self._extract_ranking_features(c, role, ctr_map)
                 features_list.append(features)
 
             # Get ranking scores with per-feature contributions
@@ -352,6 +355,7 @@ class HybridSearch:
     def _extract_ranking_features(
         candidate: HybridCandidate,
         role: Optional[str],
+        ctr_map: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
         """Extract 4 features for ranking model from a HybridCandidate."""
         item = candidate.item
@@ -366,10 +370,14 @@ class HybridSearch:
         elif not item.role_tags:
             role_match = 0.3
 
+        # Smoothed CTR (Bayesian prior for unseen content)
+        default_ctr = 1.0 / 21.0
+        smoothed_ctr = (ctr_map or {}).get(item.id, default_ctr)
+
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
-            "rrf_score": candidate.rrf_raw,
+            "smoothed_ctr": smoothed_ctr,
             "role_match": role_match,
         }
 
