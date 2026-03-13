@@ -50,6 +50,19 @@ CATEGORY_INFO = {
     "temaside": "Temaside",
 }
 
+CANONICAL_CONTENT_TYPE_MAP = {
+    "anbefaling": "anbefaling",
+    "pakkeforlop-anbefaling": "anbefaling",
+    "rad": "rad",
+    "faglig-rad": "rad",
+    "referanse": "referanse",
+    "pico": "pico",
+    "kapittel": "kapittel",
+    "kapitler": "kapittel",
+    "retningslinje": "retningslinje",
+    "retningslinjer": "retningslinje",
+}
+
 # Derived from CATEGORY_INFO
 ALLOWED_INFO_TYPES = list(CATEGORY_INFO.keys())
 ALLOWED_INFO_TYPES_SET = set(ALLOWED_INFO_TYPES)
@@ -67,6 +80,15 @@ def get_category_display_name(info_type: str) -> str:
     if not info_type:
         return "Ukjent"
     return CATEGORY_INFO.get(info_type.lower(), info_type.title())
+
+
+def normalize_content_type(info_type: str) -> str:
+    """Map source-specific type variants to canonical response types."""
+    if not info_type:
+        return "unknown"
+
+    normalized = info_type.strip().lower()
+    return CANONICAL_CONTENT_TYPE_MAP.get(normalized, normalized)
 
 
 # =============================================================================
