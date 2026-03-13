@@ -8,7 +8,13 @@ import json
 import logging
 from typing import List, Optional, Set
 from pydantic import ValidationError
-from app.entities.content import ContentItem, ContentLink, AnbefalingFields
+from app.entities.content import (
+    ContentItem,
+    ContentLink,
+    AnbefalingFields,
+    EhelsestandardAttachment,
+    EhelsestandardFields,
+)
 from app.services.data.database_service import database_service
 from app.services.data.document_metadata import compute_document_metadata
 from app.services.repositories.content_repository import content_repository
@@ -62,6 +68,38 @@ class ContentService:
                     continue
         return result
 
+    def _parse_ehelsestandard_fields(self, item) -> Optional[EhelsestandardFields]:
+        """Parse stored e-helsestandard attachment data from a content row."""
+        if item.get("attachments_json") is None:
+            return None
+
+        attachments_data = self._parse_json_field(item.get("attachments_json"), [])
+        attachments: List[EhelsestandardAttachment] = []
+        if isinstance(attachments_data, list):
+            for attachment in attachments_data:
+                if not isinstance(attachment, dict):
+                    continue
+                title = attachment.get("title")
+                url = attachment.get("url")
+                if not isinstance(title, str) or not title.strip():
+                    continue
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                attachments.append(
+                    EhelsestandardAttachment(
+                        title=title.strip(),
+                        url=url.strip(),
+                        file_type=attachment.get("file_type")
+                        if isinstance(attachment.get("file_type"), str)
+                        else attachment.get("fileType")
+                        if isinstance(attachment.get("fileType"), str)
+                        else None,
+                    )
+                )
+        return EhelsestandardFields(
+            attachments=attachments,
+        )
+
     def load_content(self):
         """Load content from database cache."""
         # Load searchable info types from DB; fall back to hardcoded constants
@@ -107,6 +145,10 @@ class ContentService:
                         styrke=item.get("styrke"),
                     )
 
+            ehelsestandard_fields = None
+            if item.get("info_type") == "ehelsestandard":
+                ehelsestandard_fields = self._parse_ehelsestandard_fields(item)
+
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
@@ -124,6 +166,7 @@ class ContentService:
                 ),
                 document_url=item.get("document_url") or document_meta["document_url"],
                 anbefaling_fields=anbefaling_fields,
+                ehelsestandard_fields=ehelsestandard_fields,
             )
             self.content.append(content_item)
 

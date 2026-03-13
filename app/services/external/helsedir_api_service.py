@@ -180,6 +180,68 @@ class HelseDirectorateAPIService:
                 f"API request failed: {str(e)}"
             )
 
+    def get_file_by_id(
+        self,
+        file_id: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Get a specific file payload by ID.
+
+        Args:
+            file_id: The file content ID
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dictionary containing the file payload
+
+        Raises:
+            HelseDirectorateAPIError: If the API request fails
+        """
+        if not self.api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/filer/{file_id}"
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    url,
+                    headers=self._get_headers(),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError(
+                        "Unauthorized: Invalid API key. Check HELSEDIR_API_KEY in .env"
+                    )
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError(
+                        "Forbidden: API key does not have access to this resource"
+                    )
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(
+                        f"File not found: {file_id}"
+                    )
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.TimeoutException:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            )
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            )
+
     async def get_infobit_by_id_async(
         self,
         infobit_id: str,

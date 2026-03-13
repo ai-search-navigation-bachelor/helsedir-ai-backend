@@ -103,13 +103,14 @@ class ContentRepository:
             document_url = (
                 content["document_url"] if "document_url" in content else document_meta["document_url"]
             )
+            attachments_json = self._serialize_json_field(content.get("attachments_json"))
             cursor.execute(
                 """
                 INSERT INTO content (
                     id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
-                    has_text_content, document_url
+                    has_text_content, document_url, attachments_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
                     tekst = VALUES(tekst),
@@ -121,6 +122,7 @@ class ContentRepository:
                     sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
                     has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
                     document_url = COALESCE(VALUES(document_url), document_url),
+                    attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
                     path = VALUES(path)
                 """,
                 (
@@ -136,6 +138,7 @@ class ContentRepository:
                     content.get("path"),
                     has_text_content,
                     document_url,
+                    attachments_json,
                 ),
             )
 
@@ -191,13 +194,14 @@ class ContentRepository:
                     document_url = (
                         content["document_url"] if "document_url" in content else document_meta["document_url"]
                     )
+                    attachments_json = self._serialize_json_field(content.get("attachments_json"))
                     cursor.execute(
                         """
                         INSERT INTO content (
                             id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
-                            has_text_content, document_url
+                            has_text_content, document_url, attachments_json
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             tittel = VALUES(tittel),
                             tekst = VALUES(tekst),
@@ -209,6 +213,7 @@ class ContentRepository:
                             sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
                             has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
                             document_url = COALESCE(VALUES(document_url), document_url),
+                            attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
                             path = VALUES(path)
                         """,
                         (
@@ -224,6 +229,7 @@ class ContentRepository:
                             content.get("path"),
                             has_text_content,
                             document_url,
+                            attachments_json,
                         ),
                     )
 
