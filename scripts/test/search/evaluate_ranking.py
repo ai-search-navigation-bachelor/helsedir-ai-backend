@@ -15,12 +15,15 @@ Usage:
 """
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -73,6 +76,22 @@ def time_split(groups: Dict[str, List[dict]], train_ratio: float = 0.8):
     return train_groups, test_groups
 
 
+def compute_ctr_from_groups(groups: Dict[str, List[dict]]) -> Dict[str, float]:
+    """Compute smoothed CTR from a set of groups (avoids data leakage)."""
+    impressions: Dict[str, int] = {}
+    clicks: Dict[str, int] = {}
+    for items in groups.values():
+        for item in items:
+            cid = item.get("content_id", "")
+            impressions[cid] = impressions.get(cid, 0) + 1
+            if int(item.get("clicked", 0)) == 1:
+                clicks[cid] = clicks.get(cid, 0) + 1
+    return {
+        cid: (clicks.get(cid, 0) + 1) / (imp + 21)
+        for cid, imp in impressions.items()
+    }
+
+
 def evaluate_rrf_baseline(groups: Dict[str, List[dict]]) -> Dict[str, float]:
     """Evaluate RRF-only baseline (rank by rrf_score, no ML)."""
     from sklearn.metrics import ndcg_score
@@ -93,11 +112,11 @@ def evaluate_rrf_baseline(groups: Dict[str, List[dict]]) -> Dict[str, float]:
         try:
             ndcg5_scores.append(ndcg_score([relevance], [rrf_scores], k=5))
         except Exception:
-            pass
+            logger.debug("NDCG@5 failed for group %s: rel=%s scores=%s", sid, relevance, rrf_scores)
         try:
             ndcg10_scores.append(ndcg_score([relevance], [rrf_scores], k=10))
         except Exception:
-            pass
+            logger.debug("NDCG@10 failed for group %s: rel=%s scores=%s", sid, relevance, rrf_scores)
 
         # MRR + P@1 based on RRF ranking
         ranked = sorted(range(len(rrf_scores)), key=lambda i: rrf_scores[i], reverse=True)
@@ -160,8 +179,9 @@ def main():
         print("Not enough data for test split.")
         return
 
-    # Fetch CTR map for model evaluation
-    ctr_map = database_service.get_content_ctr_map(days_back=30)
+    # Compute CTR maps scoped to each partition to avoid data leakage
+    train_ctr_map = compute_ctr_from_groups(train_groups)
+    test_ctr_map = compute_ctr_from_groups(test_groups)
 
     # 1. RRF baseline
     rrf_metrics = evaluate_rrf_baseline(test_groups)
@@ -172,7 +192,7 @@ def main():
     if model_path.exists():
         print("\nLoading current model from disk...")
         current_model = HealthContentReranker.load(str(model_path))
-        current_metrics = current_model.evaluate(test_groups, ctr_map=ctr_map)
+        current_metrics = current_model.evaluate(test_groups, ctr_map=test_ctr_map)
         print_metrics("Current Model (from disk)", current_metrics)
         print_comparison(rrf_metrics, current_metrics, "Current model")
     else:
@@ -184,7 +204,7 @@ def main():
         new_model = HealthContentReranker()
         train_result = new_model.train_from_groups(
             groups=train_groups,
-            ctr_map=ctr_map,
+            ctr_map=train_ctr_map,
             min_group_size=5,
             require_any_click=True,
             verbose=False,
@@ -192,7 +212,7 @@ def main():
         print(f"Training: {int(train_result['groups'])} groups, {int(train_result['rows'])} rows")
 
         if train_result["trained"]:
-            new_metrics = new_model.evaluate(test_groups, ctr_map=ctr_map)
+            new_metrics = new_model.evaluate(test_groups, ctr_map=test_ctr_map)
             print_metrics("Newly Trained Model", new_metrics)
             print_comparison(rrf_metrics, new_metrics, "New model")
         else:

@@ -115,6 +115,7 @@ class LtrRepository:
                     srs.rrf_score,
                     srs.role_match,
                     sl.query,
+                    sl.timestamp,
                     c.tittel AS title,
                     c.sist_faglig_oppdatert,
                     CASE WHEN EXISTS(
