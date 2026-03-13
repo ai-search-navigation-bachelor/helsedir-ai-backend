@@ -160,6 +160,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                     if public_path:
                         child = content_service.get_content_by_path(public_path)
                         if child:
+                            last_reviewed_date = child.sist_faglig_oppdatert
                             children = _children_from_content_links(child.links)
                     elif _is_api_href(link.href):
                         # Fallback: fetch from Helsedir API only for API URLs

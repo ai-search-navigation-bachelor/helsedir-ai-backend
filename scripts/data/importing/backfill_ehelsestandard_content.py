@@ -9,6 +9,7 @@ Updates existing `content` rows using mostly existing columns:
 - forst_publisert
 - sist_faglig_oppdatert
 - attachments_json
+- ehelsestandard_fields_json
 """
 
 import argparse
@@ -56,11 +57,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
         if not force:
             query += """
               AND (
-                  attachments_json IS NULL
-                  OR document_url IS NULL
-                  OR has_text_content IS NULL
-                  OR has_text_content = 0
-                  OR ehelsestandard_fields_json IS NULL
+                  ehelsestandard_fields_json IS NULL
                   OR forst_publisert IS NULL
                   OR sist_faglig_oppdatert IS NULL
               )
