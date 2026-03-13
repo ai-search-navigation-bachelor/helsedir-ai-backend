@@ -166,7 +166,7 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
-            background_tasks=background_tasks,
+            rerank=rerank,
         )
 
         # Extract ML features and log results (skip for prefetch requests)
@@ -674,13 +674,9 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
-        background_tasks: Optional[BackgroundTasks] = None,
+        rerank: Optional[bool] = None,
     ) -> str:
-        """Generate new search_id or validate existing one.
-
-        DB writes (log_search) are deferred to background_tasks when available
-        so they don't block the response.
-        """
+        """Generate new search_id or validate existing one."""
         expected_signature = self._build_search_signature(
             method=method,
             bm25_weight=bm25_weight,
@@ -690,18 +686,14 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
         )
 
-        def _log_new_search(sid: str):
-            database_service.log_search(search_id=sid, query=query, role=role)
-
         if not search_id:
-            # New search
+            # New search — log synchronously so subsequent get_search_by_id
+            # (e.g. from pagination) can find it immediately.
             search_id = self._build_signed_search_id(expected_signature)
-            if background_tasks:
-                background_tasks.add_task(_log_new_search, search_id)
-            else:
-                _log_new_search(search_id)
+            database_service.log_search(search_id=search_id, query=query, role=role)
         else:
             # Validate existing search_id
             stored_search = database_service.get_search_by_id(search_id)
@@ -727,10 +719,7 @@ class SearchController:
             if stored_query != query.strip().lower() or stored_role != incoming_role:
                 # Query or role changed — start a fresh search
                 search_id = self._build_signed_search_id(expected_signature)
-                if background_tasks:
-                    background_tasks.add_task(_log_new_search, search_id)
-                else:
-                    _log_new_search(search_id)
+                database_service.log_search(search_id=search_id, query=query, role=role)
 
         return search_id
 
@@ -745,6 +734,7 @@ class SearchController:
         retningslinje_boost: Optional[float],
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> str:
         """Build a stable signature for the ranking configuration."""
         # Normalise hybrid-only params so signatures are identical for non-hybrid methods
@@ -752,6 +742,7 @@ class SearchController:
             bm25_weight = semantic_weight = rrf_k = None
             temaside_boost = retningslinje_boost = None
             role_boost = role_penalty = None
+            rerank = None
 
         effective_tunables = {
             "method": method.strip().lower(),
@@ -804,6 +795,7 @@ class SearchController:
                 ),
                 6,
             ),
+            "rerank": bool(rerank) if rerank is not None else settings.ml_ranking_enabled,
         }
         canonical = json.dumps(effective_tunables, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
