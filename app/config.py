@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     port: int = 8000
     environment: str = "development"
     debug: bool = False
+    log_level: str = "WARNING"
 
     # Helsedirektoratet API
     helsedir_api_key: str = ""
