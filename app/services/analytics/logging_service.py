@@ -18,7 +18,6 @@ class LoggingService:
         content_id: Optional[str] = None,
         role: Optional[str] = None,
         search_id: Optional[str] = None,
-        **kwargs,
     ) -> bool:
         """
         Log an event to the database.
@@ -45,7 +44,7 @@ class LoggingService:
                 content_id=content_id,
             )
 
-        return True
+        return False
 
     def get_training_data(self) -> List[dict]:
         """Get training data for learning-to-rank model."""
