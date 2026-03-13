@@ -134,7 +134,10 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
         conn.close()
 
 
-def _compute_update(row: Dict, payload: Dict) -> Tuple[str, str, int, Optional[str], Optional[str], Optional[str], str]:
+def _compute_update(
+    row: Dict,
+    payload: Dict,
+) -> Tuple[str, int, Optional[str], Optional[str], Optional[str], str, str]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     purpose_html = data.get("formalBruksomrade") if isinstance(data.get("formalBruksomrade"), str) else None
     existing_text = row.get("tekst") or ""

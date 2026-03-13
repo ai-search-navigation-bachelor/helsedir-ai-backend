@@ -96,9 +96,9 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
             continue
         last_reviewed_date = None
         if gl.id:
-                child = content_service.get_content_by_id(gl.id)
-                if child:
-                    last_reviewed_date = child.sist_faglig_oppdatert
+            child = content_service.get_content_by_id(gl.id)
+            if child:
+                last_reviewed_date = child.sist_faglig_oppdatert
         result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,

@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 class ContentRepository:
     """Repository for content CRUD operations."""
 
+    def __init__(self):
+        self._warned_missing_attachments_json = False
+
     def _serialize_json_field(self, value) -> Optional[str]:
         """Serialize a field to JSON string if needed."""
         if value is None:
@@ -24,6 +27,115 @@ class ContentRepository:
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _is_unknown_column_error(error: mysql.connector.Error, column_name: str) -> bool:
+        """Return True when MySQL reports a missing column for the given name."""
+        return getattr(error, "errno", None) == 1054 and column_name in str(error)
+
+    def _execute_content_upsert(
+        self,
+        cursor,
+        *,
+        content_id,
+        title,
+        text,
+        info_type,
+        koder_json,
+        role_tags_json,
+        links_json,
+        forst_publisert,
+        sist_faglig_oppdatert,
+        path,
+        has_text_content,
+        document_url,
+        attachments_json,
+    ) -> None:
+        """Insert/update content, with compatibility fallback for older schemas."""
+        try:
+            cursor.execute(
+                """
+                INSERT INTO content (
+                    id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
+                    has_text_content, document_url, attachments_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    tittel = VALUES(tittel),
+                    tekst = VALUES(tekst),
+                    info_type = VALUES(info_type),
+                    koder = COALESCE(VALUES(koder), koder),
+                    role_tags = COALESCE(VALUES(role_tags), role_tags),
+                    links = COALESCE(VALUES(links), links),
+                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                    has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                    document_url = COALESCE(VALUES(document_url), document_url),
+                    attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
+                    path = VALUES(path)
+                """,
+                (
+                    content_id,
+                    title,
+                    text,
+                    info_type,
+                    koder_json,
+                    role_tags_json,
+                    links_json,
+                    forst_publisert,
+                    sist_faglig_oppdatert,
+                    path,
+                    has_text_content,
+                    document_url,
+                    attachments_json,
+                ),
+            )
+        except mysql.connector.Error as e:
+            if not self._is_unknown_column_error(e, "attachments_json"):
+                raise
+
+            if not self._warned_missing_attachments_json:
+                logger.warning(
+                    "content schema is missing attachments_json; retrying without that column until migration is applied: %s",
+                    e,
+                )
+                self._warned_missing_attachments_json = True
+
+            cursor.execute(
+                """
+                INSERT INTO content (
+                    id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
+                    has_text_content, document_url
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    tittel = VALUES(tittel),
+                    tekst = VALUES(tekst),
+                    info_type = VALUES(info_type),
+                    koder = COALESCE(VALUES(koder), koder),
+                    role_tags = COALESCE(VALUES(role_tags), role_tags),
+                    links = COALESCE(VALUES(links), links),
+                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
+                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
+                    has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
+                    document_url = COALESCE(VALUES(document_url), document_url),
+                    path = VALUES(path)
+                """,
+                (
+                    content_id,
+                    title,
+                    text,
+                    info_type,
+                    koder_json,
+                    role_tags_json,
+                    links_json,
+                    forst_publisert,
+                    sist_faglig_oppdatert,
+                    path,
+                    has_text_content,
+                    document_url,
+                ),
+            )
 
     def _cache_anbefaling_details(self, content_id: str, content: Dict[str, Any], cursor) -> bool:
         """
@@ -104,42 +216,21 @@ class ContentRepository:
                 content["document_url"] if "document_url" in content else document_meta["document_url"]
             )
             attachments_json = self._serialize_json_field(content.get("attachments_json"))
-            cursor.execute(
-                """
-                INSERT INTO content (
-                    id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
-                    has_text_content, document_url, attachments_json
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    tittel = VALUES(tittel),
-                    tekst = VALUES(tekst),
-                    info_type = VALUES(info_type),
-                    koder = COALESCE(VALUES(koder), koder),
-                    role_tags = COALESCE(VALUES(role_tags), role_tags),
-                    links = COALESCE(VALUES(links), links),
-                    forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
-                    sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
-                    has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
-                    document_url = COALESCE(VALUES(document_url), document_url),
-                    attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
-                    path = VALUES(path)
-                """,
-                (
-                    content.get("id"),
-                    content.get("tittel"),
-                    content.get("tekst"),
-                    info_type,
-                    koder_json,
-                    role_tags_json,
-                    links_json,
-                    content.get("forstPublisert") or content.get("forst_publisert") or None,
-                    content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert") or None,
-                    content.get("path"),
-                    has_text_content,
-                    document_url,
-                    attachments_json,
-                ),
+            self._execute_content_upsert(
+                cursor,
+                content_id=content.get("id"),
+                title=content.get("tittel"),
+                text=content.get("tekst"),
+                info_type=info_type,
+                koder_json=koder_json,
+                role_tags_json=role_tags_json,
+                links_json=links_json,
+                forst_publisert=content.get("forstPublisert") or content.get("forst_publisert") or None,
+                sist_faglig_oppdatert=content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert") or None,
+                path=content.get("path"),
+                has_text_content=has_text_content,
+                document_url=document_url,
+                attachments_json=attachments_json,
             )
 
             # If anbefaling, also save anbefaling-specific details
@@ -195,42 +286,21 @@ class ContentRepository:
                         content["document_url"] if "document_url" in content else document_meta["document_url"]
                     )
                     attachments_json = self._serialize_json_field(content.get("attachments_json"))
-                    cursor.execute(
-                        """
-                        INSERT INTO content (
-                            id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
-                            has_text_content, document_url, attachments_json
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            tittel = VALUES(tittel),
-                            tekst = VALUES(tekst),
-                            info_type = VALUES(info_type),
-                            koder = COALESCE(VALUES(koder), koder),
-                            role_tags = COALESCE(VALUES(role_tags), role_tags),
-                            links = COALESCE(VALUES(links), links),
-                            forst_publisert = COALESCE(VALUES(forst_publisert), forst_publisert),
-                            sist_faglig_oppdatert = COALESCE(VALUES(sist_faglig_oppdatert), sist_faglig_oppdatert),
-                            has_text_content = COALESCE(VALUES(has_text_content), has_text_content),
-                            document_url = COALESCE(VALUES(document_url), document_url),
-                            attachments_json = COALESCE(VALUES(attachments_json), attachments_json),
-                            path = VALUES(path)
-                        """,
-                        (
-                            content.get("id"),
-                            content.get("tittel"),
-                            content.get("tekst"),
-                            info_type,
-                            koder_json,
-                            role_tags_json,
-                            links_json,
-                            content.get("forstPublisert") or content.get("forst_publisert"),
-                            content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert"),
-                            content.get("path"),
-                            has_text_content,
-                            document_url,
-                            attachments_json,
-                        ),
+                    self._execute_content_upsert(
+                        cursor,
+                        content_id=content.get("id"),
+                        title=content.get("tittel"),
+                        text=content.get("tekst"),
+                        info_type=info_type,
+                        koder_json=koder_json,
+                        role_tags_json=role_tags_json,
+                        links_json=links_json,
+                        forst_publisert=content.get("forstPublisert") or content.get("forst_publisert"),
+                        sist_faglig_oppdatert=content.get("sistFagligOppdatert") or content.get("sist_faglig_oppdatert"),
+                        path=content.get("path"),
+                        has_text_content=has_text_content,
+                        document_url=document_url,
+                        attachments_json=attachments_json,
                     )
 
                     # If anbefaling, also save anbefaling-specific details

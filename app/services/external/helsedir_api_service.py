@@ -397,6 +397,10 @@ class HelseDirectorateAPIService:
                     raise HelseDirectorateAPIError(
                         "Unauthorized: Invalid API key"
                     )
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError(
+                        "Forbidden: API key does not have access to this resource"
+                    )
                 elif response.status_code == 404:
                     raise HelseDirectorateAPIError(
                         f"File not found: {file_id}"
