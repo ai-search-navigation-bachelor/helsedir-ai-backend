@@ -131,6 +131,8 @@ class TestGetContentById:
                 "file_type": "UNDEF",
                 "url_type": "internal",
                 "target": "",
+                "path": "/rapporter/utviklingen-i-norsk-kosthold-2024",
+                "content_id": None,
             },
             {
                 "title": "Utviklingen i norsk kosthold 2024 – Fullversjon",
@@ -139,6 +141,8 @@ class TestGetContentById:
                 "file_type": "PDF",
                 "url_type": "internal",
                 "target": "",
+                "path": "/rapporter/utviklingen-i-norsk-kosthold/fullversjon.pdf",
+                "content_id": None,
             },
         ]
 
@@ -193,7 +197,88 @@ class TestGetContentById:
                 "file_type": "PDF",
                 "url_type": "internal",
                 "target": "",
+                "path": "/rapporter/folkehelsepolitisk-rapport/Folkehelsepolitisk%20rapport%202017.pdf",
+                "content_id": None,
             }
+        ]
+
+    def test_textless_report_maps_internal_related_pages_to_internal_paths(self, client, mock_content, mocker):
+        mocker.patch(
+            "app.routes.content._build_links_with_children",
+            new=AsyncMock(return_value=[]),
+        )
+        mocker.patch(
+            "app.routes.content.content_repository.get_theme_page_content",
+            return_value=[],
+        )
+        mocker.patch(
+            "app.routes.content.resolve_public_related_links",
+            return_value=[
+                {
+                    "title": "Årsrapport for NKI 2024",
+                    "url": "https://www.helsedirektoratet.no/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2024",
+                    "is_document": False,
+                    "file_type": None,
+                    "url_type": "external",
+                    "target": "",
+                },
+                {
+                    "title": "Årsrapport for NKI 2020",
+                    "url": "https://www.helsedirektoratet.no/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2020.pdf",
+                    "is_document": True,
+                    "file_type": "PDF",
+                    "url_type": "internal",
+                    "target": "",
+                },
+            ],
+        )
+        report = ContentItem(
+            id="nki-root",
+            title="Nasjonalt kvalitetsindikatorsystem (NKI) – Årsrapporter",
+            body="",
+            content_type="rapport",
+            path="/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapporter",
+            has_text_content=False,
+            document_url=None,
+        )
+        child_report = ContentItem(
+            id="nki-2024",
+            title="Årsrapport for NKI 2024",
+            body="<p>Intern rapportside</p>",
+            content_type="rapport",
+            path="/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2024",
+            has_text_content=True,
+            document_url=None,
+        )
+        mock_content.content.extend([report, child_report])
+        mock_content.content_by_id[report.id] = report
+        mock_content.content_by_id[child_report.id] = child_report
+        mock_content.content_by_path[report.path] = report
+        mock_content.content_by_path[child_report.path] = child_report
+
+        data = client.get("/content/nki-root").json()
+
+        assert data["related_links"] == [
+            {
+                "title": "Årsrapport for NKI 2024",
+                "url": "/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2024",
+                "is_document": False,
+                "file_type": None,
+                "url_type": "internal",
+                "target": "",
+                "path": "/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2024",
+                "content_id": "nki-2024",
+            },
+            {
+                "title": "Årsrapport for NKI 2020",
+                "url": "https://www.helsedirektoratet.no/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2020.pdf",
+                "is_document": True,
+                "file_type": "PDF",
+                "url_type": "internal",
+                "target": "",
+                "path": "/rapporter/nasjonalt-kvalitetsindikatorsystem-nki-arsrapport-2020.pdf",
+                "content_id": None,
+            },
         ]
 
 

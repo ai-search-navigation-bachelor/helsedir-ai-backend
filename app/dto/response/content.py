@@ -104,6 +104,8 @@ class RelatedLinkResponse(BaseModel):
     file_type: Optional[str] = None
     url_type: Optional[str] = None
     target: Optional[str] = None
+    path: Optional[str] = None
+    content_id: Optional[str] = None
 
 
 class EhelsestandardAttachmentResponse(BaseModel):

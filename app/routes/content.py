@@ -380,17 +380,34 @@ def _get_report_related_links(content: ContentItem) -> Optional[List[RelatedLink
     if not resolved_links:
         return None
 
-    return [
-        RelatedLinkResponse(
-            title=link["title"],
-            url=link["url"],
-            is_document=bool(link.get("is_document")),
-            file_type=link.get("file_type"),
-            url_type=link.get("url_type"),
-            target=link.get("target"),
+    normalized_links = []
+    for link in resolved_links:
+        raw_url = link["url"]
+        internal_path = _public_path_from_href(raw_url)
+        internal_content = (
+            content_service.get_content_by_path(internal_path)
+            if internal_path and not bool(link.get("is_document"))
+            else None
         )
-        for link in resolved_links
-    ]
+        normalized_links.append(
+            RelatedLinkResponse(
+                title=link["title"],
+                url=internal_content.path if internal_content and internal_content.path else raw_url,
+                is_document=bool(link.get("is_document")),
+                file_type=link.get("file_type"),
+                url_type=(
+                    "internal"
+                    if internal_content and internal_content.path
+                    else link.get("url_type")
+                ),
+                target=link.get("target"),
+                path=internal_content.path if internal_content else internal_path,
+                content_id=internal_content.id if internal_content else None,
+            )
+        )
+
+    return normalized_links
+
 
 
 def _resolve_ehelsestandard_attachment_url(file_uri: Optional[str]) -> Optional[str]:
