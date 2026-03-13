@@ -31,26 +31,6 @@ def _make_result(result_id: str, score: float, info_type: str = "retningslinje")
 class TestSearchControllerHelpers:
     """Tests for pure static/class methods — no fixtures or mocking needed."""
 
-    # ── _compute_type_match ──────────────────────────────────────────────────
-
-    def test_type_match_retningslinje(self):
-        assert SearchController._compute_type_match("retningslinje") == 0.9
-
-    def test_type_match_veileder(self):
-        assert SearchController._compute_type_match("veileder") == 0.8
-
-    def test_type_match_fagprosedyre(self):
-        assert SearchController._compute_type_match("fagprosedyre") == 0.75
-
-    def test_type_match_unknown_defaults_to_half(self):
-        assert SearchController._compute_type_match("ukjent_type") == 0.5
-
-    def test_type_match_none_defaults_to_half(self):
-        assert SearchController._compute_type_match(None) == 0.5
-
-    def test_type_match_case_insensitive(self):
-        assert SearchController._compute_type_match("RETNINGSLINJE") == 0.9
-
     # ── _compute_role_match ──────────────────────────────────────────────────
 
     def test_role_match_exact_single_group(self):

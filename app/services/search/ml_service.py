@@ -6,6 +6,8 @@ This service manages loading and using ML models for:
 - Learning-to-rank for result scoring
 """
 
+import logging
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -15,6 +17,11 @@ from app.config import settings
 from app.services.data.content_service import content_service
 from app.ml.embedding_model import HealthContentEmbedding
 from app.ml.ranking_model import HealthContentRanker
+
+logger = logging.getLogger(__name__)
+
+# Refresh CTR cache every 10 minutes
+_CTR_CACHE_TTL_SECONDS = 600
 
 
 class MLService:
@@ -33,6 +40,8 @@ class MLService:
         self.content_ids: List[str] = []
         self._embedding_loaded = False
         self._ranking_loaded = False
+        self._ctr_map: Dict[str, float] = {}
+        self._ctr_last_refresh: float = 0.0
 
     def load_embedding_model(self) -> bool:
         """
@@ -61,26 +70,29 @@ class MLService:
             print(f"Error loading embedding model: {e}")
             return False
 
-    def load_ranking_model(self) -> bool:
+    def load_ranking_model(self, force: bool = False) -> bool:
         """
         Load the ranking model from disk.
+
+        Args:
+            force: Load even if ml_ranking_enabled is False (for per-request override)
 
         Returns:
             True if model was loaded successfully
         """
-        if not settings.ml_ranking_enabled:
+        if not force and not settings.ml_ranking_enabled:
             return False
 
-        model_path = Path(settings.ml_models_dir) / "ranking" / "model"
-        keras_path = Path(f"{model_path}.keras")
+        model_path = Path(settings.ml_models_dir) / "ranking" / "reranker.json"
 
-        if not keras_path.exists():
-            print(f"Ranking model not found at {keras_path}")
+        if not model_path.exists():
+            print(f"Ranking model not found at {model_path}")
             return False
 
         try:
             self.ranking_model = HealthContentRanker.load(str(model_path))
             self._ranking_loaded = True
+            self._refresh_ctr_cache()
             print("Ranking model loaded successfully")
             return True
         except Exception as e:
@@ -164,6 +176,47 @@ class MLService:
         except Exception as e:
             print(f"Error computing ranking scores: {e}")
             return [0.0] * len(features)
+
+    def get_ranking_scores_with_contributions(
+        self, features: List[Dict[str, float]]
+    ) -> List[tuple]:
+        """
+        Get ranking scores with per-feature contribution explanations.
+
+        Returns:
+            List of (score, contributions_dict) tuples
+        """
+        if self.ranking_model is None:
+            return [(0.0, {}) for _ in features]
+
+        try:
+            return self.ranking_model.predict_with_contributions(features)
+        except Exception as e:
+            print(f"Error computing ranking contributions: {e}")
+            return [(0.0, {}) for _ in features]
+
+    def get_ctr_map(self) -> Dict[str, float]:
+        """
+        Get cached smoothed CTR map (content_id -> CTR).
+
+        Auto-refreshes from DB every 10 minutes.
+        """
+        now = time.monotonic()
+        if (now - self._ctr_last_refresh) > _CTR_CACHE_TTL_SECONDS:
+            self._refresh_ctr_cache()
+        return self._ctr_map
+
+    def _refresh_ctr_cache(self) -> None:
+        """Refresh the CTR cache from database."""
+        try:
+            from app.services.data.database_service import database_service
+            result = database_service.get_content_ctr_map(days_back=30)
+            self._ctr_map = result if result is not None else {}
+            self._ctr_last_refresh = time.monotonic()
+            logger.info("Refreshed CTR cache: %d content items", len(self._ctr_map))
+        except Exception:
+            self._ctr_last_refresh = time.monotonic()
+            logger.exception("Error refreshing CTR cache")
 
     def is_embedding_available(self) -> bool:
         """Check if embedding model is loaded and available."""

@@ -14,28 +14,11 @@ logger = logging.getLogger(__name__)
 class SearchRepository:
     """Repository for search and click logging."""
 
-    def __init__(self) -> None:
-        self._warned_missing_search_log_columns = False
-        self._warned_legacy_results_schema = False
-        self._warned_missing_content_stats = False
-
-    @staticmethod
-    def _is_unknown_column_error(error: mysql.connector.Error, column_name: str) -> bool:
-        """Return True when MySQL reports a missing column for the given name."""
-        return getattr(error, "errno", None) == 1054 and column_name in str(error)
-
-    @staticmethod
-    def _is_missing_table_error(error: mysql.connector.Error, table_name: str) -> bool:
-        """Return True when MySQL reports a missing table for the given name."""
-        return getattr(error, "errno", None) == 1146 and table_name in str(error)
-
     def log_search(
         self,
         search_id: str,
         query: str,
         role: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> bool:
         """
         Log a new search event to search_logs.
@@ -44,8 +27,6 @@ class SearchRepository:
             search_id: Unique ID for this search (UUID)
             query: The search query
             role: Optional user role
-            session_id: Optional session ID
-            user_id: Optional user ID
 
         Returns:
             True if logged successfully
@@ -57,37 +38,14 @@ class SearchRepository:
         cursor = None
         try:
             cursor = conn.cursor()
-            try:
-                cursor.execute(
-                    """
-                    INSERT INTO search_logs (search_id, query, role, session_id, user_id)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE query = VALUES(query)
-                    """,
-                    (search_id, query, role, session_id, user_id),
-                )
-            except mysql.connector.Error as e:
-                if not (
-                    self._is_unknown_column_error(e, "session_id")
-                    or self._is_unknown_column_error(e, "user_id")
-                ):
-                    raise
-
-                if not self._warned_missing_search_log_columns:
-                    logger.warning(
-                        "search_logs schema is missing session/user columns; "
-                        "falling back to legacy insert until migration is applied: %s",
-                        e,
-                    )
-                    self._warned_missing_search_log_columns = True
-                cursor.execute(
-                    """
-                    INSERT INTO search_logs (search_id, query, role)
-                    VALUES (%s, %s, %s)
-                    ON DUPLICATE KEY UPDATE query = VALUES(query)
-                    """,
-                    (search_id, query, role),
-                )
+            cursor.execute(
+                """
+                INSERT INTO search_logs (search_id, query, role)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE query = VALUES(query)
+                """,
+                (search_id, query, role),
+            )
             conn.commit()
             return True
         except mysql.connector.Error as e:
@@ -156,88 +114,26 @@ class SearchRepository:
                 if not content_id:
                     continue
 
-                try:
-                    cursor.execute(
-                        """
-                        INSERT INTO search_results_shown (
-                            search_id, content_id, position, score,
-                            semantic_score, bm25_score, rrf_score,
-                            type_match, role_match, maalgruppe_match
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            search_id,
-                            content_id,
-                            result.get("position"),
-                            result.get("score"),
-                            result.get("semantic_score"),
-                            result.get("bm25_score"),
-                            result.get("rrf_score"),
-                            result.get("type_match"),
-                            result.get("role_match"),
-                            result.get("maalgruppe_match", 0),
-                        ),
+                cursor.execute(
+                    """
+                    INSERT INTO search_results_shown (
+                        search_id, content_id, position, score,
+                        semantic_score, bm25_score, rrf_score,
+                        role_match
                     )
-                except mysql.connector.Error as e:
-                    if not (
-                        self._is_unknown_column_error(e, "type_match")
-                        or self._is_unknown_column_error(e, "role_match")
-                        or self._is_unknown_column_error(e, "maalgruppe_match")
-                        or self._is_unknown_column_error(e, "bm25_score")
-                        or self._is_unknown_column_error(e, "rrf_score")
-                    ):
-                        raise
-
-                    if not self._warned_legacy_results_schema:
-                        logger.warning(
-                            "search_results_shown schema is outdated; "
-                            "falling back to legacy insert until migration is applied: %s",
-                            e,
-                        )
-                        self._warned_legacy_results_schema = True
-                    cursor.execute(
-                        """
-                        INSERT INTO search_results_shown (
-                            search_id, content_id, position, score, semantic_score
-                        )
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            search_id,
-                            content_id,
-                            result.get("position"),
-                            result.get("score"),
-                            result.get("semantic_score"),
-                        ),
-                    )
-
-            # Also update content_stats impressions (inline to avoid nested connection)
-            seen_ids = set()
-            for r in results:
-                content_id = r.get("content_id")
-                if not content_id or content_id in seen_ids:
-                    continue
-                seen_ids.add(content_id)
-                try:
-                    cursor.execute(
-                        """
-                        INSERT INTO content_stats (content_id, impressions, clicks)
-                        VALUES (%s, 1, 0)
-                        ON DUPLICATE KEY UPDATE impressions = impressions + 1
-                        """,
-                        (content_id,),
-                    )
-                except mysql.connector.Error as e:
-                    if self._is_missing_table_error(e, "content_stats"):
-                        if not self._warned_missing_content_stats:
-                            logger.warning(
-                                "content_stats table is missing; skipping impression updates until migration is applied: %s",
-                                e,
-                            )
-                            self._warned_missing_content_stats = True
-                        break
-                    logger.warning("Failed to update content_stats for %s: %s", content_id, e)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        search_id,
+                        content_id,
+                        result.get("position"),
+                        result.get("score"),
+                        result.get("semantic_score"),
+                        result.get("bm25_score"),
+                        result.get("rrf_score"),
+                        result.get("role_match"),
+                    ),
+                )
 
             conn.commit()
             return True
@@ -290,28 +186,9 @@ class SearchRepository:
                 (search_id, content_id, position),
             )
 
-            # Also update content_stats clicks (inline to avoid nested connection)
-            cursor.execute(
-                """
-                INSERT INTO content_stats (content_id, impressions, clicks)
-                VALUES (%s, 0, 1)
-                ON DUPLICATE KEY UPDATE clicks = clicks + 1
-                """,
-                (content_id,),
-            )
-
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            if self._is_missing_table_error(e, "content_stats"):
-                conn.commit()
-                if not self._warned_missing_content_stats:
-                    logger.warning(
-                        "content_stats table is missing; skipping click updates until migration is applied: %s",
-                        e,
-                    )
-                    self._warned_missing_content_stats = True
-                return True
             print(f"Error logging click: {e}")
             return False
         finally:

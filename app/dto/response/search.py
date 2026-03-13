@@ -13,6 +13,22 @@ class GroupedContent(BaseModel):
     items: List['SearchResult']
 
 
+class RerankInfo(BaseModel):
+    """ML reranking details for a search result."""
+    score: float
+    rank_change: int  # Positive = moved up, negative = moved down
+    contributions: Dict[str, float]  # Per-feature SHAP contributions
+
+
+class PipelineScores(BaseModel):
+    """Retrieval pipeline scores for developer tooling."""
+    bm25: float
+    semantic: float
+    rrf: float
+    role_boost: float  # Multiplier (1.15=match, 0.85=mismatch, 1.0=neutral)
+    rerank: Optional[RerankInfo] = None
+
+
 class SearchResult(BaseModel):
     """Single search result."""
     id: str
@@ -23,14 +39,8 @@ class SearchResult(BaseModel):
     document_url: Optional[str]
     is_pdf_only: bool
     score: float  # Normalized 0-1
-    explanation: str
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
-
-    # Pipeline scores — included in API response for developer tooling
-    bm25_score: Optional[float] = Field(default=None)
-    semantic_score: Optional[float] = Field(default=None)
-    rrf_score: Optional[float] = Field(default=None)
-    role_boost: Optional[float] = Field(default=None)  # Role boost/penalty multiplier (1.15=match, 0.85=mismatch, 1.0=neutral/no role)
+    pipeline: Optional[PipelineScores] = None
 
 
 class SearchResponse(BaseModel):

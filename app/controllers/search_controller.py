@@ -74,6 +74,8 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -115,6 +117,8 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
+            explain=explain,
         )
 
         # Coerce None to empty list
@@ -162,6 +166,7 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
         )
 
         # Extract ML features and log results (skip for prefetch requests)
@@ -562,6 +567,8 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -578,6 +585,8 @@ class SearchController:
             bm25_weight = semantic_weight = rrf_k = None
             temaside_boost = retningslinje_boost = None
             role_boost = role_penalty = None
+            rerank = None
+            explain = False
 
         cache_key = (
             query.strip().lower(),
@@ -591,6 +600,8 @@ class SearchController:
             retningslinje_boost,
             role_boost,
             role_penalty,
+            rerank,
+            explain,
         )
         now = time.monotonic()
 
@@ -622,6 +633,8 @@ class SearchController:
                 retningslinje_boost=retningslinje_boost,
                 role_boost=role_boost,
                 role_penalty=role_penalty,
+                rerank=rerank,
+                explain=explain,
             )
 
         # Coerce None to empty list
@@ -661,6 +674,7 @@ class SearchController:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> str:
         """Generate new search_id or validate existing one."""
         expected_signature = self._build_search_signature(
@@ -672,10 +686,12 @@ class SearchController:
             retningslinje_boost=retningslinje_boost,
             role_boost=role_boost,
             role_penalty=role_penalty,
+            rerank=rerank,
         )
 
         if not search_id:
-            # New search
+            # New search — log synchronously so subsequent get_search_by_id
+            # (e.g. from pagination) can find it immediately.
             search_id = self._build_signed_search_id(expected_signature)
             database_service.log_search(search_id=search_id, query=query, role=role)
         else:
@@ -718,6 +734,7 @@ class SearchController:
         retningslinje_boost: Optional[float],
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> str:
         """Build a stable signature for the ranking configuration."""
         # Normalise hybrid-only params so signatures are identical for non-hybrid methods
@@ -725,6 +742,7 @@ class SearchController:
             bm25_weight = semantic_weight = rrf_k = None
             temaside_boost = retningslinje_boost = None
             role_boost = role_penalty = None
+            rerank = None
 
         effective_tunables = {
             "method": method.strip().lower(),
@@ -777,6 +795,7 @@ class SearchController:
                 ),
                 6,
             ),
+            "rerank": bool(rerank) if rerank is not None else settings.ml_ranking_enabled,
         }
         canonical = json.dumps(effective_tunables, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -890,21 +909,6 @@ class SearchController:
         return SuggestionResponse(suggestions=suggestions)
 
     @staticmethod
-    def _compute_type_match(info_type: Optional[str]) -> float:
-        """Content type authority score."""
-        content_type_map = {
-            "retningslinje": 0.9,
-            "veileder": 0.8,
-            "fagprosedyre": 0.75,
-            "faktaark": 0.6,
-            "artikkel": 0.5,
-        }
-        return content_type_map.get(
-            info_type.lower() if info_type else None,
-            0.5,
-        )
-
-    @staticmethod
     def _compute_role_match(role: Optional[str], role_tags: Optional[List[str]]) -> float:
         """Role match score."""
         role_tags = role_tags or []
@@ -943,25 +947,19 @@ class SearchController:
             position = max_position + local_index + 1
             content_item = content_service.get_content_by_id(result.id)
 
-            # Metadata features from content item (lightweight)
-            type_match = 0.5
             role_match = 0.0
-            maalgruppe_match = 0
             if content_item:
-                type_match = self._compute_type_match(content_item.info_type)
                 role_match = self._compute_role_match(role, content_item.role_tags)
-                maalgruppe_match = 1 if role and role in (content_item.role_tags or []) else 0
 
+            p = result.pipeline
             results_to_log.append({
                 "content_id": result.id,
                 "position": position,
                 "score": result.score,
-                "semantic_score": result.semantic_score or 0.0,
-                "bm25_score": result.bm25_score or 0.0,
-                "rrf_score": result.rrf_score or 0.0,
-                "type_match": type_match,
+                "semantic_score": p.semantic if p else 0.0,
+                "bm25_score": p.bm25 if p else 0.0,
+                "rrf_score": p.rrf if p else 0.0,
                 "role_match": role_match,
-                "maalgruppe_match": maalgruppe_match,
             })
 
         database_service.log_search_results(search_id, results_to_log)

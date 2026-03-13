@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
 print("=" * 50)
@@ -82,25 +82,17 @@ try:
     candidates = [
         RerankCandidate(
             content_id="diabetes-001",
-            position=1,
             semantic_score=0.85,
             bm25_score=0.72,
-            rrf_score=0.80,
-            type_match=1.0,
+            smoothed_ctr=0.10,
             role_match=1.0,
-            maalgruppe_match=1.0,
-            smoothed_ctr=0.05,
         ),
         RerankCandidate(
             content_id="astma-001",
-            position=2,
             semantic_score=0.45,
             bm25_score=0.30,
-            rrf_score=0.40,
-            type_match=1.0,
+            smoothed_ctr=0.05,
             role_match=1.0,
-            maalgruppe_match=0.0,
-            smoothed_ctr=0.03,
         ),
     ]
     
@@ -145,11 +137,7 @@ try:
         # Check LTR data availability
         ltr_rows = database_service.get_ltr_training_rows(days_back=30)
         print(f"  LTR training rows (30 days): {len(ltr_rows)}")
-        
-        # Check content stats
-        stats = database_service.get_content_stats_bulk()
-        print(f"  Content stats available: {len(stats)}")
-        
+
         # Check propensities
         propensities = database_service.get_position_propensities()
         print(f"  Position propensities: {len(propensities)}")
