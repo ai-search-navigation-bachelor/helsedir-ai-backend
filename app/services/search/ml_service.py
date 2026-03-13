@@ -202,7 +202,7 @@ class MLService:
         Auto-refreshes from DB every 10 minutes.
         """
         now = time.monotonic()
-        if not self._ctr_map or (now - self._ctr_last_refresh) > _CTR_CACHE_TTL_SECONDS:
+        if (now - self._ctr_last_refresh) > _CTR_CACHE_TTL_SECONDS:
             self._refresh_ctr_cache()
         return self._ctr_map
 
@@ -210,10 +210,12 @@ class MLService:
         """Refresh the CTR cache from database."""
         try:
             from app.services.data.database_service import database_service
-            self._ctr_map = database_service.get_content_ctr_map(days_back=30)
+            result = database_service.get_content_ctr_map(days_back=30)
+            self._ctr_map = result if result is not None else {}
             self._ctr_last_refresh = time.monotonic()
             logger.info("Refreshed CTR cache: %d content items", len(self._ctr_map))
         except Exception:
+            self._ctr_last_refresh = time.monotonic()
             logger.exception("Error refreshing CTR cache")
 
     def is_embedding_available(self) -> bool:

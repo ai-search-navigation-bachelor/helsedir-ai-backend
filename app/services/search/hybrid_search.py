@@ -444,10 +444,16 @@ class HybridSearch:
                 dt = item.sist_faglig_oppdatert
                 if not isinstance(dt, datetime):
                     dt = datetime.fromisoformat(str(dt))
+                # Strip timezone info for safe subtraction with naive datetime.now()
+                if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    dt = dt.replace(tzinfo=None)
                 days = max(0, (datetime.now() - dt).days)
                 content_freshness = 1.0 / (1.0 + days / 365.0)
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                logger.debug(
+                    "Could not parse freshness for %s: %r",
+                    item.id, item.sist_faglig_oppdatert,
+                )
 
         return {
             "semantic_score": candidate.semantic_norm,
