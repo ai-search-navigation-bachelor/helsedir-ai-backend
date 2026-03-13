@@ -3,6 +3,7 @@ import json
 
 from scripts.data.importing.backfill_ehelsestandard_content import (
     _compute_update,
+    _fetch_rows,
     _normalize_attachments,
 )
 
@@ -81,3 +82,20 @@ def test_compute_update_uses_formal_bruksomrade_when_existing_text_is_empty():
         ),
         "file-1",
     )
+
+
+@pytest.mark.unit
+def test_fetch_rows_includes_hyphenated_and_canonical_info_types(mocker):
+    cursor = mocker.MagicMock()
+    cursor.fetchall.return_value = []
+    conn = mocker.MagicMock()
+    conn.cursor.return_value = cursor
+    mocker.patch(
+        "scripts.data.importing.backfill_ehelsestandard_content.db_pool.get_connection",
+        return_value=conn,
+    )
+
+    _fetch_rows()
+
+    executed_query = cursor.execute.call_args.args[0]
+    assert "info_type IN ('ehelsestandard', 'e-helsestandard')" in executed_query

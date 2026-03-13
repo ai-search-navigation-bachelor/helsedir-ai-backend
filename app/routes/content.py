@@ -565,7 +565,7 @@ async def _get_ehelsestandard_response_overrides(
     return {
         "body": final_body,
         "has_text_content": final_has_text_content,
-        "document_url": attachments[0].url if attachments else None,
+        "document_url": attachments[0].url if attachments else content.document_url,
         "is_pdf_only": (not final_has_text_content) and bool(attachments),
         "first_published": payload.get("forstPublisert") or content.forst_publisert,
         "last_reviewed_date": payload.get("sistFagligOppdatert") or content.sist_faglig_oppdatert,

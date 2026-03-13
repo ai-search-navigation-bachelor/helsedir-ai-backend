@@ -539,6 +539,44 @@ class TestEhelsestandardEnrichment:
         assert data["document_url"] is None
         assert data["ehelsestandard_fields"] is None
 
+    def test_runtime_enrichment_keeps_existing_document_url_when_payload_has_no_attachments(
+        self, client, mock_content, mocker
+    ):
+        item = self._add_ehelsestandard(mock_content, body="<p>Intern tekst</p>", has_text_content=True)
+        item.document_url = "https://www.helsedirektoratet.no/guillotine/helsedirektoratet/master/_/attachment/inline/existing.pdf"
+        mocker.patch(
+            "app.routes.content._build_links_with_children",
+            new=AsyncMock(return_value=[]),
+        )
+        mocker.patch(
+            "app.routes.content.content_repository.get_theme_page_content",
+            return_value=[],
+        )
+        mocker.patch(
+            "app.routes.content.helsedir_api_service.get_file_by_id_async",
+            new=AsyncMock(
+                return_value={
+                    "url": "https://www.helsedirektoratet.no/standarder/svarrapportering-av-medisinske-tjenester-v1.4",
+                    "forstPublisert": "2014-06-15T00:00:00",
+                    "sistFagligOppdatert": "2025-12-15T00:00:00",
+                    "data": {
+                        "idStandard": "HIS 80822:2014",
+                        "typeStandard": "obligatoriskStandard",
+                        "formalBruksomrade": "<p>Dokumentet beskriver ...</p>",
+                        "standardenGjelderFor": "",
+                    },
+                    "attachments": [],
+                }
+            ),
+        )
+
+        data = client.get(f"/content/{item.id}").json()
+
+        assert (
+            data["document_url"]
+            == "https://www.helsedirektoratet.no/guillotine/helsedirektoratet/master/_/attachment/inline/existing.pdf"
+        )
+
 @pytest.mark.integration
 @pytest.mark.usefixtures("mock_content")
 class TestNormalizedContentRelations:

@@ -51,7 +51,7 @@ def _fetch_rows(limit: int = 0, force: bool = False) -> List[Dict]:
                    ehelsestandard_fields_json,
                    forst_publisert, sist_faglig_oppdatert
             FROM content
-            WHERE info_type = 'ehelsestandard'
+            WHERE info_type IN ('ehelsestandard', 'e-helsestandard')
         """
         if not force:
             query += """
