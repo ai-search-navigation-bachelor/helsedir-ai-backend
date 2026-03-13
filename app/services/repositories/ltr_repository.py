@@ -114,12 +114,16 @@ class LtrRepository:
                     srs.bm25_score,
                     srs.rrf_score,
                     srs.role_match,
+                    sl.query,
+                    c.tittel AS title,
+                    c.sist_faglig_oppdatert,
                     CASE WHEN EXISTS(
                         SELECT 1 FROM click_logs cl
                         WHERE cl.search_id = srs.search_id AND cl.content_id = srs.content_id
                     ) THEN 1 ELSE 0 END as clicked
                 FROM search_results_shown srs
                 INNER JOIN search_logs sl ON srs.search_id = sl.search_id
+                LEFT JOIN content c ON srs.content_id = c.id
                 WHERE sl.timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
                 ORDER BY srs.search_id, srs.position
                 """,

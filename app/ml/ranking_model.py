@@ -22,7 +22,9 @@ Training usage:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -51,6 +53,13 @@ RERANK_FEATURES: List[str] = [
 
     # Metadata / intent alignment
     "role_match",                   # role match score (0-1)
+
+    # Query features
+    "query_length",                 # number of terms in query
+    "title_query_overlap",          # Jaccard overlap between query and title terms
+
+    # Freshness
+    "content_freshness",            # 1.0 / (1.0 + days_since_update / 365.0)
 ]
 
 
@@ -62,6 +71,24 @@ def _f(x, default: float = 0.0) -> float:
         return float(x)
     except Exception:
         return default
+
+
+def _compute_freshness(sist_faglig_oppdatert) -> float:
+    """Compute freshness score from sist_faglig_oppdatert date.
+
+    Returns 1.0 / (1.0 + days_since_update / 365.0), or 0.5 if date is missing.
+    """
+    if sist_faglig_oppdatert is None:
+        return 0.5
+    try:
+        if isinstance(sist_faglig_oppdatert, datetime):
+            dt = sist_faglig_oppdatert
+        else:
+            dt = datetime.fromisoformat(str(sist_faglig_oppdatert))
+        days = max(0, (datetime.now() - dt).days)
+        return 1.0 / (1.0 + days / 365.0)
+    except Exception:
+        return 0.5
 
 
 def propensity_for_position(pos: int, db_propensities: Optional[Dict[int, float]] = None) -> float:
@@ -129,6 +156,13 @@ class RerankCandidate:
     # Metadata alignment
     role_match: float = 0.0
 
+    # Query features
+    query_length: float = 0.0
+    title_query_overlap: float = 0.0
+
+    # Freshness
+    content_freshness: float = 0.0
+
 
 # ---------------------------------------------------------------------
 # Reranker class
@@ -167,10 +201,8 @@ class HealthContentReranker:
         """
         Train a LambdaMART reranker from DB logs.
 
-        Uses 4 features (retrieval scores + role match). Position is
-        used only for IPS sample weights (not as a feature). Smoothed CTR
-        is applied as a post-model boost at inference, not during training,
-        to avoid label leakage.
+        Uses 7 features (retrieval scores + role match + query features + freshness).
+        Position is used only for IPS sample weights (not as a feature).
 
         Expected database_service methods:
           - get_ltr_training_rows(days_back) -> list[dict]
@@ -221,10 +253,14 @@ class HealthContentReranker:
             # Sort by position (stable)
             items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
 
+            # Get query for this group (same for all items in group)
+            query_text = str(items_sorted[0].get("query", "")).lower()
+            query_terms = set(re.findall(r'\w+', query_text))
+            query_len = float(len(query_terms))
+
             # First pass: build feature dicts
             feat_dicts: List[Dict[str, float]] = []
             labels: List[int] = []
-            weights: List[float] = []
 
             any_pos = False
             any_click = False
@@ -239,13 +275,27 @@ class HealthContentReranker:
                 if clicked == 1:
                     any_click = True
 
-                # 4 features: retrieval scores + popularity + role match
                 content_id = rr.get("content_id", "")
+
+                # Title-query Jaccard overlap
+                title_text = str(rr.get("title", "")).lower()
+                title_terms = set(re.findall(r'\w+', title_text))
+                if query_terms or title_terms:
+                    overlap = len(query_terms & title_terms) / max(len(query_terms | title_terms), 1)
+                else:
+                    overlap = 0.0
+
+                # Content freshness
+                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
+
                 feat_dict = {
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
                     "smoothed_ctr": ctr_map.get(content_id, default_ctr),
                     "role_match": _f(rr.get("role_match"), 0.0),
+                    "query_length": query_len,
+                    "title_query_overlap": overlap,
+                    "content_freshness": freshness,
                 }
 
                 feat_dicts.append(feat_dict)
@@ -305,7 +355,7 @@ class HealthContentReranker:
         candidates: Sequence[RerankCandidate],
     ) -> List[Tuple[RerankCandidate, float]]:
         """
-        Rerank a list of candidates using 4 model features.
+        Rerank a list of candidates using 7 model features.
 
         Args:
             query: Search query
@@ -328,7 +378,7 @@ class HealthContentReranker:
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
-        # Build feature matrix (4 features)
+        # Build feature matrix (7 features)
         X = []
         for c in candidates:
             feat_dict = {
@@ -336,6 +386,9 @@ class HealthContentReranker:
                 "bm25_score": _f(c.bm25_score),
                 "smoothed_ctr": _f(c.smoothed_ctr),
                 "role_match": _f(c.role_match),
+                "query_length": _f(c.query_length),
+                "title_query_overlap": _f(c.title_query_overlap),
+                "content_freshness": _f(c.content_freshness),
             }
             X.append([feat_dict[n] for n in self.feature_names])
 
@@ -345,6 +398,110 @@ class HealthContentReranker:
         out = list(zip(list(candidates), scores))
         out.sort(key=lambda x: x[1], reverse=True)
         return out
+
+    # -------------------------
+    # Evaluation
+    # -------------------------
+
+    def evaluate(
+        self,
+        groups: Dict[str, List[dict]],
+        ctr_map: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, float]:
+        """
+        Evaluate ranking quality on held-out data.
+
+        Args:
+            groups: Dict of search_id -> list of result dicts (with features + clicked).
+            ctr_map: Optional CTR map for smoothed_ctr feature.
+
+        Returns:
+            Dict with NDCG@5, NDCG@10, MRR, Precision@1 metrics.
+        """
+        from sklearn.metrics import ndcg_score
+
+        default_ctr = 1.0 / 21.0
+        if ctr_map is None:
+            ctr_map = {}
+
+        ndcg5_scores = []
+        ndcg10_scores = []
+        mrr_scores = []
+        p1_scores = []
+
+        for sid, items in groups.items():
+            if len(items) < 2:
+                continue
+
+            items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
+
+            query_text = str(items_sorted[0].get("query", "")).lower()
+            query_terms = set(re.findall(r'\w+', query_text))
+            query_len = float(len(query_terms))
+
+            features_list = []
+            relevance = []
+
+            for rr in items_sorted:
+                content_id = rr.get("content_id", "")
+                title_text = str(rr.get("title", "")).lower()
+                title_terms = set(re.findall(r'\w+', title_text))
+                if query_terms or title_terms:
+                    overlap = len(query_terms & title_terms) / max(len(query_terms | title_terms), 1)
+                else:
+                    overlap = 0.0
+
+                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
+
+                feat_dict = {
+                    "semantic_score": _f(rr.get("semantic_score"), 0.0),
+                    "bm25_score": _f(rr.get("bm25_score"), 0.0),
+                    "smoothed_ctr": ctr_map.get(content_id, default_ctr),
+                    "role_match": _f(rr.get("role_match"), 0.0),
+                    "query_length": query_len,
+                    "title_query_overlap": overlap,
+                    "content_freshness": freshness,
+                }
+                features_list.append(feat_dict)
+                relevance.append(float(rr.get("clicked", 0)))
+
+            if sum(relevance) == 0:
+                continue
+
+            scores = self.predict(features_list)
+
+            # Sort by predicted score descending
+            ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+            ranked_rel = [relevance[i] for i in ranked]
+
+            # NDCG@5, NDCG@10
+            true_rel = [relevance]
+            pred_scores = [scores]
+            try:
+                ndcg5_scores.append(ndcg_score(true_rel, pred_scores, k=5))
+            except Exception:
+                pass
+            try:
+                ndcg10_scores.append(ndcg_score(true_rel, pred_scores, k=10))
+            except Exception:
+                pass
+
+            # MRR: reciprocal rank of first clicked result
+            for rank, rel in enumerate(ranked_rel, start=1):
+                if rel > 0:
+                    mrr_scores.append(1.0 / rank)
+                    break
+
+            # Precision@1
+            p1_scores.append(1.0 if ranked_rel[0] > 0 else 0.0)
+
+        return {
+            "ndcg@5": float(np.mean(ndcg5_scores)) if ndcg5_scores else 0.0,
+            "ndcg@10": float(np.mean(ndcg10_scores)) if ndcg10_scores else 0.0,
+            "mrr": float(np.mean(mrr_scores)) if mrr_scores else 0.0,
+            "precision@1": float(np.mean(p1_scores)) if p1_scores else 0.0,
+            "num_queries": len(ndcg5_scores),
+        }
 
     # -------------------------
     # Persistence
@@ -447,6 +604,9 @@ def extract_features_for_candidate(
     bm25_score: float = 0.0,
     smoothed_ctr: float = 0.0,
     role_match: float = 0.0,
+    query_length: float = 0.0,
+    title_query_overlap: float = 0.0,
+    content_freshness: float = 0.0,
 ) -> Dict[str, float]:
     """
     Optional helper if your pipeline builds dict features first.
@@ -457,6 +617,9 @@ def extract_features_for_candidate(
         "bm25_score": float(bm25_score),
         "smoothed_ctr": float(smoothed_ctr),
         "role_match": float(role_match),
+        "query_length": float(query_length),
+        "title_query_overlap": float(title_query_overlap),
+        "content_freshness": float(content_freshness),
     }
 
 
