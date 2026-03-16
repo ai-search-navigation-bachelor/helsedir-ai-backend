@@ -17,6 +17,7 @@ from app.dto.response.search import (
     CategorizedSearchResponse,
     CategoryResults,
 )
+from app.dto.response.content import ContentSummaryResponse
 
 
 def _mock_search_response(
@@ -123,6 +124,38 @@ class TestSearchRoute:
             assert result["has_text_content"] is False
             assert result["document_url"] == "https://example.test/doc/1"
             assert result["is_pdf_only"] is True
+
+    def test_result_items_can_include_parent_and_root_publication(self, client, mocker):
+        result = SearchResult(
+            id="001",
+            title="ADHD-anbefaling",
+            info_type="anbefaling",
+            has_text_content=True,
+            document_url=None,
+            is_pdf_only=False,
+            score=0.9,
+            parent=ContentSummaryResponse(
+                id="500",
+                title="Kapittel om ADHD",
+                content_type="kapittel",
+                path="/kapitler/adhd",
+            ),
+            root_publication=ContentSummaryResponse(
+                id="600",
+                title="Nasjonal faglig retningslinje for ADHD",
+                content_type="retningslinje",
+                path="/retningslinjer/adhd",
+            ),
+        )
+        mocker.patch(
+            "app.routes.search.search_controller.search",
+            new=AsyncMock(return_value=_mock_search_response(results=[result])),
+        )
+
+        data = client.get("/search?query=adhd").json()
+
+        assert data["results"][0]["parent"]["id"] == "500"
+        assert data["results"][0]["root_publication"]["id"] == "600"
 
     def test_invalid_method_returns_400(self, client):
         response = client.get("/search?query=diabetes&method=invalid_method")
