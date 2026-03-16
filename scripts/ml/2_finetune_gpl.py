@@ -684,12 +684,26 @@ def main():
     # both the explicit hard negatives AND in-batch negatives from other
     # examples — giving the best of both worlds.
     print(f"\nBuilding training examples with {args.num_hard_negatives} hard negatives per query...")
+
+    # Identify temaside IDs for oversampling
+    id_to_type = {str(item["id"]): (item.get("info_type") or "").lower() for item in content_items}
+
     train_examples = []
+    temaside_examples = []
 
     for t in train_triplets:
-        train_examples.append(
-            InputExample(texts=[t["query"], t["positive"]] + t["hard_negatives"])
-        )
+        example = InputExample(texts=[t["query"], t["positive"]] + t["hard_negatives"])
+        train_examples.append(example)
+        if id_to_type.get(t["positive_id"]) == "temaside":
+            temaside_examples.append(example)
+
+    # Oversample temaside triplets so the model sees them more often.
+    # Temasider are a small fraction of documents but important for search.
+    if temaside_examples:
+        oversample_factor = max(1, round(len(train_examples) / len(temaside_examples) / 5))
+        extra = temaside_examples * (oversample_factor - 1)
+        train_examples.extend(extra)
+        print(f"  Temaside oversampling: {len(temaside_examples)} examples x{oversample_factor} (+{len(extra)} extra)")
 
     random.shuffle(train_examples)
 
