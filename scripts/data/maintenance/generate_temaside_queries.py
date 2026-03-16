@@ -53,9 +53,9 @@ Innhold:
 Regler:
 - Skriv søk slik en lege eller sykepleier ville skrevet dem
 - Bruk norske medisinske termer
-- Inkluder søk som matcher tittelen direkte (f.eks. bare "{title.lower()}")
-- Inkluder også varianter og relaterte termer
-- Varier mellom korte (1-2 ord) og lengre (3-5 ord) søk
+- Minst halvparten av søkene skal være korte (1-2 ord), f.eks. bare "{title.lower()}"
+- Inkluder forkortelser og synonymer hvis relevant
+- Inkluder også noen lengre søk (3-5 ord) med relaterte termer
 - Ikke bruk anførselstegn eller nummerering
 
 Returner kun søkefrasene, én per linje:"""
