@@ -11,7 +11,8 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from app.controllers.search_controller import SearchController
-from app.dto.response.search import SearchResult, SearchResponse
+from app.dto.response.search import SearchResult, SearchResponse, GroupedContent
+from app.entities.content import ContentItem, ContentLink
 
 
 def _make_result(result_id: str, score: float, info_type: str = "retningslinje") -> SearchResult:
@@ -279,6 +280,120 @@ class TestSearchControllerSearchAsync:
         assert len(response.results) <= 2
         assert response.offset == 2
         assert response.has_prev is True
+
+    async def test_search_includes_parent_and_root_publication(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.services.data.content_service import content_service
+
+        recommendation = ContentItem(
+            id="100",
+            title="ADHD-anbefaling",
+            body="",
+            content_type="anbefaling",
+            path="/anbefalinger/adhd",
+            has_text_content=True,
+            links=[
+                ContentLink(rel="forelder", type="kapittel", id="500"),
+                ContentLink(rel="root", type="retningslinje", id="600"),
+            ],
+        )
+        parent = ContentItem(
+            id="500",
+            title="Kapittel om ADHD",
+            body="",
+            content_type="kapittel",
+            path="/kapitler/adhd",
+        )
+        root = ContentItem(
+            id="600",
+            title="Nasjonal faglig retningslinje for ADHD",
+            body="",
+            content_type="retningslinje",
+            path="/retningslinjer/adhd",
+        )
+        content_service.content = [recommendation, parent, root]
+        content_service.content_by_id = {item.id: item for item in content_service.content}
+        content_service.content_by_path = {
+            item.path: item for item in content_service.content if item.path
+        }
+        content_service.searchable_types = {item.content_type for item in content_service.content}
+
+        ctrl = SearchController()
+        mocker.patch.object(
+            ctrl,
+            "_execute_search",
+            return_value=[_make_result("100", 0.9, "anbefaling")],
+        )
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search(query="adhd", method="keyword", log=False)
+
+        assert response.results[0].parent is not None
+        assert response.results[0].parent.id == "500"
+        assert response.results[0].root_publication is not None
+        assert response.results[0].root_publication.id == "600"
+
+    def test_populate_result_relations_updates_theme_page_children(self, mock_content):
+        from app.services.data.content_service import content_service
+
+        child = ContentItem(
+            id="100",
+            title="ADHD-anbefaling",
+            body="",
+            content_type="anbefaling",
+            path="/anbefalinger/adhd",
+            has_text_content=True,
+            links=[ContentLink(rel="root", type="retningslinje", id="600")],
+        )
+        root = ContentItem(
+            id="600",
+            title="Nasjonal faglig retningslinje for ADHD",
+            body="",
+            content_type="retningslinje",
+            path="/retningslinjer/adhd",
+        )
+        content_service.content = [child, root]
+        content_service.content_by_id = {item.id: item for item in content_service.content}
+        content_service.content_by_path = {
+            item.path: item for item in content_service.content if item.path
+        }
+        content_service.searchable_types = {item.content_type for item in content_service.content}
+
+        ctrl = SearchController()
+        theme_result = SearchResult(
+            id="004",
+            title="ADHD temaside",
+            info_type="temaside",
+            has_text_content=False,
+            document_url=None,
+            is_pdf_only=False,
+            score=0.9,
+            children=[
+                GroupedContent(
+                    info_type="anbefaling",
+                    display_name="Anbefalinger",
+                    items=[
+                        SearchResult(
+                            id="100",
+                            title="ADHD-anbefaling",
+                            info_type="anbefaling",
+                            has_text_content=True,
+                            document_url=None,
+                            is_pdf_only=False,
+                            score=1.0,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        ctrl._populate_result_relations([theme_result])
+
+        assert theme_result.children is not None
+        assert theme_result.children[0].items[0].root_publication is not None
+        assert theme_result.children[0].items[0].root_publication.id == "600"
 
     # ── get_suggestions ──────────────────────────────────────────────────────
 

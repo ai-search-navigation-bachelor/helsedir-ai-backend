@@ -25,6 +25,8 @@ from app.dto.response.search import (
     Suggestion,
     SuggestionResponse,
 )
+from app.dto.response.content import ContentSummaryResponse
+from app.entities.content import ContentLink
 from app.services.search.search_service import search_service
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
@@ -35,6 +37,7 @@ from app.constants import (
     is_priority_category,
     get_category_display_name,
     PRIORITY_CATEGORIES,
+    normalize_content_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,6 +155,7 @@ class SearchController:
 
         # Populate theme page children AFTER pagination
         page_results = self._populate_theme_page_children(page_results)
+        page_results = self._populate_result_relations(page_results)
 
         # Handle search_id (new search vs pagination)
         search_id = self._handle_search_id(
@@ -224,6 +228,7 @@ class SearchController:
 
         # Populate theme page children
         all_results = self._populate_theme_page_children(all_results)
+        all_results = self._populate_result_relations(all_results)
 
         # Filter by minimum score
         min_score = settings.search_min_score
@@ -339,6 +344,7 @@ class SearchController:
 
         # Populate theme page children
         all_results = self._populate_theme_page_children(all_results)
+        all_results = self._populate_result_relations(all_results)
 
         # Filter by minimum score and category
         min_score = settings.search_min_score
@@ -506,6 +512,46 @@ class SearchController:
             result.children = children
 
         return results
+
+    @staticmethod
+    def _build_content_summary(link: ContentLink) -> ContentSummaryResponse:
+        """Build a lightweight related-content summary for search responses."""
+        linked_content = content_service.get_content_by_id(link.id) if link.id else None
+        return ContentSummaryResponse(
+            id=linked_content.id if linked_content else link.id,
+            title=linked_content.title if linked_content else (link.tittel or ""),
+            content_type=normalize_content_type(
+                linked_content.content_type if linked_content else link.type
+            ),
+            path=linked_content.path if linked_content else link.path,
+            href=link.href,
+        )
+
+    def _populate_result_relations(self, results: List[SearchResult]) -> List[SearchResult]:
+        """Attach parent/root metadata to search results and nested theme-page items."""
+        for result in results:
+            self._populate_single_result_relations(result)
+            for group in result.children or []:
+                for child in group.items:
+                    self._populate_single_result_relations(child)
+        return results
+
+    def _populate_single_result_relations(self, result: SearchResult) -> None:
+        """Attach parent/root metadata for a single search result when available."""
+        content_item = content_service.get_content_by_id(result.id)
+        if not content_item:
+            return
+
+        for link in content_item.links:
+            if link.rel == "forelder" and result.parent is None:
+                result.parent = self._build_content_summary(link)
+                continue
+
+            if link.rel in {"root", "publikasjon"} and result.root_publication is None:
+                result.root_publication = self._build_content_summary(link)
+
+            if result.parent is not None and result.root_publication is not None:
+                break
 
     def _needs_theme_fuzzy_fallback(
         self,

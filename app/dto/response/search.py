@@ -4,6 +4,7 @@ Search response DTOs.
 
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
+from app.dto.response.content import ContentSummaryResponse
 
 
 class GroupedContent(BaseModel):
@@ -39,6 +40,8 @@ class SearchResult(BaseModel):
     document_url: Optional[str]
     is_pdf_only: bool
     score: float  # Normalized 0-1
+    parent: Optional[ContentSummaryResponse] = None
+    root_publication: Optional[ContentSummaryResponse] = None
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
     pipeline: Optional[PipelineScores] = None
 
