@@ -97,9 +97,14 @@ def _normalize_text(value: Optional[str], *, is_pdf_report_chapter: bool = False
     return text.strip()
 
 
+def normalize_visible_text(value: Optional[str], *, is_pdf_report_chapter: bool = False) -> str:
+    """Return normalized visible text so callers can treat empty HTML consistently."""
+    return _normalize_text(value, is_pdf_report_chapter=is_pdf_report_chapter)
+
+
 def has_visible_text(value: Optional[str], *, is_pdf_report_chapter: bool = False) -> bool:
     """Return True if the given HTML/text string contains visible content."""
-    return bool(_normalize_text(value, is_pdf_report_chapter=is_pdf_report_chapter))
+    return bool(normalize_visible_text(value, is_pdf_report_chapter=is_pdf_report_chapter))
 
 
 def _iter_document_candidates(payload: Mapping[str, Any]) -> Iterable[str]:

@@ -224,9 +224,9 @@ class TestKeywordSearchPipeline:
         result_ids = [r.id for r in results]
         assert "role-002" not in result_ids
 
-    def test_search_results_have_explanation(self, mock_content):
+    def test_search_results_have_score(self, mock_content):
         ks = KeywordSearch()
         results = ks.search("diabetes")
         for r in results:
-            assert isinstance(r.explanation, str)
-            assert len(r.explanation) > 0
+            assert isinstance(r.score, float)
+            assert r.score >= 0

@@ -40,19 +40,17 @@ print("=" * 50)
 try:
     candidate = RerankCandidate(
         content_id="test-123",
-        position=1,
         semantic_score=0.85,
         bm25_score=0.72,
-        rrf_score=0.80,
-        type_match=1.0,
+        smoothed_ctr=0.10,
         role_match=1.0,
-        maalgruppe_match=1.0,
-        smoothed_ctr=0.05,
+        query_length=3.0,
+        title_query_overlap=0.4,
+        content_freshness=0.8,
     )
     print("✓ Successfully created RerankCandidate")
     print(f"  Content ID: {candidate.content_id}")
     print(f"  Semantic score: {candidate.semantic_score}")
-    print(f"  Position: {candidate.position}")
 except Exception as e:
     print(f"✗ Candidate creation failed: {e}")
     sys.exit(1)
@@ -69,13 +67,6 @@ try:
         print("✓ Database connected")
         
         # Test new methods
-        print("\nTesting get_content_stats_bulk():")
-        stats = database_service.get_content_stats_bulk()
-        print(f"  Retrieved stats for {len(stats)} content items")
-        if stats:
-            sample_id = list(stats.keys())[0]
-            print(f"  Sample: {sample_id} = {stats[sample_id]}")
-        
         print("\nTesting get_position_propensities():")
         propensities = database_service.get_position_propensities()
         print(f"  Retrieved propensities for {len(propensities)} positions")

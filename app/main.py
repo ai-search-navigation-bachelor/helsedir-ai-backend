@@ -1,8 +1,16 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+
+# Configure logging from environment
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 # Import routers
 from app.routes import health, search, logging, helsedir, content, temaside, roles
@@ -51,6 +59,17 @@ async def lifespan(app: FastAPI):
             print("  App will start without semantic search")
     else:
         print("\nEmbedding search disabled (ML_EMBEDDING_ENABLED=false)")
+
+    # Pre-load ranking model if enabled
+    if settings.ml_ranking_enabled:
+        print("\nPre-loading ranking model...")
+        from app.services.search.ml_service import ml_service
+        if ml_service.load_ranking_model():
+            print("Ranking model loaded")
+        else:
+            print("Failed to load ranking model (will retry on first search)")
+    else:
+        print("\nRanking model disabled (ML_RANKING_ENABLED=false)")
 
     yield
 

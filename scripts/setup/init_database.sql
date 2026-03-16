@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS content (
     links JSON,
     has_text_content TINYINT(1),
     document_url TEXT,
+    attachments_json JSON,
+    ehelsestandard_fields_json JSON,
     embedding BLOB,
 
     -- Publishing dates from Helsedir API (not used for temaside)
@@ -94,11 +96,8 @@ CREATE TABLE IF NOT EXISTS search_logs (
     search_id VARCHAR(36) UNIQUE NOT NULL,
     query TEXT NOT NULL,
     role VARCHAR(100),
-    session_id VARCHAR(36),
-    user_id VARCHAR(36),
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_timestamp (timestamp),
-    INDEX idx_session (session_id)
+    INDEX idx_timestamp (timestamp)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -118,9 +117,7 @@ CREATE TABLE IF NOT EXISTS search_results_shown (
     rrf_score FLOAT,
 
     -- Metadata signals
-    type_match FLOAT,
     role_match FLOAT,
-    maalgruppe_match TINYINT DEFAULT 0,
 
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 
@@ -142,18 +139,6 @@ CREATE TABLE IF NOT EXISTS click_logs (
     FOREIGN KEY (search_id) REFERENCES search_logs(search_id),
     INDEX idx_search_id (search_id),
     INDEX idx_content_id (content_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ============================================================
--- Content Statistics Table
--- ============================================================
--- Aggregated statistics for content performance
-CREATE TABLE IF NOT EXISTS content_stats (
-    content_id VARCHAR(100) PRIMARY KEY,
-    clicks INT DEFAULT 0,
-    impressions INT DEFAULT 0,
-    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (content_id) REFERENCES content(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

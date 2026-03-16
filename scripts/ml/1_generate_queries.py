@@ -278,10 +278,16 @@ def main():
         item for item in all_content
         if item.get("info_type", "").lower() != "temaside"
     ]
+    n_temasider = len(all_content) - len(content_items)
     print(
         f"Filtered: {len(content_items)} documents "
-        f"(excluding {len(all_content) - len(content_items)} temasider)"
+        f"(excluding {n_temasider} temasider)"
     )
+    if n_temasider > 0:
+        print(
+            f"  Tip: Generate temaside queries separately with:\n"
+            f"    python scripts/data/maintenance/generate_temaside_queries.py"
+        )
 
     if not content_items:
         print("No content found to generate queries for")

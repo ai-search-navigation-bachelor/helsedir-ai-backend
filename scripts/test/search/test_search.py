@@ -32,7 +32,6 @@ def print_results(title: str, results: list, max_results: int = 5):
     for i, result in enumerate(results[:max_results], 1):
         print(f"\n  {i}. {result.title[:60]}...")
         print(f"     Score: {result.score:.4f}")
-        print(f"     {result.explanation}")
 
 
 def main():

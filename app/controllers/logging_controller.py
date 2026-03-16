@@ -64,10 +64,7 @@ class LoggingController:
             query=query,
             content_id=content_id,
             role=role,
-            timestamp=timestamp,
             search_id=search_id,
-            position=position,
-            results_shown=results_dict,
         )
 
         return LogResponse(success=success)

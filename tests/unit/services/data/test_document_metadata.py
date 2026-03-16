@@ -7,6 +7,7 @@ from app.services.data.document_metadata import (
     extract_pdf_url_from_public_html,
     extract_related_links_from_public_html,
     has_visible_text,
+    normalize_visible_text,
     resolve_pdf_report_chapter_document_url,
     resolve_public_related_links,
     resolve_public_document_url,
@@ -15,6 +16,12 @@ from app.services.data.document_metadata import (
 
 @pytest.mark.unit
 class TestDocumentMetadata:
+    def test_normalize_visible_text_returns_empty_for_nbsp_only_html(self):
+        assert normalize_visible_text("<h2>&nbsp;</h2><p>\xa0</p>") == ""
+
+    def test_normalize_visible_text_preserves_visible_text(self):
+        assert normalize_visible_text("<h2>Overskrift</h2><p>Tekst</p>") == "Overskrift Tekst"
+
     def test_has_visible_text_ignores_empty_html(self):
         assert has_visible_text("<p>&nbsp;</p>") is False
 

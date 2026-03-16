@@ -5,7 +5,9 @@ Hybrid search combining keyword and semantic search.
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional, Dict
 
 import numpy as np
@@ -13,7 +15,6 @@ import numpy as np
 from app.dto.response.search import SearchResult
 from app.entities.content import ContentItem
 from app.services.data.content_service import content_service
-from app.services.data.database_service import database_service
 from app.services.search.bm25_search import bm25_search
 from app.services.search.keyword_search import keyword_search, _normalize_query_keywords
 from app.services.search.rrf_fusion import fuse_ranked_lists
@@ -35,6 +36,9 @@ class HybridCandidate:
     semantic_norm: float
     rrf_raw: float = 0.0  # Original RRF score, preserved when ML ranking overwrites combined_score
     role_boost: float = 1.0  # Role boost/penalty multiplier applied (1.0 = neutral)
+    pre_rerank_position: int = 0  # Position before ML reranking (1-indexed, 0 = not set)
+    rerank_score: Optional[float] = None  # Raw ML model score (None = model not applied)
+    rerank_contributions: Optional[Dict[str, float]] = None  # Per-feature SHAP contributions
 
 
 class HybridSearch:
@@ -63,6 +67,8 @@ class HybridSearch:
         retningslinje_boost: Optional[float] = None,
         role_boost: Optional[float] = None,
         role_penalty: Optional[float] = None,
+        rerank: Optional[bool] = None,
+        explain: bool = False,
     ) -> List[SearchResult]:
         """Perform hybrid search combining BM25 and semantic retrieval via RRF."""
         query_lower = query.lower()
@@ -86,11 +92,34 @@ class HybridSearch:
         if not candidates:
             return []
 
-        if settings.ml_ranking_enabled:
-            candidates = self._apply_ranking_model(candidates, role)
+        # rerank=None means use global setting, True/False overrides per-request
+        use_rerank = rerank if rerank is not None else settings.ml_ranking_enabled
+        if use_rerank:
+            # Only rerank top candidates — items ranked low by RRF are unlikely to surface
+            rerank_cutoff = min(max(k * 10, 100), len(candidates))
+            candidates = self._apply_ranking_model(
+                candidates[:rerank_cutoff], role, query_lower, query_keywords,
+                explain=explain,
+            )
 
-        # Apply role boost/penalty after potential ML reranking (ML replaces combined_score)
+        # Trim to reasonable size before applying boosts and normalization
+        if not use_rerank:
+            candidates = candidates[:k]
+
+        # Apply content type boosts and role boost/penalty AFTER ML reranking
+        # (ML replaces combined_score, so multiplicative boosts must come after)
+        type_boosts = {
+            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
+            "retningslinje": (
+                retningslinje_boost
+                if retningslinje_boost is not None
+                else settings.search_boost_retningslinje
+            ),
+        }
         for c in candidates:
+            boost = type_boosts.get(c.item.content_type.lower(), 1.0)
+            if boost != 1.0:
+                c.combined_score *= boost
             c.combined_score *= c.role_boost
         candidates.sort(key=lambda c: -c.combined_score)
 
@@ -121,16 +150,33 @@ class HybridSearch:
             self.max_candidate_pool,
         )
 
-        t0 = time.perf_counter()
-        bm25_hits = bm25_search.search(query, role, k=candidate_pool)
-        t_bm25 = time.perf_counter() - t0
-
-        semantic_hits = []
         semantic_available = semantic_search.is_available()
+
         t0 = time.perf_counter()
         if semantic_available:
-            semantic_hits = semantic_search.search(query=query, role=role, k=candidate_pool)
-        t_semantic = time.perf_counter() - t0
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                bm25_future = executor.submit(bm25_search.search, query, role, candidate_pool)
+                sem_future = executor.submit(semantic_search.search, query=query, role=role, k=candidate_pool)
+
+                try:
+                    bm25_hits = bm25_future.result()
+                except Exception:
+                    logger.exception("BM25 search failed in parallel execution")
+                    bm25_hits = []
+
+                try:
+                    semantic_hits = sem_future.result()
+                except Exception:
+                    logger.exception("Semantic search failed in parallel execution")
+                    semantic_hits = []
+
+            t_bm25 = time.perf_counter() - t0
+            t_semantic = t_bm25  # parallel, so same wall time
+        else:
+            bm25_hits = bm25_search.search(query, role, k=candidate_pool)
+            t_bm25 = time.perf_counter() - t0
+            semantic_hits = []
+            t_semantic = 0.0
 
         if not bm25_hits and not semantic_hits:
             return []
@@ -210,22 +256,8 @@ class HybridSearch:
             else:
                 c.keyword_norm = 1.0 if bm25_raw > 0 else 0.0
 
-        # Apply content type boosts
-        type_boosts = {
-            "temaside": temaside_boost if temaside_boost is not None else settings.search_boost_temaside,
-            "retningslinje": (
-                retningslinje_boost
-                if retningslinje_boost is not None
-                else settings.search_boost_retningslinje
-            ),
-        }
-        for c in candidates:
-            boost = type_boosts.get(c.item.content_type.lower(), 1.0)
-            if boost != 1.0:
-                c.combined_score *= boost
-
-        # Store role boost/penalty on each candidate; application to combined_score
-        # happens in search() after ML reranking so the multiplier is not lost.
+        # Store boosts on each candidate for application after ML reranking in search().
+        # If ML is disabled, these are still applied in search() before final sort.
         if role:
             effective_role_boost = role_boost if role_boost is not None else settings.search_role_match_boost
             effective_role_penalty = role_penalty if role_penalty is not None else settings.search_role_mismatch_penalty
@@ -268,11 +300,25 @@ class HybridSearch:
     @staticmethod
     def _build_results(candidates: List[HybridCandidate], k: int) -> List[SearchResult]:
         """Build API search results from candidates."""
+        from app.dto.response.search import PipelineScores, RerankInfo
+
         results = []
-        for c in candidates[:k]:
-            explanation = (
-                f"BM25={c.keyword_norm:.2f} | Semantic={c.semantic_norm:.2f} | "
-                f"RRF final={c.combined_score:.2f}"
+        for position, c in enumerate(candidates[:k], start=1):
+            # Build rerank info if model was applied
+            rerank_info = None
+            if c.rerank_score is not None and c.pre_rerank_position > 0:
+                rerank_info = RerankInfo(
+                    score=round(c.rerank_score, 4),
+                    rank_change=c.pre_rerank_position - position,
+                    contributions=c.rerank_contributions or {},
+                )
+
+            pipeline = PipelineScores(
+                bm25=round(c.keyword_norm, 4),
+                semantic=round(c.semantic_norm, 4),
+                rrf=round(c.rrf_raw, 6),
+                role_boost=round(c.role_boost, 4),
+                rerank=rerank_info,
             )
 
             results.append(
@@ -285,11 +331,7 @@ class HybridSearch:
                     document_url=c.item.public_document_url,
                     is_pdf_only=c.item.is_pdf_only,
                     score=round(c.combined_score, 3),
-                    explanation=explanation,
-                    bm25_score=c.keyword_norm,
-                    semantic_score=c.semantic_norm,
-                    rrf_score=c.rrf_raw,
-                    role_boost=c.role_boost,
+                    pipeline=pipeline,
                 )
             )
         return results
@@ -298,62 +340,77 @@ class HybridSearch:
         self,
         candidates: List[HybridCandidate],
         role: Optional[str],
+        query_lower: str = "",
+        query_keywords: Optional[set] = None,
+        explain: bool = False,
     ) -> List[HybridCandidate]:
         """Apply ranking model to re-rank results."""
+        t_start = time.perf_counter()
         try:
             from app.services.search.ml_service import ml_service
 
             if not ml_service.is_ranking_available():
-                ml_service.load_ranking_model()
+                ml_service.load_ranking_model(force=True)
                 if not ml_service.is_ranking_available():
                     return candidates
 
-            # Use windowed CTR (30 days) to match training data
-            ctr_data = database_service.get_content_ctr_windowed(days=30)
+            # Save pre-rerank positions (1-indexed)
+            for i, c in enumerate(candidates):
+                c.pre_rerank_position = i + 1
 
-            # Extract features for each candidate
+            # Fetch cached CTR map for popularity signal
+            t0 = time.perf_counter()
+            ctr_map = ml_service.get_ctr_map()
+            t_ctr = time.perf_counter() - t0
+
+            # Extract 7 features for each candidate
+            t0 = time.perf_counter()
             features_list = []
             for c in candidates:
-                features = self._extract_ranking_features(
-                    c, role, ctr_data.get(c.item.id, 0.0)
-                )
+                features = self._extract_ranking_features(c, role, ctr_map, query_lower, query_keywords)
                 features_list.append(features)
+            t_features = time.perf_counter() - t0
 
-            # Get ranking scores from model
-            ranking_scores = ml_service.get_ranking_scores(features_list)
-
-            # Replace combined score with ranking score and re-sort
-            for i, c in enumerate(candidates):
-                c.combined_score = ranking_scores[i]
+            t0 = time.perf_counter()
+            if explain:
+                # Slow path: include per-feature SHAP contributions
+                results_with_contribs = ml_service.get_ranking_scores_with_contributions(features_list)
+                for i, c in enumerate(candidates):
+                    score, contribs = results_with_contribs[i]
+                    c.rerank_score = score
+                    c.rerank_contributions = contribs
+                    c.combined_score = score
+            else:
+                # Fast path: scores only
+                scores = ml_service.get_ranking_scores(features_list)
+                for i, c in enumerate(candidates):
+                    c.rerank_score = scores[i]
+                    c.combined_score = scores[i]
+            t_predict = time.perf_counter() - t0
 
             candidates.sort(key=lambda c: -c.combined_score)
+
+            t_total = time.perf_counter() - t_start
+            logger.info(
+                "Reranking timings: CTR=%.0fms  Features=%.0fms  Predict=%.0fms  Total=%.0fms",
+                t_ctr * 1000, t_features * 1000, t_predict * 1000, t_total * 1000,
+            )
             return candidates
 
         except Exception:
             logger.exception("Error applying ranking model")
             return candidates
 
+    @staticmethod
     def _extract_ranking_features(
-        self,
         candidate: HybridCandidate,
         role: Optional[str],
-        ctr: float,
+        ctr_map: Optional[Dict[str, float]] = None,
+        query_lower: str = "",
+        query_keywords: Optional[set] = None,
     ) -> Dict[str, float]:
-        """Extract features for ranking model from a HybridCandidate."""
+        """Extract 7 features for ranking model from a HybridCandidate."""
         item = candidate.item
-
-        # Content type encoding
-        content_type_map = {
-            "retningslinje": 0.9,
-            "veileder": 0.8,
-            "fagprosedyre": 0.75,
-            "faktaark": 0.6,
-            "artikkel": 0.5,
-        }
-        type_match = content_type_map.get(
-            item.info_type.lower() if item.info_type else None,
-            0.5
-        )
 
         # Role match
         role_match = 0.0
@@ -365,18 +422,47 @@ class HybridSearch:
         elif not item.role_tags:
             role_match = 0.3
 
-        # Maalgruppe match (uses role_tags)
-        maalgruppe_match = 1.0 if role and role in item.role_tags else 0.0
+        # Smoothed CTR (Bayesian prior for unseen content)
+        default_ctr = 1.0 / 21.0
+        smoothed_ctr = (ctr_map or {}).get(item.id, default_ctr)
+
+        # Query length
+        q_terms = query_keywords or set()
+        query_length = float(len(q_terms))
+
+        # Title-query Jaccard overlap
+        title_terms = set(re.findall(r'\w+', item.title.lower())) if item.title else set()
+        if q_terms or title_terms:
+            title_query_overlap = len(q_terms & title_terms) / max(len(q_terms | title_terms), 1)
+        else:
+            title_query_overlap = 0.0
+
+        # Content freshness
+        content_freshness = 0.5
+        if item.sist_faglig_oppdatert:
+            try:
+                dt = item.sist_faglig_oppdatert
+                if not isinstance(dt, datetime):
+                    dt = datetime.fromisoformat(str(dt))
+                # Strip timezone info for safe subtraction with naive datetime.now()
+                if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    dt = dt.replace(tzinfo=None)
+                days = max(0, (datetime.now() - dt).days)
+                content_freshness = 1.0 / (1.0 + days / 365.0)
+            except (ValueError, TypeError):
+                logger.debug(
+                    "Could not parse freshness for %s: %r",
+                    item.id, item.sist_faglig_oppdatert,
+                )
 
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
-            "rrf_score": candidate.rrf_raw,
-            "type_match": type_match,
+            "smoothed_ctr": smoothed_ctr,
             "role_match": role_match,
-            "maalgruppe_match": maalgruppe_match,
-            "smoothed_ctr": ctr,
-            "position": 0.0,
+            "query_length": query_length,
+            "title_query_overlap": title_query_overlap,
+            "content_freshness": content_freshness,
         }
 
 

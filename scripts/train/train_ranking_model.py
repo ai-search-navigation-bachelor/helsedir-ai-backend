@@ -31,8 +31,6 @@ def main():
         days_back=180,           # Use last 6 months of data
         min_group_size=5,        # Only use searches with at least 5 results
         require_any_click=True,  # Only use searches where user clicked something
-        use_dwell=True,          # Use dwell time to filter out accidental clicks
-        dwell_positive_ms=8000,  # Click is positive if dwell >= 8 seconds
         use_db_propensity=True,  # Use position propensities from database
         verbose=True,            # Show training progress
     )
@@ -50,9 +48,16 @@ def main():
         model_path.parent.mkdir(parents=True, exist_ok=True)
         
         reranker.save(str(model_path))
-        print(f"\n✓ Model saved to: {model_path}")
+        print(f"\nModel saved to: {model_path}")
+
+        # Verify saved model loads correctly
+        print("Verifying saved model...")
+        loaded = HealthContentReranker.load(str(model_path))
+        assert loaded.model is not None, "Loaded model is None"
+        assert len(loaded.feature_names) == len(reranker.feature_names), "Feature count mismatch"
+        print(f"  Model verified: {len(loaded.feature_names)} features")
     else:
-        print("\n✗ Training failed - not enough data")
+        print("\nTraining failed - not enough data")
         print("  Make sure you have:")
         print("  - Search logs with results shown (search_results_shown table)")
         print("  - Click logs (click_logs table)")
@@ -61,25 +66,6 @@ def main():
     print("\n" + "=" * 50)
     print("Training Complete!")
     print("=" * 50)
-
-
-if __name__ == "__main__":
-    main()
-
-
-    # Verify saved model
-    print("Verifying saved model...")
-    loaded_model = HealthContentRanker.load(str(model_path))
-
-    # Test prediction
-    test_features = [{name: 0.5 for name in RANKING_FEATURES}]
-    test_pred = loaded_model.predict(test_features)
-    print(f"Test prediction: {test_pred[0]:.4f}")
-
-    print("\nTraining complete!")
-    print(f"Model saved to: {model_path}.keras")
-    print("\nTo enable learning-to-rank, set in .env:")
-    print("  ML_RANKING_ENABLED=true")
 
 
 if __name__ == "__main__":

@@ -1,268 +1,304 @@
+#!/usr/bin/env python3
 """
-Generate GPL queries for theme pages (temasider).
+Generate synthetic search queries for temasider using OpenAI API.
 
-Since temasider have no body text, queries are derived from:
-- The theme page title itself
-- Child theme page titles (from the hierarchy)
-- Path segments (which often contain descriptive terms)
+The main query generation script (1_generate_queries.py) excludes temasider.
+This script fills that gap by generating queries specifically for temasider,
+using the updated passage format that avoids dilution from child content.
+
+Merges results into data/gpl_queries.json alongside existing queries.
 
 Usage:
     python scripts/data/maintenance/generate_temaside_queries.py
+    python scripts/data/maintenance/generate_temaside_queries.py --queries-per-doc 15
+    python scripts/data/maintenance/generate_temaside_queries.py --force   # Regenerate all
+    python scripts/data/maintenance/generate_temaside_queries.py --model gpt-4.1-nano  # Cheaper model
 
-    # Preview without writing
-    python scripts/data/maintenance/generate_temaside_queries.py --dry-run
-
-    # Custom output
-    python scripts/data/maintenance/generate_temaside_queries.py --output data/gpl_queries_with_temasider.json
+Requirements:
+    OPENAI_API_KEY in .env
 """
 
 import argparse
+import asyncio
 import json
-import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
+import httpx
 
-from app.services.search.synonyms import SYNONYM_LOOKUP
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
 
-MAX_QUERIES = 10
-
-
-def clean_title(title: str) -> str:
-    """Normalize title casing (theme pages often have odd casing)."""
-    return title.strip()
+from scripts.ml.utils import enrich_temasider_with_children  # noqa: E402
 
 
-def get_synonym_variants(text: str) -> List[str]:
-    """
-    Generate synonym variants for a text string.
-
-    Checks both multi-word and single-word synonyms.
-    Returns a list of variant strings with one term replaced.
-    """
-    text_lower = text.lower()
-    variants: List[str] = []
-    seen: Set[str] = set()
-
-    # Multi-word synonyms first (longer matches take priority)
-    multi_word_terms = sorted(
-        [t for t in SYNONYM_LOOKUP if " " in t],
-        key=len,
-        reverse=True,
-    )
-    matched_ranges: List[tuple] = []
-
-    for term in multi_word_terms:
-        idx = text_lower.find(term)
-        if idx >= 0:
-            end = idx + len(term)
-            if not any(s < end and e > idx for s, e in matched_ranges):
-                matched_ranges.append((idx, end))
-                for syn in SYNONYM_LOOKUP[term]:
-                    if syn.lower() != term:
-                        variant = text_lower[:idx] + syn + text_lower[end:]
-                        if variant not in seen:
-                            seen.add(variant)
-                            variants.append(variant)
-
-    # Single-word synonyms — use re.finditer for accurate positions
-    for m in re.finditer(r"\w+", text_lower):
-        token = m.group()
-        if token in SYNONYM_LOOKUP:
-            idx = m.start()
-            end = m.end()
-            if not any(s <= idx and e >= end for s, e in matched_ranges):
-                matched_ranges.append((idx, end))
-                for syn in SYNONYM_LOOKUP[token]:
-                    if syn.lower() != token:
-                        variant = text_lower[:idx] + syn + text_lower[end:]
-                        if variant not in seen:
-                            seen.add(variant)
-                            variants.append(variant)
-
-    return variants
-
-
-def generate_queries_for_temaside(
-    page: dict,
-    children_titles: List[str],
+async def generate_queries_openai(
+    client: httpx.AsyncClient,
+    api_key: str,
+    passage: str,
+    title: str,
+    num_queries: int = 10,
+    model: str = "gpt-4.1-mini",
+    _retries: int = 0,
 ) -> List[str]:
-    """
-    Generate up to MAX_QUERIES search queries for a theme page.
+    """Generate synthetic search queries for a temaside using OpenAI."""
+    prompt = f"""Du er en ekspert på norsk helseinformasjon. Generer {num_queries} realistiske søkeord/fraser som en helsepersonell ville brukt for å finne denne temasiden.
 
-    Strategy:
-    1. Title as-is
-    2. Synonym variants of the title
-    3. Child page titles
-    4. Synonym variants of child titles
-    5. Path-derived queries
-    6. Parent context for deeper pages
-    """
-    title = clean_title(page["tittel"])
-    path = page.get("path", "")
-    queries: List[str] = []
-    seen_lower: Set[str] = set()
+Temasiden heter: {title}
 
-    def add(q: str):
-        q = q.strip()
-        if not q or q.lower() in seen_lower:
-            return
-        if len(queries) >= MAX_QUERIES:
-            return
-        seen_lower.add(q.lower())
-        queries.append(q)
+Innhold:
+{passage[:2000]}
 
-    title_lower = title.lower()
+Regler:
+- Skriv søk slik en lege eller sykepleier ville skrevet dem
+- Bruk norske medisinske termer
+- Inkluder søk som matcher tittelen direkte (f.eks. bare "{title.lower()}")
+- Inkluder også varianter og relaterte termer
+- Varier mellom korte (1-2 ord) og lengre (3-5 ord) søk
+- Ikke bruk anførselstegn eller nummerering
 
-    # 1. Title as-is
-    add(title)
+Returner kun søkefrasene, én per linje:"""
 
-    # 2. Synonym variants of the title
-    for variant in get_synonym_variants(title):
-        add(variant)
+    try:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.8,
+                "max_tokens": 300,
+            },
+            timeout=30.0,
+        )
 
-    # 3. Natural query templates using the title
-    templates = [
-        f"hva er {title_lower}",
-        f"behandling av {title_lower}",
-        f"symptomer på {title_lower}",
-        f"retningslinjer for {title_lower}",
-        f"{title_lower} veileder",
-    ]
-    for t in templates:
-        add(t)
+        if response.status_code == 429:
+            if _retries >= 3:
+                print("  Rate limited 3 times, skipping")
+                return []
+            wait = 5 * (_retries + 1)
+            print(f"  Rate limited, waiting {wait}s (retry {_retries + 1}/3)...")
+            await asyncio.sleep(wait)
+            return await generate_queries_openai(
+                client, api_key, passage, title, num_queries, model, _retries + 1
+            )
 
-    # 4. Child-based queries + their synonym variants
-    for child_title in children_titles:
-        child_clean = clean_title(child_title)
-        add(child_clean)
-        for variant in get_synonym_variants(child_clean):
-            add(variant)
+        if response.status_code != 200:
+            print(f"  OpenAI error: {response.status_code} - {response.text[:200]}")
+            return []
 
-    return queries[:MAX_QUERIES]
+        data = response.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        queries = [q.strip() for q in text.split("\n") if q.strip()]
 
+        skip_phrases = [
+            "her er", "søkeord", "fraser", "følgende", "liste",
+            "kunne brukt", "ville brukt", "for å finne",
+        ]
 
-def build_hierarchy(theme_pages: List[dict]) -> Dict[str, List[str]]:
-    """
-    Build a mapping from each theme page path to its children's titles.
-    """
-    path_to_title = {}
-    path_to_children: Dict[str, List[str]] = {}
+        cleaned = []
+        for q in queries:
+            q = q.lstrip("0123456789.-) *•")
+            if q.lower().startswith("søk etter "):
+                q = q[10:]
+            q = q.strip("\"'").strip()
 
-    for page in theme_pages:
-        p = page["path"].rstrip("/")
-        path_to_title[p] = page["tittel"]
-        path_to_children.setdefault(p, [])
+            if not q or len(q) > 100 or ":" in q:
+                continue
 
-    for page in theme_pages:
-        for link in page.get("links", []):
-            if link.get("rel") == "barn" and link.get("type") == "temaside":
-                child_path = link["href"].rstrip("/")
-                parent_path = page["path"].rstrip("/")
-                if child_path in path_to_title:
-                    path_to_children.setdefault(parent_path, []).append(
-                        path_to_title[child_path]
-                    )
+            q_lower = q.lower()
+            if any(phrase in q_lower for phrase in skip_phrases):
+                continue
 
-    return path_to_children
+            cleaned.append(q)
+            if len(cleaned) >= num_queries:
+                break
+
+        return cleaned
+
+    except Exception as e:
+        print(f"  Error with OpenAI: {e}")
+        return []
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate GPL queries for theme pages"
+        description="Generate queries for temasider using OpenAI"
     )
     parser.add_argument(
-        "--theme-pages",
-        type=str,
-        default=str(PROJECT_ROOT / "data" / "theme_pages.json"),
-        help="Path to theme_pages.json",
+        "--queries-per-doc", type=int, default=10,
+        help="Number of queries per temaside (default: 10)",
     )
     parser.add_argument(
-        "--gpl-queries",
-        type=str,
-        default=str(PROJECT_ROOT / "data" / "gpl_queries.json"),
-        help="Path to existing gpl_queries.json to merge into",
+        "--model", type=str, default="gpt-4.1-mini",
+        help="OpenAI model (default: gpt-4.1-mini)",
     )
     parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Output path (default: overwrite gpl-queries file)",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview without writing",
+        "--force", action="store_true",
+        help="Regenerate all temaside queries (ignore existing)",
     )
     args = parser.parse_args()
 
-    theme_pages_path = Path(args.theme_pages)
-    gpl_queries_path = Path(args.gpl_queries)
-    output_path = Path(args.output) if args.output else gpl_queries_path
+    from app.config import settings
+    from app.ml.embedding_model import HealthContentEmbedding
+    from app.services.data.database_service import database_service
 
-    # Load theme pages
-    print(f"Loading theme pages from {theme_pages_path}")
-    with open(theme_pages_path, "r", encoding="utf-8") as f:
-        theme_pages = json.load(f)
-    print(f"Loaded {len(theme_pages)} theme pages")
+    if not settings.openai_api_key:
+        print("Error: OPENAI_API_KEY not configured in .env")
+        sys.exit(1)
 
-    # Load existing GPL queries
-    print(f"Loading existing GPL queries from {gpl_queries_path}")
-    with open(gpl_queries_path, "r", encoding="utf-8") as f:
-        gpl_queries = json.load(f)
-    print(f"Loaded {len(gpl_queries)} document entries")
+    if not database_service.is_connected():
+        print("Error: Cannot connect to database")
+        sys.exit(1)
 
-    # Build hierarchy
-    children_by_path = build_hierarchy(theme_pages)
+    # Load content
+    print("=" * 60)
+    print("TEMASIDE QUERY GENERATION (OpenAI)")
+    print("=" * 60)
 
-    # Generate queries for each theme page
-    new_count = 0
-    updated_count = 0
-    total_queries = 0
+    print("\nLoading content from database...")
+    all_content = database_service.get_all_content()
 
-    for page in theme_pages:
-        doc_id = page["id"]
-        path = page["path"].rstrip("/")
-        children_titles = children_by_path.get(path, [])
+    temasider = [
+        item for item in all_content
+        if (item.get("info_type") or "").lower() == "temaside"
+    ]
+    print(f"Found {len(temasider)} temasider")
 
-        queries = generate_queries_for_temaside(page, children_titles)
-        total_queries += len(queries)
+    if not temasider:
+        print("No temasider found")
+        sys.exit(1)
 
-        if doc_id in gpl_queries:
-            updated_count += 1
-        else:
-            new_count += 1
+    # Enrich temasider with child content
+    print("\nEnriching temasider with linked content...")
+    enrich_temasider_with_children(temasider)
 
-        gpl_queries[doc_id] = queries
+    # Format passages with the new temaside-optimized format
+    for item in temasider:
+        item["_passage"] = HealthContentEmbedding.format_passage(item)
 
-    print(f"\n=== Results ===")
-    print(f"  Theme pages processed: {len(theme_pages)}")
-    print(f"  New entries added: {new_count}")
-    print(f"  Existing entries updated: {updated_count}")
-    print(f"  Total queries generated: {total_queries}")
-    print(f"  Avg queries per temaside: {total_queries / len(theme_pages):.1f}")
+    # Show sample passages
+    print("\nSample passages:")
+    for item in temasider[:3]:
+        passage = item["_passage"]
+        print(f"\n  {item.get('tittel', '')[:60]}")
+        print(f"  Passage ({len(passage)} chars): {passage[:200]}...")
 
-    # Show examples
-    print(f"\n=== Examples ===")
-    for page in theme_pages[:5]:
-        doc_id = page["id"]
-        print(f"\n{page['tittel']} ({page['path']})")
-        for i, q in enumerate(gpl_queries[doc_id]):
-            print(f"  [{i}] {q}")
-
-    if args.dry_run:
-        print("\n[DRY RUN] No files written.")
+    # Load existing query cache
+    cache_path = project_root / "data" / "gpl_queries.json"
+    if cache_path.exists():
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        print(f"\nLoaded existing cache: {len(cached)} documents")
     else:
-        print(f"\nWriting to {output_path}")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(gpl_queries, f, ensure_ascii=False, indent=2)
-        print(
-            f"Done! Total entries: {len(gpl_queries)} "
-            f"({len(gpl_queries) - len(theme_pages)} content + {len(theme_pages)} temasider)"
-        )
+        cached = {}
+
+    # Find temasider needing queries
+    items_needing_queries = []
+    for item in temasider:
+        content_id = str(item["id"])
+        existing = cached.get(content_id, []) if not args.force else []
+        if len(existing) < args.queries_per_doc:
+            item["_queries_needed"] = args.queries_per_doc - len(existing)
+            items_needing_queries.append(item)
+
+    if not items_needing_queries:
+        print(f"\nAll {len(temasider)} temasider already have {args.queries_per_doc}+ queries")
+        print("Use --force to regenerate")
+        return
+
+    total_needed = sum(item["_queries_needed"] for item in items_needing_queries)
+    print(f"\nGeneration plan:")
+    print(f"  Temasider needing queries: {len(items_needing_queries)}/{len(temasider)}")
+    print(f"  Total queries to generate: {total_needed}")
+    print(f"  Model: {args.model}")
+
+    # Generate queries (saves to cache_path every 10 items)
+    asyncio.run(_generate_all(
+        items=items_needing_queries,
+        api_key=settings.openai_api_key,
+        cached=cached,
+        force=args.force,
+        model=args.model,
+        cache_path=cache_path,
+    ))
+
+    # Final save
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(cached, f, ensure_ascii=False, indent=2)
+
+    # Summary
+    temaside_ids = {str(item["id"]) for item in temasider}
+    temaside_query_count = sum(
+        len(cached.get(tid, [])) for tid in temaside_ids
+    )
+
+    print("\n" + "=" * 60)
+    print("DONE")
+    print("=" * 60)
+    print(f"  Temaside queries: {temaside_query_count} for {len(temasider)} temasider")
+    print(f"  Total queries in cache: {sum(len(q) for q in cached.values())}")
+    print(f"  Saved to: {cache_path}")
+    print(f"\nNext steps:")
+    print(f"  1. Train model: python scripts/ml/2_finetune_gpl.py")
+    print(f"  2. Generate embeddings: python scripts/ml/3_generate_embeddings.py")
+
+
+async def _generate_all(
+    items: List[Dict[str, Any]],
+    api_key: str,
+    cached: Dict[str, Any],
+    force: bool,
+    model: str,
+    cache_path: Path = None,
+) -> None:
+    """Generate queries for all temasider. Saves intermediate results every 10 items."""
+    generated_total = 0
+    failed = 0
+
+    async with httpx.AsyncClient() as client:
+        for i, item in enumerate(items):
+            content_id = str(item["id"])
+            title = item.get("tittel") or item.get("title") or ""
+            passage = item.get("_passage", "")
+            queries_needed = item["_queries_needed"]
+
+            new_queries = await generate_queries_openai(
+                client=client,
+                api_key=api_key,
+                passage=passage,
+                title=title,
+                num_queries=queries_needed,
+                model=model,
+            )
+
+            if new_queries:
+                existing = cached.get(content_id, []) if not force else []
+                cached[content_id] = existing + new_queries
+                generated_total += len(new_queries)
+
+                if generated_total <= 20:
+                    print(f"\n  {title[:60]}")
+                    for q in new_queries[:3]:
+                        print(f"    -> {q}")
+            else:
+                failed += 1
+
+            if (i + 1) % 10 == 0:
+                # Save intermediate results
+                if cache_path:
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        json.dump(cached, f, ensure_ascii=False, indent=2)
+                print(f"  [{i + 1}/{len(items)}] Generated: {generated_total}, Failed: {failed}")
+
+            # Small delay to respect rate limits
+            await asyncio.sleep(0.5)
+
+    print(f"\n  Generated: {generated_total} queries, Failed: {failed}")
 
 
 if __name__ == "__main__":
