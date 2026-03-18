@@ -867,9 +867,9 @@ class SearchController:
 
     def get_suggestions(self, query: str) -> SuggestionResponse:
         """
-        Get autocomplete suggestions from theme pages.
+        Get autocomplete suggestions from all searchable content.
 
-        Matches theme page titles against query using prefix and substring matching.
+        Matches titles against query using prefix and substring matching.
         Returns up to 5 suggestions, with prefix matches ranked first.
 
         Args:
@@ -885,12 +885,12 @@ class SearchController:
             return SuggestionResponse(suggestions=[])
 
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        searchable = [item for item in all_content if item.content_type in content_service.searchable_types]
 
         prefix_matches = []
         substring_matches = []
 
-        for page in theme_pages:
+        for page in searchable:
             title_lower = page.title.lower()
             if title_lower.startswith(query_lower):
                 prefix_matches.append(page)
