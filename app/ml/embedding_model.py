@@ -119,10 +119,16 @@ class HealthContentEmbedding:
         is_temaside = (content_type or "").lower() == "temaside"
         if title:
             if is_temaside:
-                # Repeat title in a natural sentence to boost the title signal.
-                # Temasider often have empty body text, so without this the title
-                # is a tiny fraction of the passage and gets drowned out.
-                sentences.append(f"{title}. Dette er en temaside om {title.lower()}.")
+                # Repeat title multiple times to make it dominant in the passage.
+                # Temasider often have empty body text, so without heavy repetition
+                # the title is a tiny fraction of the passage and gets drowned out
+                # by child titles, causing poor semantic match for short queries
+                # like just the title itself (e.g. "adhd" → ADHD temaside).
+                sentences.append(
+                    f"{title}. "
+                    f"Dette er en temaside om {title.lower()}. "
+                    f"Temasiden handler om {title.lower()}."
+                )
             elif content_type:
                 sentences.append(f"{title}. Dette er en {content_type}.")
             else:
@@ -215,6 +221,12 @@ class HealthContentEmbedding:
 
                 if related_parts:
                     sentences.append("Se også: " + "; ".join(related_parts) + ".")
+
+        # Anchor the passage with the title at the end for temasider.
+        # Transformer attention weights the start and end of the sequence
+        # more heavily, so repeating the title here strengthens the signal.
+        if is_temaside and title:
+            sentences.append(f"Tema: {title}.")
 
         return " ".join(sentences)
 

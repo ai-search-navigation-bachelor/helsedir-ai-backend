@@ -9,6 +9,57 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+# Norwegian stopwords excluded from title sub-query splitting
+_NORWEGIAN_STOPWORDS = {
+    "og", "eller", "for", "til", "med", "ved", "av", "på", "i", "om",
+    "en", "et", "ei", "de", "den", "det", "er", "ut", "inn", "fra",
+    "hos", "etter", "under", "over", "mot", "uten", "som",
+}
+
+
+def get_title_subqueries(
+    title: str,
+    min_word_length: int = 3,
+    max_subqueries: int = 3,
+) -> List[str]:
+    """
+    Generate sub-queries from document title for training data augmentation.
+
+    Splits multi-word titles into individual significant words so the embedding
+    model learns that searching for a component word (e.g. "kreft") should match
+    documents whose title contains it as a compound (e.g. "brystkreft").
+
+    Single-word compound titles return an empty list — compound splitting is
+    handled via LLM prompt instructions instead.
+
+    Args:
+        title: Document title
+        min_word_length: Minimum character length for a word to be included
+        max_subqueries: Maximum number of sub-queries to return
+
+    Returns:
+        Lowercase, deduplicated list of sub-queries
+    """
+    if not title:
+        return []
+
+    words = title.strip().split()
+    if len(words) <= 1:
+        # Single compound word — LLM handles splitting via prompt instruction
+        return []
+
+    subqueries: List[str] = []
+    seen: set = set()
+    for word in words:
+        w = word.strip(".,!?-()[]").lower()
+        if len(w) >= min_word_length and w not in _NORWEGIAN_STOPWORDS and w not in seen:
+            subqueries.append(w)
+            seen.add(w)
+        if len(subqueries) >= max_subqueries:
+            break
+
+    return subqueries
+
 project_root = Path(__file__).resolve().parents[2]
 
 
