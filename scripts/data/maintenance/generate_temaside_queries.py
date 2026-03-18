@@ -53,9 +53,9 @@ Innhold:
 Regler:
 - Skriv søk slik en lege eller sykepleier ville skrevet dem
 - Bruk norske medisinske termer
-- Minst halvparten av søkene skal være korte (1-2 ord), f.eks. bare "{title.lower()}"
+- Varier mellom korte (1-2 ord) og lengre (3-5 ord) søk
 - Inkluder forkortelser og synonymer hvis relevant
-- Inkluder også noen lengre søk (3-5 ord) med relaterte termer
+- Ikke gjenta tittelen direkte – den er allerede inkludert separat
 - Ikke bruk anførselstegn eller nummerering
 
 Returner kun søkefrasene, én per linje:"""
@@ -215,6 +215,7 @@ def main():
     print(f"\nGeneration plan:")
     print(f"  Temasider needing queries: {len(items_needing_queries)}/{len(temasider)}")
     print(f"  Total queries to generate: {total_needed}")
+    print(f"  Strategy: {TITLE_QUERY_COUNT} explicit title queries + {args.queries_per_doc - TITLE_QUERY_COUNT} LLM queries = {args.queries_per_doc} per temaside")
     print(f"  Model: {args.model}")
 
     # Generate queries (saves to cache_path every 10 items)
@@ -248,6 +249,9 @@ def main():
     print(f"  2. Generate embeddings: python scripts/ml/3_generate_embeddings.py")
 
 
+TITLE_QUERY_COUNT = 2  # Number of explicit title name queries per temaside
+
+
 async def _generate_all(
     items: List[Dict[str, Any]],
     api_key: str,
@@ -256,7 +260,11 @@ async def _generate_all(
     model: str,
     cache_path: Path = None,
 ) -> None:
-    """Generate queries for all temasider. Saves intermediate results every 10 items."""
+    """Generate queries for all temasider. Saves intermediate results every 10 items.
+
+    Each temaside gets TITLE_QUERY_COUNT explicit title queries + remaining from LLM.
+    E.g. with queries_per_doc=10: 2 title + 8 LLM = 10 total.
+    """
     generated_total = 0
     failed = 0
 
@@ -267,14 +275,23 @@ async def _generate_all(
             passage = item.get("_passage", "")
             queries_needed = item["_queries_needed"]
 
-            new_queries = await generate_queries_openai(
-                client=client,
-                api_key=api_key,
-                passage=passage,
-                title=title,
-                num_queries=queries_needed,
-                model=model,
-            )
+            # Reserve slots for explicit title queries
+            llm_queries_needed = max(0, queries_needed - TITLE_QUERY_COUNT)
+            title_queries = [title] * min(TITLE_QUERY_COUNT, queries_needed)
+
+            if llm_queries_needed > 0:
+                llm_queries = await generate_queries_openai(
+                    client=client,
+                    api_key=api_key,
+                    passage=passage,
+                    title=title,
+                    num_queries=llm_queries_needed,
+                    model=model,
+                )
+            else:
+                llm_queries = []
+
+            new_queries = title_queries + llm_queries
 
             if new_queries:
                 existing = cached.get(content_id, []) if not force else []
@@ -283,7 +300,8 @@ async def _generate_all(
 
                 if generated_total <= 20:
                     print(f"\n  {title[:60]}")
-                    for q in new_queries[:3]:
+                    print(f"    [title x{len(title_queries)}] {title}")
+                    for q in llm_queries[:3]:
                         print(f"    -> {q}")
             else:
                 failed += 1
