@@ -93,16 +93,47 @@ def parse_page_view_csv(csv_path: str) -> List[Dict]:
     return rows
 
 
-def derive_query(title: str) -> Optional[str]:
-    """Derive a search query from a page title."""
+def derive_queries(title: str) -> List[str]:
+    """
+    Generate short query variants (1-2 words) from a page title.
+
+    Short queries better represent real user search behaviour where most
+    searches are 1-3 words.  Returns up to two queries:
+    - 2-word query  (first two meaningful words)
+    - 1-word query  (longest/most specific word in first three words),
+      only added when it differs from the 2-word query
+
+    Examples:
+      "Behandling av hypertensjon hos eldre" → ["Behandling hypertensjon", "hypertensjon"]
+      "Diabetes type 2"                      → ["Diabetes type", "Diabetes"]
+      "Legevakt"                             → ["Legevakt"]
+    """
     title = re.sub(r'\s*[-–]\s*Helsedirektoratet\s*$', '', title, flags=re.IGNORECASE)
     title = re.sub(r'\([^)]*\)', '', title)
     words = [w for w in title.split() if w.lower() not in STOP_WORDS and len(w) > 1]
 
-    if len(words) < 1:
-        return None
+    if not words:
+        return []
 
-    return " ".join(words[:4]).strip()
+    if len(words) == 1:
+        return [words[0]]
+
+    # Primary: 2-word query
+    two_word = " ".join(words[:2])
+    queries = [two_word]
+
+    # Secondary: most specific single word (longest of first 3)
+    one_word = max(words[:min(3, len(words))], key=len)
+    if one_word not in queries:
+        queries.append(one_word)
+
+    return queries
+
+
+def derive_query(title: str) -> Optional[str]:
+    """Derive a single search query from a page title (backward compatibility)."""
+    queries = derive_queries(title)
+    return queries[0] if queries else None
 
 
 def match_csv_to_content(csv_rows: List[Dict]) -> List[Dict]:
@@ -163,24 +194,34 @@ def get_connection():
         sys.exit(1)
 
 
-def generate_training_data(conn, pages: List[Dict], k: int = 10):
+def generate_training_data(
+    conn,
+    pages: List[Dict],
+    k: int = 15,
+    target_click_min: float = 0.5,
+    target_click_max: float = 0.9,
+    temaside_click_weight: float = 0.35,
+    retningslinje_click_weight: float = 0.30,
+    other_click_weight: float = 0.15,
+) -> Dict:
     """
     Generate training data by running real searches for popular pages.
 
-    For each page:
-    1. Derive a query from the title
-    2. Run hybrid search to get real results with real features
-    3. Log the search and results
-    4. Simulate clicks: the target page (if found) is clicked with high probability,
-       other results are clicked with lower probability weighted by position bias
+    For each page we derive up to two short query variants and run a real
+    hybrid search for each, logging results and simulating clicks.
+
+    Click simulation rules:
+    - Target page (the URL-matched page):  probability scales with view
+      popularity between target_click_min and target_click_max
+    - temaside / retningslinje / other:    content-type weight * position_bias
+
+    Returns a dict with counts: searches_created, results_shown, clicks_created, skipped.
     """
     cursor = conn.cursor()
 
-    # Build content_id -> role_tags lookup
     all_content = content_service.get_all_content()
     content_role_tags = {item.id: item.role_tags or [] for item in all_content}
 
-    # Normalize views for click probability
     max_views = max(p["views"] for p in pages) if pages else 1
 
     searches_created = 0
@@ -191,86 +232,80 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
     start_date = datetime.now() - timedelta(days=30)
 
     for i, page in enumerate(pages):
-        query = derive_query(page["title"])
-        if not query:
+        queries = derive_queries(page["title"])
+        if not queries:
             skipped += 1
             continue
 
         target_id = page["content_id"]
-        view_weight = page["views"] / max_views  # 0-1, higher = more popular
+        view_weight = page["views"] / max_views  # 0–1
 
-        # Pick a random role for this search
-        role = random.choice(ROLES)
+        for query in queries:
+            role = random.choice(ROLES)
 
-        # Run real hybrid search
-        try:
-            results = search_service.search_hybrid(query=query, role=role, k=k, rerank=False)
-        except Exception as e:
-            print(f"  Search failed for '{query}': {e}")
-            skipped += 1
-            continue
+            try:
+                results = search_service.search_hybrid(query=query, role=role, k=k, rerank=False)
+            except Exception as e:
+                print(f"  Search failed for '{query}': {e}")
+                skipped += 1
+                continue
 
-        if not results:
-            skipped += 1
-            continue
+            if not results:
+                skipped += 1
+                continue
 
-        search_id = str(uuid.uuid4())
-        timestamp = start_date + timedelta(seconds=random.randint(0, 30 * 24 * 60 * 60))
-
-        # Insert search log
-        cursor.execute(
-            "INSERT INTO search_logs (search_id, query, role, timestamp) VALUES (%s, %s, %s, %s)",
-            (search_id, query, role, timestamp),
-        )
-        searches_created += 1
-
-        # Insert results shown with real features
-        for position, result in enumerate(results, start=1):
-            role_match = compute_role_match(role, content_role_tags.get(result.id, []))
+            search_id = str(uuid.uuid4())
+            timestamp = start_date + timedelta(seconds=random.randint(0, 30 * 24 * 60 * 60))
 
             cursor.execute(
-                """
-                INSERT INTO search_results_shown
-                    (search_id, content_id, position, score,
-                     semantic_score, bm25_score, rrf_score, role_match)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    search_id, result.id, position, result.score,
-                    result.pipeline.semantic if result.pipeline else 0.0,
-                    result.pipeline.bm25 if result.pipeline else 0.0,
-                    result.pipeline.rrf if result.pipeline else 0.0,
-                    role_match,
-                ),
+                "INSERT INTO search_logs (search_id, query, role, timestamp) VALUES (%s, %s, %s, %s)",
+                (search_id, query, role, timestamp),
             )
-            results_shown += 1
+            searches_created += 1
 
-            # Simulate clicks
-            is_target = result.id == target_id
-            position_bias = 1.0 / position
-            info_type = (result.info_type or "").lower()
+            for position, result in enumerate(results, start=1):
+                role_match = compute_role_match(role, content_role_tags.get(result.id, []))
 
-            if is_target:
-                # Popular target page: high click probability scaled by views
-                click_prob = 0.5 + 0.4 * view_weight  # 0.5 - 0.9
-            elif info_type == "temaside":
-                # Temasider are high-value overview pages users often click
-                click_prob = 0.35 * position_bias
-            elif info_type == "retningslinje":
-                # Retningslinjer are authoritative and frequently clicked
-                click_prob = 0.30 * position_bias
-            else:
-                # Other content: lower click probability
-                click_prob = 0.15 * position_bias
-
-            if random.random() < click_prob:
                 cursor.execute(
-                    "INSERT INTO click_logs (search_id, content_id, position, timestamp) VALUES (%s, %s, %s, %s)",
-                    (search_id, result.id, position, timestamp),
+                    """
+                    INSERT INTO search_results_shown
+                        (search_id, content_id, position, score,
+                         semantic_score, bm25_score, rrf_score, role_match)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        search_id, result.id, position, result.score,
+                        result.pipeline.semantic if result.pipeline else 0.0,
+                        result.pipeline.bm25 if result.pipeline else 0.0,
+                        result.pipeline.rrf if result.pipeline else 0.0,
+                        role_match,
+                    ),
                 )
-                clicks_created += 1
+                results_shown += 1
 
-        # Commit every 20 searches
+                # Click simulation
+                is_target = result.id == target_id
+                position_bias = 1.0 / position
+                info_type = (result.info_type or "").lower()
+
+                if is_target:
+                    click_range = target_click_max - target_click_min
+                    click_prob = target_click_min + click_range * view_weight
+                elif info_type == "temaside":
+                    click_prob = temaside_click_weight * position_bias
+                elif info_type == "retningslinje":
+                    click_prob = retningslinje_click_weight * position_bias
+                else:
+                    click_prob = other_click_weight * position_bias
+
+                if random.random() < click_prob:
+                    cursor.execute(
+                        "INSERT INTO click_logs (search_id, content_id, position, timestamp)"
+                        " VALUES (%s, %s, %s, %s)",
+                        (search_id, result.id, position, timestamp),
+                    )
+                    clicks_created += 1
+
         if (i + 1) % 20 == 0:
             conn.commit()
             print(f"  [{i + 1}/{len(pages)}] {searches_created} searches, {clicks_created} clicks")
@@ -282,6 +317,13 @@ def generate_training_data(conn, pages: List[Dict], k: int = 10):
     print(f"    {searches_created} searches (skipped {skipped})")
     print(f"    {results_shown} results shown")
     print(f"    {clicks_created} clicks")
+
+    return {
+        "searches_created": searches_created,
+        "results_shown": results_shown,
+        "clicks_created": clicks_created,
+        "skipped": skipped,
+    }
 
 
 def verify_data(conn):
@@ -349,8 +391,13 @@ def main():
         help="Path to page view CSV file",
     )
     parser.add_argument("--top", type=int, default=200, help="Use top N most viewed pages (default: 200)")
-    parser.add_argument("--k", type=int, default=10, help="Results per search (default: 10)")
+    parser.add_argument("--k", type=int, default=15, help="Results per search (default: 15)")
     parser.add_argument("--clear", action="store_true", help="Clear existing logs first")
+    parser.add_argument("--target-click-min", type=float, default=0.5, help="Min click prob for target page (default: 0.5)")
+    parser.add_argument("--target-click-max", type=float, default=0.9, help="Max click prob for target page (default: 0.9)")
+    parser.add_argument("--temaside-weight", type=float, default=0.35, help="Click weight for temasider (default: 0.35)")
+    parser.add_argument("--retningslinje-weight", type=float, default=0.30, help="Click weight for retningslinjer (default: 0.30)")
+    parser.add_argument("--other-weight", type=float, default=0.15, help="Click weight for other content (default: 0.15)")
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
@@ -386,6 +433,9 @@ def main():
     print("\nConfiguration:")
     print(f"  Results per search: {args.k}")
     print(f"  Clear existing: {args.clear}")
+    print(f"  Target click prob: {args.target_click_min:.2f} – {args.target_click_max:.2f}")
+    print(f"  Temaside / Retningslinje / Other weights: "
+          f"{args.temaside_weight} / {args.retningslinje_weight} / {args.other_weight}")
 
     # Connect to database
     conn = get_connection()
@@ -404,7 +454,15 @@ def main():
             print("  Existing logs cleared")
 
         print("\nGenerating training data (running real searches)...")
-        generate_training_data(conn, pages, k=args.k)
+        generate_training_data(
+            conn, pages,
+            k=args.k,
+            target_click_min=args.target_click_min,
+            target_click_max=args.target_click_max,
+            temaside_click_weight=args.temaside_weight,
+            retningslinje_click_weight=args.retningslinje_weight,
+            other_click_weight=args.other_weight,
+        )
         verify_data(conn)
 
     finally:
