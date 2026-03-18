@@ -28,6 +28,8 @@ from app.services.external.helsedir_api_service import (
     HelseDirectorateAPIError,
 )
 
+MAX_BATCH_SAVE_RETRIES = 3
+
 
 def has_short_title_column() -> bool:
     """Return True when content.kort_tittel exists."""
@@ -87,7 +89,7 @@ def get_content_to_backfill(limit: int = 0):
         query = """
             SELECT id
             FROM content
-            WHERE info_type != 'temaside'
+            WHERE (info_type IS NULL OR info_type <> 'temaside')
             AND (kort_tittel IS NULL OR TRIM(kort_tittel) = '')
             ORDER BY id
         """
@@ -149,6 +151,30 @@ def save_short_titles_batch(updates) -> int:
         conn.close()
 
 
+def flush_pending_updates(pending_updates, batch_size: int) -> int:
+    """Persist pending updates in deterministic batches with bounded retries."""
+    saved_total = 0
+
+    while len(pending_updates) >= batch_size:
+        batch = pending_updates[:batch_size]
+        for attempt in range(1, MAX_BATCH_SAVE_RETRIES + 1):
+            saved = save_short_titles_batch(batch)
+            if saved > 0:
+                saved_total += saved
+                print(f"  Batch saved: {saved} items")
+                del pending_updates[:batch_size]
+                break
+
+            if attempt == MAX_BATCH_SAVE_RETRIES:
+                raise RuntimeError(
+                    f"Batch save failed after {MAX_BATCH_SAVE_RETRIES} attempts for {len(batch)} items"
+                )
+
+            print(f"  WARNING: Batch save returned 0, retrying ({attempt}/{MAX_BATCH_SAVE_RETRIES})")
+
+    return saved_total
+
+
 def positive_int(value: str) -> int:
     """argparse helper for positive integers."""
     ivalue = int(value)
@@ -201,6 +227,10 @@ def main():
 
     print("\n[1/3] Ensuring database column exists...")
     ensure_short_title_column(dry_run=args.dry_run)
+
+    if args.dry_run and not has_short_title_column():
+        print("\nDry run stops before querying content because kort_tittel does not exist yet.")
+        return
 
     print("\n[2/3] Finding content missing kort_tittel...")
     content_ids = get_content_to_backfill(limit=args.limit)
@@ -262,23 +292,25 @@ def main():
                     )
 
         if not args.dry_run and len(pending_updates) >= args.batch_size:
-            saved = save_short_titles_batch(pending_updates)
-            if saved > 0:
-                saved_total += saved
-                print(f"  Batch saved: {saved} items")
-                pending_updates.clear()
-            else:
-                print("  WARNING: Batch save returned 0, retaining items for retry")
+            saved_total += flush_pending_updates(pending_updates, args.batch_size)
 
         time.sleep(0.3)
 
     if not args.dry_run and pending_updates:
-        saved = save_short_titles_batch(pending_updates)
-        if saved > 0:
-            saved_total += saved
-            print(f"  Final batch saved: {saved} items")
-        else:
-            print(f"  ERROR: Final batch save failed, {len(pending_updates)} items not saved")
+        for attempt in range(1, MAX_BATCH_SAVE_RETRIES + 1):
+            saved = save_short_titles_batch(pending_updates)
+            if saved > 0:
+                saved_total += saved
+                print(f"  Final batch saved: {saved} items")
+                pending_updates.clear()
+                break
+
+            if attempt == MAX_BATCH_SAVE_RETRIES:
+                raise RuntimeError(
+                    f"Final batch save failed after {MAX_BATCH_SAVE_RETRIES} attempts for {len(pending_updates)} items"
+                )
+
+            print(f"  WARNING: Final batch save returned 0, retrying ({attempt}/{MAX_BATCH_SAVE_RETRIES})")
 
     elapsed = time.monotonic() - start_time
     print()

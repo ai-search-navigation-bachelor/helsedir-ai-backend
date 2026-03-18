@@ -1,2 +1,2 @@
 ALTER TABLE content
-ADD COLUMN kort_tittel TEXT NULL AFTER tittel;
+ADD COLUMN IF NOT EXISTS kort_tittel TEXT NULL AFTER tittel;

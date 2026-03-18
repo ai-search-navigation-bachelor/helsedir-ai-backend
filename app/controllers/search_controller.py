@@ -962,9 +962,17 @@ class SearchController:
 
         for page in theme_pages:
             title_lower = page.title.lower()
-            if title_lower.startswith(query_lower):
+            short_title_lower = (page.short_title or "").strip().lower()
+            display_title_lower = page.display_title.lower()
+            searchable_titles = [title_lower]
+            if short_title_lower:
+                searchable_titles.append(short_title_lower)
+            if display_title_lower not in searchable_titles:
+                searchable_titles.append(display_title_lower)
+
+            if any(value.startswith(query_lower) for value in searchable_titles):
                 prefix_matches.append(page)
-            elif query_lower in title_lower:
+            elif any(query_lower in value for value in searchable_titles):
                 substring_matches.append(page)
 
         # Sort each group by title length (shorter = more specific)
