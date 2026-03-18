@@ -35,6 +35,40 @@ from scripts.ml.utils import enrich_temasider_with_children, get_title_subquerie
 TITLE_QUERY_COUNT = 2  # Number of explicit title name queries per temaside
 
 
+async def get_compound_subqueries(
+    client: httpx.AsyncClient,
+    api_key: str,
+    title: str,
+    model: str = "gpt-4.1-mini",
+) -> List[str]:
+    """Split a single compound Norwegian word into meaningful parts via OpenAI."""
+    try:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": (
+                    f"Del opp det norske sammensatte ordet '{title}' i meningsfulle deler. "
+                    "Returner kun delene, én per linje. Maks 2 deler. Ingen forklaringer."
+                )}],
+                "temperature": 0.0,
+                "max_tokens": 50,
+            },
+            timeout=15.0,
+        )
+        if response.status_code != 200:
+            return []
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        parts = [p.strip().lower() for p in text.split("\n") if p.strip()]
+        return [p for p in parts if len(p) >= 3 and p.lower() != title.lower()][:2]
+    except Exception:
+        return []
+
+
 async def generate_queries_openai(
     client: httpx.AsyncClient,
     api_key: str,
@@ -277,7 +311,10 @@ async def _generate_all(
 
             # Build explicit queries: TITLE_QUERY_COUNT exact title + word sub-queries
             title_queries = [title] * min(TITLE_QUERY_COUNT, queries_needed)
-            word_subqueries = get_title_subqueries(title)
+            if len(title.split()) == 1:
+                word_subqueries = await get_compound_subqueries(client, api_key, title, model)
+            else:
+                word_subqueries = get_title_subqueries(title)
 
             explicit_queries = title_queries + word_subqueries
             llm_queries_needed = max(0, queries_needed - len(explicit_queries))
