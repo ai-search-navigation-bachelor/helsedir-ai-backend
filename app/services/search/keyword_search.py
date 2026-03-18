@@ -143,6 +143,8 @@ class KeywordSearch:
                 SearchResult(
                     id=item.id,
                     title=item.title,
+                    short_title=item.short_title,
+                    display_title=item.display_title,
                     info_type=item.content_type,
                     path=item.path,
                     has_text_content=item.has_text_content,

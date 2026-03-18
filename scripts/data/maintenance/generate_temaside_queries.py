@@ -30,7 +30,43 @@ import httpx
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.ml.utils import enrich_temasider_with_children  # noqa: E402
+from scripts.ml.utils import enrich_temasider_with_children, get_title_subqueries  # noqa: E402
+
+TITLE_QUERY_COUNT = 2  # Number of explicit title name queries per temaside
+
+
+async def get_compound_subqueries(
+    client: httpx.AsyncClient,
+    api_key: str,
+    title: str,
+    model: str = "gpt-4.1-mini",
+) -> List[str]:
+    """Split a single compound Norwegian word into meaningful parts via OpenAI."""
+    try:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": (
+                    f"Del opp det norske sammensatte ordet '{title}' i meningsfulle deler. "
+                    "Returner kun delene, én per linje. Maks 2 deler. Ingen forklaringer."
+                )}],
+                "temperature": 0.0,
+                "max_tokens": 50,
+            },
+            timeout=15.0,
+        )
+        if response.status_code != 200:
+            return []
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        parts = [p.strip().lower() for p in text.split("\n") if p.strip()]
+        return [p for p in parts if len(p) >= 3 and p.lower() != title.lower()][:2]
+    except Exception:
+        return []
 
 
 async def generate_queries_openai(
@@ -53,9 +89,9 @@ Innhold:
 Regler:
 - Skriv søk slik en lege eller sykepleier ville skrevet dem
 - Bruk norske medisinske termer
-- Inkluder søk som matcher tittelen direkte (f.eks. bare "{title.lower()}")
-- Inkluder også varianter og relaterte termer
 - Varier mellom korte (1-2 ord) og lengre (3-5 ord) søk
+- Inkluder forkortelser og synonymer hvis relevant
+- Ikke gjenta tittelen direkte – den er allerede inkludert separat
 - Ikke bruk anførselstegn eller nummerering
 
 Returner kun søkefrasene, én per linje:"""
@@ -215,6 +251,7 @@ def main():
     print(f"\nGeneration plan:")
     print(f"  Temasider needing queries: {len(items_needing_queries)}/{len(temasider)}")
     print(f"  Total queries to generate: {total_needed}")
+    print(f"  Strategy: {TITLE_QUERY_COUNT} title + word splits (multi-word) + LLM = {args.queries_per_doc} per temaside")
     print(f"  Model: {args.model}")
 
     # Generate queries (saves to cache_path every 10 items)
@@ -248,6 +285,7 @@ def main():
     print(f"  2. Generate embeddings: python scripts/ml/3_generate_embeddings.py")
 
 
+
 async def _generate_all(
     items: List[Dict[str, Any]],
     api_key: str,
@@ -256,7 +294,11 @@ async def _generate_all(
     model: str,
     cache_path: Path = None,
 ) -> None:
-    """Generate queries for all temasider. Saves intermediate results every 10 items."""
+    """Generate queries for all temasider. Saves intermediate results every 10 items.
+
+    Each temaside gets TITLE_QUERY_COUNT explicit title queries + remaining from LLM.
+    E.g. with queries_per_doc=10: 2 title + 8 LLM = 10 total.
+    """
     generated_total = 0
     failed = 0
 
@@ -267,14 +309,29 @@ async def _generate_all(
             passage = item.get("_passage", "")
             queries_needed = item["_queries_needed"]
 
-            new_queries = await generate_queries_openai(
-                client=client,
-                api_key=api_key,
-                passage=passage,
-                title=title,
-                num_queries=queries_needed,
-                model=model,
-            )
+            # Build explicit queries: TITLE_QUERY_COUNT exact title + word sub-queries
+            title_queries = [title] * min(TITLE_QUERY_COUNT, queries_needed)
+            if len(title.split()) == 1:
+                word_subqueries = await get_compound_subqueries(client, api_key, title, model)
+            else:
+                word_subqueries = get_title_subqueries(title)
+
+            explicit_queries = title_queries + word_subqueries
+            llm_queries_needed = max(0, queries_needed - len(explicit_queries))
+
+            if llm_queries_needed > 0:
+                llm_queries = await generate_queries_openai(
+                    client=client,
+                    api_key=api_key,
+                    passage=passage,
+                    title=title,
+                    num_queries=llm_queries_needed,
+                    model=model,
+                )
+            else:
+                llm_queries = []
+
+            new_queries = explicit_queries + llm_queries
 
             if new_queries:
                 existing = cached.get(content_id, []) if not force else []
@@ -283,7 +340,10 @@ async def _generate_all(
 
                 if generated_total <= 20:
                     print(f"\n  {title[:60]}")
-                    for q in new_queries[:3]:
+                    print(f"    [title x{TITLE_QUERY_COUNT}] {title}")
+                    if word_subqueries:
+                        print(f"    [word splits] {', '.join(word_subqueries)}")
+                    for q in llm_queries[:3]:
                         print(f"    -> {q}")
             else:
                 failed += 1
