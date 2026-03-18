@@ -19,6 +19,7 @@ USE helsedir_ai;
 CREATE TABLE IF NOT EXISTS content (
     id VARCHAR(100) PRIMARY KEY,
     tittel TEXT NOT NULL,
+    kort_tittel TEXT,
     tekst LONGTEXT,
     info_type VARCHAR(50),
     koder JSON,

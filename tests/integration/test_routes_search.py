@@ -29,6 +29,8 @@ def _mock_search_response(
             SearchResult(
                 id="001",
                 title="Diabetes retningslinje",
+                short_title="Diabetes",
+                display_title="Diabetes",
                 info_type="retningslinje",
                 has_text_content=False,
                 document_url="https://example.test/doc/1",
@@ -65,6 +67,8 @@ def _mock_categorized_response(query: str = "diabetes") -> CategorizedSearchResp
                     SearchResult(
                         id="001",
                         title="Diabetes",
+                        short_title="Diabetes",
+                        display_title="Diabetes",
                         info_type="retningslinje",
                         has_text_content=False,
                         document_url="https://example.test/doc/1",
@@ -129,6 +133,8 @@ class TestSearchRoute:
         result = SearchResult(
             id="001",
             title="ADHD-anbefaling",
+            short_title="ADHD",
+            display_title="ADHD",
             info_type="anbefaling",
             has_text_content=True,
             document_url=None,
@@ -228,7 +234,14 @@ class TestSuggestionsRoute:
         mocker.patch(
             "app.routes.search.search_controller.get_suggestions",
             return_value=SuggestionResponse(
-                suggestions=[Suggestion(id="004", title="Psykisk helse temaside")]
+                suggestions=[
+                    Suggestion(
+                        id="004",
+                        title="Psykisk helse temaside",
+                        short_title="Psykisk helse",
+                        display_title="Psykisk helse",
+                    )
+                ]
             ),
         )
         data = client.get("/search/suggestions?query=psykisk").json()
@@ -239,7 +252,14 @@ class TestSuggestionsRoute:
         mocker.patch(
             "app.routes.search.search_controller.get_suggestions",
             return_value=SuggestionResponse(
-                suggestions=[Suggestion(id="004", title="Psykisk helse temaside")]
+                suggestions=[
+                    Suggestion(
+                        id="004",
+                        title="Psykisk helse temaside",
+                        short_title="Psykisk helse",
+                        display_title="Psykisk helse",
+                    )
+                ]
             ),
         )
         data = client.get("/search/suggestions?query=psykisk").json()

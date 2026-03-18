@@ -52,6 +52,13 @@ class SearchController:
     _SEARCH_ID_SIGNATURE_MARKER = "c0de"
     _SEARCH_ID_SIGNATURE_HEX_LENGTH = 8
 
+    @staticmethod
+    def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str:
+        """Prefer short title for UI display when available."""
+        if short_title and short_title.strip():
+            return short_title.strip()
+        return title or ""
+
     def __init__(self):
         self.search_service = search_service
         self._search_cache: Dict[
@@ -426,6 +433,8 @@ class SearchController:
                 results.append(SearchResult(
                     id=theme_page.id,
                     title=theme_page.title,
+                    short_title=theme_page.short_title,
+                    display_title=theme_page.display_title,
                     info_type='temaside',
                     path=theme_page.path,
                     has_text_content=theme_page.has_text_content,
@@ -490,6 +499,11 @@ class SearchController:
                 child_result = SearchResult(
                     id=content.get('id', ''),
                     title=content.get('tittel', ''),
+                    short_title=content.get('kort_tittel'),
+                    display_title=self._pick_display_title(
+                        content.get('tittel', ''),
+                        content.get('kort_tittel'),
+                    ),
                     info_type=info_type,
                     path=content.get('path'),
                     has_text_content=metadata["has_text_content"],
@@ -513,13 +527,18 @@ class SearchController:
 
         return results
 
-    @staticmethod
-    def _build_content_summary(link: ContentLink) -> ContentSummaryResponse:
+    def _build_content_summary(self, link: ContentLink) -> ContentSummaryResponse:
         """Build a lightweight related-content summary for search responses."""
         linked_content = content_service.get_content_by_id(link.id) if link.id else None
         return ContentSummaryResponse(
             id=linked_content.id if linked_content else link.id,
             title=linked_content.title if linked_content else (link.tittel or ""),
+            short_title=linked_content.short_title if linked_content else None,
+            display_title=(
+                linked_content.display_title
+                if linked_content
+                else self._pick_display_title(link.tittel or "", None)
+            ),
             content_type=normalize_content_type(
                 linked_content.content_type if linked_content else link.type
             ),
@@ -902,6 +921,11 @@ class SearchController:
             results.append(ThemePageResult(
                 id=item.get('id', ''),
                 title=item.get('tittel', ''),
+                short_title=item.get('kort_tittel'),
+                display_title=self._pick_display_title(
+                    item.get('tittel', ''),
+                    item.get('kort_tittel'),
+                ),
                 info_type='temaside',
                 path=item.get('path', ''),
             ))
@@ -938,9 +962,17 @@ class SearchController:
 
         for page in theme_pages:
             title_lower = page.title.lower()
-            if title_lower.startswith(query_lower):
+            short_title_lower = (page.short_title or "").strip().lower()
+            display_title_lower = page.display_title.lower()
+            searchable_titles = [title_lower]
+            if short_title_lower:
+                searchable_titles.append(short_title_lower)
+            if display_title_lower not in searchable_titles:
+                searchable_titles.append(display_title_lower)
+
+            if any(value.startswith(query_lower) for value in searchable_titles):
                 prefix_matches.append(page)
-            elif query_lower in title_lower:
+            elif any(query_lower in value for value in searchable_titles):
                 substring_matches.append(page)
 
         # Sort each group by title length (shorter = more specific)
@@ -951,7 +983,15 @@ class SearchController:
         matched = prefix_matches + substring_matches
         top = matched[:max_suggestions]
 
-        suggestions = [Suggestion(id=page.id, title=page.title) for page in top]
+        suggestions = [
+            Suggestion(
+                id=page.id,
+                title=page.title,
+                short_title=page.short_title,
+                display_title=page.display_title,
+            )
+            for page in top
+        ]
         return SuggestionResponse(suggestions=suggestions)
 
     @staticmethod

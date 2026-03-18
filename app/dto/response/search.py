@@ -34,6 +34,8 @@ class SearchResult(BaseModel):
     """Single search result."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: Optional[str] = None
     has_text_content: bool
@@ -113,6 +115,8 @@ class ThemePageResult(BaseModel):
     """Single theme page result."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: str
 
@@ -127,6 +131,8 @@ class Suggestion(BaseModel):
     """Single autocomplete suggestion."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
 
 
 class SuggestionResponse(BaseModel):

@@ -72,6 +72,7 @@ class ContentItem(BaseModel):
 
     id: str
     title: str
+    short_title: Optional[str] = None
     body: str
     content_type: str
     path: Optional[str] = None
@@ -91,6 +92,13 @@ class ContentItem(BaseModel):
     def info_type(self) -> str:
         """Alias for content_type (used by ranking features)."""
         return self.content_type
+
+    @property
+    def display_title(self) -> str:
+        """Preferred title for UI display, falling back to full title."""
+        if self.short_title and self.short_title.strip():
+            return self.short_title.strip()
+        return self.title
 
     @property
     def target_groups(self) -> List[str]:

@@ -170,6 +170,7 @@ class ContentService:
             content_item = ContentItem(
                 id=str(item.get("id", "")),
                 title=item.get("tittel") or "",
+                short_title=item.get("kort_tittel"),
                 body=item.get("tekst") or "",
                 content_type=canonical_info_type or "unknown",
                 path=item.get("path"),
@@ -274,6 +275,7 @@ class ContentService:
                 content_item = ContentItem(
                     id=str(item.get("id", item.get("infoId", ""))),
                     title=item.get("tittel", ""),
+                    short_title=item.get("kortTittel") or item.get("kort_tittel"),
                     body=item.get("tekst", ""),
                     content_type=item.get("infoType", "unknown"),
                     path=item.get("path"),

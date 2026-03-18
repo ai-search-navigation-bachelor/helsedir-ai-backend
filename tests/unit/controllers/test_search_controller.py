@@ -19,6 +19,8 @@ def _make_result(result_id: str, score: float, info_type: str = "retningslinje")
     return SearchResult(
         id=result_id,
         title=f"Title {result_id}",
+        short_title=f"Short {result_id}",
+        display_title=f"Short {result_id}",
         info_type=info_type,
         has_text_content=True,
         document_url=None,
@@ -365,6 +367,8 @@ class TestSearchControllerSearchAsync:
         theme_result = SearchResult(
             id="004",
             title="ADHD temaside",
+            short_title="ADHD",
+            display_title="ADHD",
             info_type="temaside",
             has_text_content=False,
             document_url=None,
@@ -378,6 +382,8 @@ class TestSearchControllerSearchAsync:
                         SearchResult(
                             id="100",
                             title="ADHD-anbefaling",
+                            short_title="ADHD-anbefaling",
+                            display_title="ADHD-anbefaling",
                             info_type="anbefaling",
                             has_text_content=True,
                             document_url=None,
