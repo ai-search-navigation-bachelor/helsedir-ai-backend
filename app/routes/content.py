@@ -49,6 +49,13 @@ _CHILD_GROUP_LABELS = {
 }
 
 
+def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str:
+    """Prefer short title for UI display when available."""
+    if short_title and short_title.strip():
+        return short_title.strip()
+    return title or ""
+
+
 class NormalizedRelations(TypedDict):
     parent: Optional[ContentSummaryResponse]
     root_publication: Optional[ContentSummaryResponse]
@@ -217,6 +224,12 @@ def _build_content_summary(link: ContentLinkResponse) -> ContentSummaryResponse:
     return ContentSummaryResponse(
         id=linked_content.id if linked_content else target_id,
         title=linked_content.title if linked_content else (link.title or ""),
+        short_title=linked_content.short_title if linked_content else None,
+        display_title=(
+            linked_content.display_title
+            if linked_content
+            else _pick_display_title(link.title or "", None)
+        ),
         content_type=normalize_content_type(
             linked_content.content_type if linked_content else link.type
         ),
@@ -353,6 +366,11 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
         linked_item = LinkedContentItem(
             id=content_item.get('id', ''),
             title=content_item.get('tittel', ''),
+            short_title=content_item.get('kort_tittel'),
+            display_title=_pick_display_title(
+                content_item.get('tittel', ''),
+                content_item.get('kort_tittel'),
+            ),
             info_type=info_type,
             path=content_item.get('path'),
             has_text_content=metadata["has_text_content"],
@@ -649,6 +667,8 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
     return ContentResponse(
         id=content.id,
         title=content.title,
+        short_title=content.short_title,
+        display_title=content.display_title,
         body=response_body,
         content_type=normalize_content_type(content.content_type),
         path=content.path,

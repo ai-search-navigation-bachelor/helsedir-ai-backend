@@ -43,6 +43,8 @@ class LinkedContentItem(BaseModel):
     """A single linked content item under a theme page."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: Optional[str] = None
     has_text_content: bool = False
@@ -73,6 +75,8 @@ class ContentSummaryResponse(BaseModel):
     detail_level: str = "summary"
     id: Optional[str] = None
     title: str = ""
+    short_title: Optional[str] = None
+    display_title: str = ""
     content_type: str
     path: Optional[str] = None
     href: Optional[str] = None
@@ -129,6 +133,8 @@ class ContentResponse(BaseModel):
     detail_level: str = "full"
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     body: str
     content_type: str
     path: Optional[str] = None

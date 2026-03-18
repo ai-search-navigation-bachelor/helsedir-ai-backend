@@ -19,6 +19,7 @@ class ContentRepository:
 
     def __init__(self):
         self._warned_missing_attachments_json = False
+        self._warned_missing_kort_tittel = False
 
     def _serialize_json_field(self, value) -> Optional[str]:
         """Serialize a field to JSON string if needed."""
@@ -39,6 +40,7 @@ class ContentRepository:
         *,
         content_id,
         title,
+        short_title,
         text,
         info_type,
         koder_json,
@@ -57,12 +59,13 @@ class ContentRepository:
             cursor.execute(
                 """
                 INSERT INTO content (
-                    id, tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
+                    id, tittel, kort_tittel, tekst, info_type, koder, role_tags, links, forst_publisert, sist_faglig_oppdatert, path,
                     has_text_content, document_url, attachments_json, ehelsestandard_fields_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     tittel = VALUES(tittel),
+                    kort_tittel = COALESCE(NULLIF(VALUES(kort_tittel), ''), kort_tittel),
                     tekst = VALUES(tekst),
                     info_type = VALUES(info_type),
                     koder = COALESCE(VALUES(koder), koder),
@@ -81,6 +84,7 @@ class ContentRepository:
                 (
                     content_id,
                     title,
+                    short_title,
                     text,
                     info_type,
                     koder_json,
@@ -96,14 +100,22 @@ class ContentRepository:
                 ),
             )
         except mysql.connector.Error as e:
+            missing_kort_tittel = self._is_unknown_column_error(e, "kort_tittel")
             missing_attachments_json = self._is_unknown_column_error(e, "attachments_json")
             missing_ehelsestandard_fields_json = self._is_unknown_column_error(
                 e, "ehelsestandard_fields_json"
             )
-            if not (missing_attachments_json or missing_ehelsestandard_fields_json):
+            if not (missing_kort_tittel or missing_attachments_json or missing_ehelsestandard_fields_json):
                 raise
 
-            if not self._warned_missing_attachments_json:
+            if missing_kort_tittel and not self._warned_missing_kort_tittel:
+                logger.warning(
+                    "content schema is missing kort_tittel; retrying without it until migration is applied: %s",
+                    e,
+                )
+                self._warned_missing_kort_tittel = True
+
+            if (missing_attachments_json or missing_ehelsestandard_fields_json) and not self._warned_missing_attachments_json:
                 logger.warning(
                     "content schema is missing ehelsestandard metadata columns; retrying without them until migration is applied: %s",
                     e,
@@ -230,6 +242,7 @@ class ContentRepository:
                 cursor,
                 content_id=content.get("id"),
                 title=content.get("tittel"),
+                short_title=content.get("kortTittel") or content.get("kort_tittel"),
                 text=content.get("tekst"),
                 info_type=info_type,
                 koder_json=koder_json,
@@ -304,6 +317,7 @@ class ContentRepository:
                         cursor,
                         content_id=content.get("id"),
                         title=content.get("tittel"),
+                        short_title=content.get("kortTittel") or content.get("kort_tittel"),
                         text=content.get("tekst"),
                         info_type=info_type,
                         koder_json=koder_json,

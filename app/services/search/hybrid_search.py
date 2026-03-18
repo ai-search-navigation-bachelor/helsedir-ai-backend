@@ -325,6 +325,8 @@ class HybridSearch:
                 SearchResult(
                     id=c.item.id,
                     title=c.item.title,
+                    short_title=c.item.short_title,
+                    display_title=c.item.display_title,
                     info_type=c.item.content_type,
                     path=c.item.path,
                     has_text_content=c.item.has_text_content,

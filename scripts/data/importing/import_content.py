@@ -122,6 +122,8 @@ def _enrich_item_from_api(content_id: str, item: dict) -> None:
     """Fetch detail from API and enrich item in-place with links, koder, maalgruppe, url, dates."""
     detailed = helsedir_api_service.get_infobit_by_id(content_id, timeout=15.0)
     item["links"] = detailed.get("links")
+    if detailed.get("kortTittel") is not None:
+        item["kortTittel"] = detailed.get("kortTittel")
     if detailed.get("koder") is not None:
         item["koder"] = detailed.get("koder")
     if detailed.get("maalgruppe") is not None:
