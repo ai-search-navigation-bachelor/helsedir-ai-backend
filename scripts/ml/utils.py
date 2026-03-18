@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 _NORWEGIAN_STOPWORDS = {
     "og", "eller", "for", "til", "med", "ved", "av", "på", "i", "om",
     "en", "et", "ei", "de", "den", "det", "er", "ut", "inn", "fra",
-    "hos", "etter", "under", "over", "mot", "uten", "som", "om",
+    "hos", "etter", "under", "over", "mot", "uten", "som",
 }
 
 

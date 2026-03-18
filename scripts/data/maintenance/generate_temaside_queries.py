@@ -32,6 +32,8 @@ sys.path.insert(0, str(project_root))
 
 from scripts.ml.utils import enrich_temasider_with_children, get_title_subqueries  # noqa: E402
 
+TITLE_QUERY_COUNT = 2  # Number of explicit title name queries per temaside
+
 
 async def generate_queries_openai(
     client: httpx.AsyncClient,
@@ -248,8 +250,6 @@ def main():
     print(f"  1. Train model: python scripts/ml/2_finetune_gpl.py")
     print(f"  2. Generate embeddings: python scripts/ml/3_generate_embeddings.py")
 
-
-TITLE_QUERY_COUNT = 2  # Number of explicit title name queries per temaside
 
 
 async def _generate_all(

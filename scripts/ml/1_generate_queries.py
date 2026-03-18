@@ -20,7 +20,7 @@ Usage:
 Requirements:
     GROQ_API_KEY in .env (free from https://console.groq.com/keys)
     GROQ_API_KEY_2/3/4 in .env (optional — additional keys for parallel generation)
-    HELSEDIR_API_KEY in .env (for fetching linked content)
+    Child content enrichment is handled automatically via enrich_with_child_content
 """
 
 import argparse
@@ -329,7 +329,7 @@ def main():
         return
 
     # Enrich all content with child content (needed for linked_content lookup)
-    print(f"\nEnriching content with child content...")
+    print("\nEnriching content with child content...")
     enrich_with_child_content(content_items)
 
     # Pre-format passages so workers don't repeat the work
