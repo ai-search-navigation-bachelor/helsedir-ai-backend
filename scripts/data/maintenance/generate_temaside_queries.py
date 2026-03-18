@@ -30,7 +30,7 @@ import httpx
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.ml.utils import enrich_temasider_with_children  # noqa: E402
+from scripts.ml.utils import enrich_temasider_with_children, get_title_subqueries  # noqa: E402
 
 
 async def generate_queries_openai(
@@ -215,7 +215,7 @@ def main():
     print(f"\nGeneration plan:")
     print(f"  Temasider needing queries: {len(items_needing_queries)}/{len(temasider)}")
     print(f"  Total queries to generate: {total_needed}")
-    print(f"  Strategy: {TITLE_QUERY_COUNT} explicit title queries + {args.queries_per_doc - TITLE_QUERY_COUNT} LLM queries = {args.queries_per_doc} per temaside")
+    print(f"  Strategy: {TITLE_QUERY_COUNT} title + word splits (multi-word) + LLM = {args.queries_per_doc} per temaside")
     print(f"  Model: {args.model}")
 
     # Generate queries (saves to cache_path every 10 items)
@@ -275,9 +275,12 @@ async def _generate_all(
             passage = item.get("_passage", "")
             queries_needed = item["_queries_needed"]
 
-            # Reserve slots for explicit title queries
-            llm_queries_needed = max(0, queries_needed - TITLE_QUERY_COUNT)
+            # Build explicit queries: TITLE_QUERY_COUNT exact title + word sub-queries
             title_queries = [title] * min(TITLE_QUERY_COUNT, queries_needed)
+            word_subqueries = get_title_subqueries(title)
+
+            explicit_queries = title_queries + word_subqueries
+            llm_queries_needed = max(0, queries_needed - len(explicit_queries))
 
             if llm_queries_needed > 0:
                 llm_queries = await generate_queries_openai(
@@ -291,7 +294,7 @@ async def _generate_all(
             else:
                 llm_queries = []
 
-            new_queries = title_queries + llm_queries
+            new_queries = explicit_queries + llm_queries
 
             if new_queries:
                 existing = cached.get(content_id, []) if not force else []
@@ -300,7 +303,9 @@ async def _generate_all(
 
                 if generated_total <= 20:
                     print(f"\n  {title[:60]}")
-                    print(f"    [title x{len(title_queries)}] {title}")
+                    print(f"    [title x{TITLE_QUERY_COUNT}] {title}")
+                    if word_subqueries:
+                        print(f"    [word splits] {', '.join(word_subqueries)}")
                     for q in llm_queries[:3]:
                         print(f"    -> {q}")
             else:

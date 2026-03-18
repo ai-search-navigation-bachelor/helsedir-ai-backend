@@ -37,7 +37,7 @@ import httpx
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.ml.utils import enrich_content_with_links  # noqa: E402
+from scripts.ml.utils import enrich_with_child_content, get_title_subqueries  # noqa: E402
 
 
 async def generate_queries_async(
@@ -75,6 +75,7 @@ Regler:
 - Bruk norske medisinske termer
 - Minst halvparten av søkene skal være korte (1-2 ord)
 - Inkluder også noen lengre søk (3-5 ord)
+- Del opp sammensatte ord fra tittelen og inkluder delene som egne søk (f.eks. "bryst" og "kreft" fra "brystkreft")
 - Ikke bruk anførselstegn eller nummerering
 
 Returner kun søkefrasene, én per linje:"""
@@ -188,18 +189,27 @@ async def api_worker(
             title = item.get("tittel") or item.get("title") or ""
             passage = item.get("_passage", "")
 
-            new_queries = await generate_queries_async(
-                client=client,
-                api_key=api_key,
-                passage=passage,
-                info_type=info_type,
-                num_queries=queries_needed,
-            )
+            # Inject title word sub-queries (multi-word titles only)
+            word_subqueries = get_title_subqueries(title)
+            llm_queries_needed = max(0, queries_needed - len(word_subqueries))
 
-            if new_queries:
+            if llm_queries_needed > 0:
+                new_queries = await generate_queries_async(
+                    client=client,
+                    api_key=api_key,
+                    passage=passage,
+                    info_type=info_type,
+                    num_queries=llm_queries_needed,
+                )
+            else:
+                new_queries = []
+
+            combined = word_subqueries + new_queries
+
+            if combined:
                 existing = cached.get(content_id, []) if not force else []
-                cached[content_id] = existing + new_queries
-                stats["generated"] += len(new_queries)
+                cached[content_id] = existing + combined
+                stats["generated"] += len(combined)
             else:
                 stats["failed"] += 1
                 if stats["failed"] <= 3:
@@ -254,11 +264,6 @@ def main():
     if not api_keys:
         print("Error: GROQ_API_KEY not configured in .env")
         print("Get a free key at: https://console.groq.com/keys")
-        sys.exit(1)
-
-    # Check Helsedir API key
-    if not settings.helsedir_api_key:
-        print("Error: HELSEDIR_API_KEY not configured in .env")
         sys.exit(1)
 
     # Check database
@@ -323,21 +328,9 @@ def main():
         print("  Use --force to regenerate, or --queries-per-doc to increase target")
         return
 
-    # Enrich only documents that need queries
-    print(
-        f"\nFetching linked content for {len(items_needing_queries)} documents "
-        f"that need queries..."
-    )
-    print(
-        f"(Skipping {len(content_items) - len(items_needing_queries)} documents "
-        f"that already have queries)"
-    )
-    items_needing_queries = enrich_content_with_links(
-        items_needing_queries,
-        api_key=settings.helsedir_api_key,
-        max_links_per_item=10,
-        format_passage_fn=HealthContentEmbedding.format_passage,
-    )
+    # Enrich all content with child content (needed for linked_content lookup)
+    print(f"\nEnriching content with child content...")
+    enrich_with_child_content(content_items)
 
     # Pre-format passages so workers don't repeat the work
     for item in items_needing_queries:

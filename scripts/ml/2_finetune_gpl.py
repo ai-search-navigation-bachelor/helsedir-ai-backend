@@ -63,7 +63,7 @@ from typing import List, Dict, Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.ml.utils import enrich_temasider_with_children, enrich_with_child_content  # noqa: E402
+from scripts.ml.utils import enrich_temasider_with_children, enrich_with_child_content, get_title_subqueries  # noqa: E402
 
 
 def generate_queries_with_groq(
@@ -617,6 +617,28 @@ def main():
 
     total_queries = sum(len(q) for q in queries.values())
     print(f"\nTotal queries: {total_queries} for {len(queries)} documents")
+
+    # Inject title word sub-queries for all documents at training time.
+    # For multi-word titles, this adds each significant word as an extra query
+    # so the model learns to match component words (e.g. "kreft" → "brystkreft").
+    # Compound single words are handled by LLM prompt instructions in the
+    # query generation scripts.
+    id_to_item_map = {str(item["id"]): item for item in content_items}
+    title_subq_count = 0
+    for content_id, query_list in queries.items():
+        item = id_to_item_map.get(content_id)
+        if not item:
+            continue
+        title = item.get("tittel") or item.get("title") or ""
+        word_subqueries = get_title_subqueries(title)
+        if word_subqueries:
+            existing_lower = {q.lower() for q in query_list}
+            new_qs = [q for q in word_subqueries if q not in existing_lower]
+            if new_qs:
+                queries[content_id] = new_qs + query_list
+                title_subq_count += len(new_qs)
+    if title_subq_count:
+        print(f"  Injected {title_subq_count} title word sub-queries across {len(queries)} documents")
 
     # Show examples
     print("\nExample queries:")
