@@ -937,9 +937,9 @@ class SearchController:
 
     def get_suggestions(self, query: str) -> SuggestionResponse:
         """
-        Get autocomplete suggestions from theme pages.
+        Get autocomplete suggestions from all searchable content.
 
-        Matches theme page titles against query using prefix and substring matching.
+        Matches titles against query using prefix and substring matching.
         Returns up to 5 suggestions, with prefix matches ranked first.
 
         Args:
@@ -955,12 +955,13 @@ class SearchController:
             return SuggestionResponse(suggestions=[])
 
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        searchable = [item for item in all_content if item.content_type in content_service.searchable_types]
 
-        prefix_matches = []
-        substring_matches = []
+        TYPE_PRIORITY = {"temaside": 0, "retningslinje": 1}
 
-        for page in theme_pages:
+        matches = []  # (match_type 0=prefix/1=substring, type_priority, display_title_len, page)
+
+        for page in searchable:
             title_lower = page.title.lower()
             short_title_lower = (page.short_title or "").strip().lower()
             display_title_lower = page.display_title.lower()
@@ -971,17 +972,17 @@ class SearchController:
                 searchable_titles.append(display_title_lower)
 
             if any(value.startswith(query_lower) for value in searchable_titles):
-                prefix_matches.append(page)
+                match_type = 0
             elif any(query_lower in value for value in searchable_titles):
-                substring_matches.append(page)
+                match_type = 1
+            else:
+                continue
 
-        # Sort each group by title length (shorter = more specific)
-        prefix_matches.sort(key=lambda p: len(p.title))
-        substring_matches.sort(key=lambda p: len(p.title))
+            type_priority = TYPE_PRIORITY.get(page.content_type, 2)
+            matches.append((match_type, type_priority, len(page.display_title), page))
 
-        # Prefix matches first, then substring matches
-        matched = prefix_matches + substring_matches
-        top = matched[:max_suggestions]
+        matches.sort(key=lambda x: (x[0], x[1], x[2]))
+        top = [m[3] for m in matches[:max_suggestions]]
 
         suggestions = [
             Suggestion(
@@ -989,6 +990,7 @@ class SearchController:
                 title=page.title,
                 short_title=page.short_title,
                 display_title=page.display_title,
+                info_type=page.content_type,
             )
             for page in top
         ]

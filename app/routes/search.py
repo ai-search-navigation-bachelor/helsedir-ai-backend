@@ -87,9 +87,9 @@ async def search(
 @router.get("/suggestions", response_model=SuggestionResponse)
 async def suggestions(query: str = Query(..., min_length=1, description="Partial search text")):
     """
-    Get autocomplete suggestions based on theme pages.
+    Get autocomplete suggestions based on all searchable content.
 
-    Returns up to 5 theme page titles matching the query.
+    Returns up to 5 titles matching the query.
     Designed for search bar autocomplete with ~1.5s debounce on frontend.
 
     Query params:

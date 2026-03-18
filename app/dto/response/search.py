@@ -133,6 +133,7 @@ class Suggestion(BaseModel):
     title: str
     short_title: Optional[str] = None
     display_title: str
+    info_type: Optional[str] = None
 
 
 class SuggestionResponse(BaseModel):
