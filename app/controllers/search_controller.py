@@ -991,6 +991,7 @@ class SearchController:
                 short_title=page.short_title,
                 display_title=page.display_title,
                 info_type=page.content_type,
+                path=page.path,
             )
             for page in top
         ]
