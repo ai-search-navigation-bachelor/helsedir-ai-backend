@@ -422,15 +422,16 @@ class TestSearchControllerSearchAsync:
             s.id for s in response_upper.suggestions
         }
 
-    def test_get_suggestions_only_returns_temasider(self, mock_content):
+    def test_get_suggestions_returns_temasider_and_retningslinjer(self, mock_content):
         ctrl = SearchController()
-        # "diabetes" matches "Diabetes retningslinje" (not a temaside)
-        # and "Psykisk helse temaside" won't match "diabetes"
+        # "diabetes" matches "Diabetes retningslinje" (retningslinje, not temaside)
+        # suggestions now include both temasider and retningslinjer
         response = ctrl.get_suggestions("diabetes")
+        allowed_types = {"temaside", "retningslinje"}
         for s in response.suggestions:
             item = mock_content.content_by_id.get(s.id)
             if item:
-                assert item.content_type == "temaside"
+                assert item.content_type in allowed_types
 
     def test_get_suggestions_max_five_results(self, mock_content):
         from app.services.data.content_service import content_service
