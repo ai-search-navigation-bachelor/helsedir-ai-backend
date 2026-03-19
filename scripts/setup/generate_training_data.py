@@ -203,6 +203,7 @@ def generate_training_data(
     temaside_click_weight: float = 0.35,
     retningslinje_click_weight: float = 0.30,
     other_click_weight: float = 0.15,
+    progress_callback=None,
 ) -> Dict:
     """
     Generate training data by running real searches for popular pages.
@@ -309,6 +310,16 @@ def generate_training_data(
         if (i + 1) % 20 == 0:
             conn.commit()
             print(f"  [{i + 1}/{len(pages)}] {searches_created} searches, {clicks_created} clicks")
+
+        if progress_callback:
+            progress_callback({
+                "current": i + 1,
+                "total": len(pages),
+                "searches_created": searches_created,
+                "results_shown": results_shown,
+                "clicks_created": clicks_created,
+                "skipped": skipped,
+            })
 
     conn.commit()
     cursor.close()

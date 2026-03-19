@@ -10,6 +10,8 @@ Provides endpoints for:
 
 import logging
 import re
+import threading
+import uuid as _uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -24,6 +26,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dev", tags=["dev"])
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+# ---------------------------------------------------------------------------
+# Background job tracking for data generation
+# ---------------------------------------------------------------------------
+_generate_jobs: Dict[str, Dict] = {}  # job_id -> status dict
+
+# Track which pre-trained model is currently active (None = default reranker.json)
+_active_preset_id: Optional[int] = None
 
 _DEFAULT_WEIGHTS: Dict[str, float] = {name: 1.0 for name in RERANK_FEATURES}
 
@@ -109,11 +119,27 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     success: bool
+    job_id: Optional[str] = None  # For polling progress
     searches_created: int = 0
     results_shown: int = 0
     clicks_created: int = 0
     skipped: int = 0
     training_groups_available: int = 0  # Groups with ≥5 results AND at least one click
+    error: Optional[str] = None
+
+
+class GenerateStatusResponse(BaseModel):
+    """Progress status for a running generation job."""
+    job_id: str
+    status: str  # "running", "completed", "failed"
+    current: int = 0  # Current page being processed
+    total: int = 0    # Total pages to process
+    progress: float = 0.0  # 0.0 - 1.0
+    searches_created: int = 0
+    results_shown: int = 0
+    clicks_created: int = 0
+    skipped: int = 0
+    training_groups_available: int = 0
     error: Optional[str] = None
 
 
@@ -133,8 +159,20 @@ class TrainResponse(BaseModel):
 
 class ModelInfoResponse(BaseModel):
     available: bool
+    active_preset_id: Optional[int] = None
     feature_names: List[str]
     feature_importances: Optional[Dict[str, float]] = None
+
+
+class PretrainedModelInfo(BaseModel):
+    preset_id: int
+    name: str
+    description: str
+    active: bool
+
+
+class SelectModelRequest(BaseModel):
+    preset_id: int = Field(..., description="Preset ID of the pre-trained model to activate")
 
 
 # ---------------------------------------------------------------------------
@@ -366,16 +404,9 @@ async def dev_search(
         raise HTTPException(status_code=500, detail="Dev search failed")
 
 
-@router.post("/generate", response_model=GenerateResponse)
-async def dev_generate(request: GenerateRequest = GenerateRequest()):
-    """
-    Generate synthetic training data from a registered CSV dataset.
-
-    Supply **preset_id** to load all settings from a saved preset, or
-    **dataset_id** to pick a dataset and tune click weights manually.
-
-    After generating, call **POST /dev/train** to train the ranking model.
-    """
+def _run_generate_job(job_id: str, effective: dict):
+    """Background worker for training data generation."""
+    job = _generate_jobs[job_id]
     try:
         import sys
         sys.path.insert(0, str(_PROJECT_ROOT))
@@ -386,47 +417,22 @@ async def dev_generate(request: GenerateRequest = GenerateRequest()):
             get_connection,
         )
 
-        # Resolve settings: start from preset (if given), then apply any overrides
-        effective = request.model_dump()
-
-        if request.preset_id is not None:
-            preset = training_repository.get_preset(request.preset_id)
-            if preset is None:
-                return GenerateResponse(success=False, error=f"Preset {request.preset_id} not found")
-            # Fill in from preset (request fields that are still at defaults are overridden)
-            effective["dataset_id"] = preset["dataset_id"]
-            for field in ("top_n", "k", "target_click_min", "target_click_max",
-                          "temaside_click_weight", "retningslinje_click_weight", "other_click_weight"):
-                effective[field] = preset[field]
-
-        if effective.get("dataset_id") is None:
-            return GenerateResponse(
-                success=False,
-                error="Provide either preset_id or dataset_id.",
-            )
-
         dataset = training_repository.get_dataset(effective["dataset_id"])
-        if dataset is None:
-            return GenerateResponse(success=False, error=f"Dataset {effective['dataset_id']} not found")
-
         csv_path = DATASETS_DIR / dataset["filename"]
-        if not csv_path.exists():
-            return GenerateResponse(
-                success=False,
-                error=f"CSV file '{dataset['filename']}' not found in data/training_datasets/. "
-                      "Re-upload the file via POST /dev/datasets/upload.",
-            )
-
         csv_rows = parse_page_view_csv(str(csv_path))
         matched = match_csv_to_content(csv_rows)
-        if not matched:
-            return GenerateResponse(
-                success=False,
-                error="No CSV pages matched content in the database.",
-            )
-
         matched.sort(key=lambda x: -x["views"])
         pages = matched[: effective["top_n"]]
+
+        job["total"] = len(pages)
+
+        def on_progress(p):
+            job["current"] = p["current"]
+            job["total"] = p["total"]
+            job["searches_created"] = p["searches_created"]
+            job["results_shown"] = p["results_shown"]
+            job["clicks_created"] = p["clicks_created"]
+            job["skipped"] = p["skipped"]
 
         conn = get_connection()
         try:
@@ -447,6 +453,7 @@ async def dev_generate(request: GenerateRequest = GenerateRequest()):
                 temaside_click_weight=effective["temaside_click_weight"],
                 retningslinje_click_weight=effective["retningslinje_click_weight"],
                 other_click_weight=effective["other_click_weight"],
+                progress_callback=on_progress,
             )
 
             cursor = conn.cursor()
@@ -467,18 +474,100 @@ async def dev_generate(request: GenerateRequest = GenerateRequest()):
         finally:
             conn.close()
 
-        return GenerateResponse(
-            success=True,
-            searches_created=stats["searches_created"],
-            results_shown=stats["results_shown"],
-            clicks_created=stats["clicks_created"],
-            skipped=stats["skipped"],
-            training_groups_available=training_groups,
-        )
+        job.update({
+            "status": "completed",
+            "current": job["total"],
+            "searches_created": stats["searches_created"],
+            "results_shown": stats["results_shown"],
+            "clicks_created": stats["clicks_created"],
+            "skipped": stats["skipped"],
+            "training_groups_available": training_groups,
+        })
 
     except Exception as e:
-        logger.exception("Training data generation failed")
-        return GenerateResponse(success=False, error=str(e))
+        logger.exception("Training data generation failed (job %s)", job_id)
+        job["status"] = "failed"
+        job["error"] = str(e)
+
+
+@router.post("/generate", response_model=GenerateResponse)
+async def dev_generate(request: GenerateRequest = GenerateRequest()):
+    """
+    Start generating synthetic training data in the background.
+
+    Returns a **job_id** immediately. Poll **GET /dev/generate/status/{job_id}**
+    for progress updates.
+    """
+    # Resolve settings from preset
+    effective = request.model_dump()
+
+    if request.preset_id is not None:
+        preset = training_repository.get_preset(request.preset_id)
+        if preset is None:
+            return GenerateResponse(success=False, error=f"Preset {request.preset_id} not found")
+        effective["dataset_id"] = preset["dataset_id"]
+        for field in ("top_n", "k", "target_click_min", "target_click_max",
+                      "temaside_click_weight", "retningslinje_click_weight", "other_click_weight"):
+            effective[field] = preset[field]
+
+    if effective.get("dataset_id") is None:
+        return GenerateResponse(success=False, error="Provide either preset_id or dataset_id.")
+
+    dataset = training_repository.get_dataset(effective["dataset_id"])
+    if dataset is None:
+        return GenerateResponse(success=False, error=f"Dataset {effective['dataset_id']} not found")
+
+    csv_path = DATASETS_DIR / dataset["filename"]
+    if not csv_path.exists():
+        return GenerateResponse(
+            success=False,
+            error=f"CSV file '{dataset['filename']}' not found. Re-upload via POST /dev/datasets/upload.",
+        )
+
+    # Create job and start in background
+    job_id = str(_uuid.uuid4())
+    _generate_jobs[job_id] = {
+        "status": "running",
+        "current": 0,
+        "total": 0,
+        "searches_created": 0,
+        "results_shown": 0,
+        "clicks_created": 0,
+        "skipped": 0,
+        "training_groups_available": 0,
+        "error": None,
+    }
+
+    thread = threading.Thread(target=_run_generate_job, args=(job_id, effective), daemon=True)
+    thread.start()
+
+    return GenerateResponse(success=True, job_id=job_id)
+
+
+@router.get("/generate/status/{job_id}", response_model=GenerateStatusResponse)
+async def dev_generate_status(job_id: str):
+    """Poll progress for a running generation job."""
+    job = _generate_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    total = job["total"]
+    current = job["current"]
+    progress = current / total if total > 0 else 0.0
+
+    return GenerateStatusResponse(
+        job_id=job_id,
+        status=job["status"],
+        current=current,
+        total=total,
+        progress=round(progress, 3),
+        searches_created=job["searches_created"],
+        results_shown=job["results_shown"],
+        clicks_created=job["clicks_created"],
+        skipped=job["skipped"],
+        training_groups_available=job["training_groups_available"],
+        error=job["error"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +758,79 @@ async def dev_train(request: TrainRequest = TrainRequest()):
         return TrainResponse(success=False, error=str(e))
 
 
+@router.get("/models", response_model=List[PretrainedModelInfo])
+async def dev_list_models():
+    """
+    List all pre-trained models available for selection.
+
+    Each model corresponds to a training preset and is stored in
+    models/ranking/<preset_id>.json.
+    """
+    global _active_preset_id
+    presets = training_repository.get_all_presets()
+    model_dir = _PROJECT_ROOT / "models" / "ranking"
+
+    result = []
+    for p in presets:
+        model_path = model_dir / f"{p['id']}.json"
+        if model_path.exists():
+            result.append(PretrainedModelInfo(
+                preset_id=p["id"],
+                name=p["name"],
+                description=p["description"],
+                active=(_active_preset_id == p["id"]),
+            ))
+    return result
+
+
+@router.post("/model/select", response_model=ModelInfoResponse)
+async def dev_select_model(request: SelectModelRequest):
+    """
+    Switch the active ranking model to a pre-trained model.
+
+    Loads the model from models/ranking/<preset_id>.json and makes it
+    the active model used by /search when rerank=true.
+    """
+    global _active_preset_id
+    from app.services.search.ml_service import ml_service
+    from app.ml.ranking_model import HealthContentReranker
+
+    model_path = _PROJECT_ROOT / "models" / "ranking" / f"{request.preset_id}.json"
+    if not model_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pre-trained model for preset {request.preset_id}. "
+                   f"Run: python scripts/setup/pretrain_all_models.py --preset {request.preset_id}",
+        )
+
+    try:
+        reranker = HealthContentReranker.load(str(model_path))
+        ml_service.ranking_model = reranker
+        _active_preset_id = request.preset_id
+        logger.info("Switched to pre-trained model for preset %d", request.preset_id)
+    except Exception:
+        logger.exception("Failed to load model for preset %d", request.preset_id)
+        raise HTTPException(status_code=500, detail="Failed to load model")
+
+    # Return model info
+    try:
+        raw = reranker.model.get_booster().get_score(importance_type="gain")
+        total = sum(raw.values()) or 1.0
+        importances: Dict[str, float] = {name: 0.0 for name in RERANK_FEATURES}
+        for k, v in raw.items():
+            if k in importances:
+                importances[k] = round(v / total, 4)
+    except Exception:
+        importances = None
+
+    return ModelInfoResponse(
+        available=True,
+        active_preset_id=_active_preset_id,
+        feature_names=list(RERANK_FEATURES),
+        feature_importances=importances,
+    )
+
+
 @router.get("/model", response_model=ModelInfoResponse)
 async def dev_model_info():
     """
@@ -677,6 +839,7 @@ async def dev_model_info():
     Returns feature importances (normalized gain) so the frontend can
     show which features the model relies on most.
     """
+    global _active_preset_id
     from app.services.search.ml_service import ml_service
 
     if not ml_service.is_ranking_available():
@@ -699,6 +862,7 @@ async def dev_model_info():
 
     return ModelInfoResponse(
         available=True,
+        active_preset_id=_active_preset_id,
         feature_names=list(RERANK_FEATURES),
         feature_importances=importances,
     )
