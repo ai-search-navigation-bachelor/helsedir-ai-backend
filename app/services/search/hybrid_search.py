@@ -39,6 +39,7 @@ class HybridCandidate:
     pre_rerank_position: int = 0  # Position before ML reranking (1-indexed, 0 = not set)
     rerank_score: Optional[float] = None  # Raw ML model score (None = model not applied)
     rerank_contributions: Optional[Dict[str, float]] = None  # Per-feature SHAP contributions
+    ranking_features: Optional[Dict[str, float]] = None  # Raw feature values used by ML model
 
 
 class HybridSearch:
@@ -310,6 +311,7 @@ class HybridSearch:
                 rerank_info = RerankInfo(
                     score=round(c.rerank_score, 4),
                     rank_change=c.pre_rerank_position - position,
+                    features=c.ranking_features or {},
                     contributions=c.rerank_contributions or {},
                 )
 
@@ -372,6 +374,10 @@ class HybridSearch:
                 features = self._extract_ranking_features(c, role, ctr_map, query_lower, query_keywords)
                 features_list.append(features)
             t_features = time.perf_counter() - t0
+
+            # Store raw feature values on each candidate
+            for i, c in enumerate(candidates):
+                c.ranking_features = features_list[i]
 
             t0 = time.perf_counter()
             if explain:
