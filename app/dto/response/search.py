@@ -134,6 +134,7 @@ class Suggestion(BaseModel):
     short_title: Optional[str] = None
     display_title: str
     info_type: Optional[str] = None
+    path: Optional[str] = None
 
 
 class SuggestionResponse(BaseModel):
