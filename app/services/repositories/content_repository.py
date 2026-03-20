@@ -693,6 +693,40 @@ class ContentRepository:
             if conn:
                 conn.close()
 
+    def get_non_empty_theme_page_ids(self, theme_page_ids: List[str]) -> Optional[Set[str]]:
+        """
+        Return theme-page IDs that have at least one linked child row.
+
+        Returns:
+            Set of non-empty theme-page IDs when the query succeeds.
+            None when the lookup could not be completed.
+        """
+        if not theme_page_ids:
+            return set()
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return None
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            placeholders = ",".join(["%s"] * len(theme_page_ids))
+            query = f"""
+                SELECT DISTINCT theme_page_id
+                FROM theme_page_content
+                WHERE theme_page_id IN ({placeholders})
+            """
+            cursor.execute(query, tuple(theme_page_ids))
+            return {row[0] for row in cursor.fetchall()}
+        except mysql.connector.Error as e:
+            logger.error("Error getting non-empty theme page ids: %s", e)
+            return None
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
     def get_theme_pages(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get all theme pages, optionally filtered by category.

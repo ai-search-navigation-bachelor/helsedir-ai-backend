@@ -193,6 +193,17 @@ class TestSearchControllerHelpers:
 
         assert [result.id for result in filtered] == ["text-theme"]
 
+    def test_get_non_empty_theme_page_ids_fails_open_on_lookup_failure(self, mocker):
+        ctrl = SearchController()
+        mocker.patch(
+            "app.controllers.search_controller.content_repository.get_non_empty_theme_page_ids",
+            return_value=None,
+        )
+
+        result = ctrl._get_non_empty_theme_page_ids(["t1", "t2"])
+
+        assert result == {"t1", "t2"}
+
 
 @pytest.mark.unit
 class TestSearchControllerCaching:
@@ -245,6 +256,38 @@ class TestSearchControllerCaching:
         ctrl._execute_search("diabetes", "lege", "keyword", 10)
 
         assert mock_search_svc.search.call_count == 2
+
+    def test_execute_search_filters_empty_theme_pages_before_fallback_check(self, mocker):
+        ctrl = SearchController()
+        mock_search_svc = MagicMock()
+        mock_search_svc.search.return_value = [_make_result("empty-theme", 0.9, "temaside")]
+        ctrl.search_service = mock_search_svc
+
+        filtered_results = []
+        fallback_result = [_make_result("filled-theme", 0.8, "temaside")]
+
+        def fake_filter(results):
+            filtered_results.append([result.id for result in results])
+            return []
+
+        fallback_mock = mocker.patch.object(
+            ctrl,
+            "_search_theme_pages_fuzzy",
+            return_value=fallback_result,
+        )
+        merge_mock = mocker.patch.object(
+            ctrl,
+            "_merge_theme_fallback_results",
+            side_effect=lambda regular, fallback, max_results=None: fallback,
+        )
+        mocker.patch.object(ctrl, "_filter_empty_theme_page_results", side_effect=fake_filter)
+
+        results = ctrl._execute_search("diabetes", None, "keyword", 10)
+
+        fallback_mock.assert_called_once()
+        merge_mock.assert_called_once()
+        assert filtered_results == [["empty-theme"]]
+        assert [result.id for result in results] == ["filled-theme"]
 
 
 @pytest.mark.unit
@@ -493,6 +536,34 @@ class TestSearchControllerSearchAsync:
         response = ctrl.get_suggestions("psykisk")
 
         assert response.suggestions == []
+
+    def test_get_suggestions_only_checks_matching_theme_pages_for_emptiness(self, mock_content, mocker):
+        from app.services.data.content_service import content_service
+        from app.entities.content import ContentItem
+
+        content_service.content.append(
+            ContentItem(
+                id="005",
+                title="Annen temaside",
+                body="",
+                content_type="temaside",
+                path="/temasider/annen",
+            )
+        )
+        content_service.content_by_id["005"] = content_service.content[-1]
+        content_service.content_by_path["/temasider/annen"] = content_service.content[-1]
+
+        ctrl = SearchController()
+        emptiness_mock = mocker.patch.object(
+            ctrl,
+            "_filter_empty_theme_page_items",
+            side_effect=lambda items: items,
+        )
+
+        ctrl.get_suggestions("psykisk")
+
+        checked_ids = [item.id for item in emptiness_mock.call_args.args[0]]
+        assert checked_ids == ["004"]
 
     async def test_get_theme_pages_excludes_empty_theme_pages(self, mocker):
         ctrl = SearchController()
