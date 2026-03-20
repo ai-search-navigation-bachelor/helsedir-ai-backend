@@ -5,6 +5,7 @@ Service for fetching and normalizing NKI statistics payloads.
 import asyncio
 import copy
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,11 +24,13 @@ class NKIStatisticsService:
 
     def __init__(self):
         self._cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self._cache_lock = threading.Lock()
         self._cache_ttl_seconds = max(0, settings.nki_statistics_cache_ttl_seconds)
 
     def clear_cache(self) -> None:
         """Clear the in-memory indicator cache."""
-        self._cache.clear()
+        with self._cache_lock:
+            self._cache.clear()
 
     async def get_statistics_for_content(self, content: ContentItem) -> Dict[str, Any]:
         """Return a frontend-friendly statistics payload for one content page."""
@@ -70,20 +73,22 @@ class NKIStatisticsService:
         return response
 
     def _get_cached_indicator_payload(self, indicator_id: str) -> Optional[Dict[str, Any]]:
-        cached = self._cache.get(indicator_id)
-        if not cached:
-            return None
+        with self._cache_lock:
+            cached = self._cache.get(indicator_id)
+            if not cached:
+                return None
 
-        expires_at, payload = cached
-        if expires_at < time.monotonic():
-            self._cache.pop(indicator_id, None)
-            return None
-        return payload
+            expires_at, payload = cached
+            if expires_at < time.monotonic():
+                self._cache.pop(indicator_id, None)
+                return None
+            return payload
 
     def _set_cached_indicator_payload(self, indicator_id: str, payload: Dict[str, Any]) -> None:
         if self._cache_ttl_seconds <= 0:
             return
-        self._cache[indicator_id] = (time.monotonic() + self._cache_ttl_seconds, payload)
+        with self._cache_lock:
+            self._cache[indicator_id] = (time.monotonic() + self._cache_ttl_seconds, payload)
 
     def _empty_response(
         self,

@@ -204,6 +204,20 @@ class TestSearchControllerHelpers:
 
         assert result == {"t1", "t2"}
 
+    def test_get_non_empty_theme_page_ids_reuses_individual_cache_across_input_order(self, mocker):
+        ctrl = SearchController()
+        lookup_mock = mocker.patch(
+            "app.controllers.search_controller.content_repository.get_non_empty_theme_page_ids",
+            return_value={"t1"},
+        )
+
+        first = ctrl._get_non_empty_theme_page_ids(["t1", "t2"])
+        second = ctrl._get_non_empty_theme_page_ids(["t2", "t1"])
+
+        assert first == {"t1"}
+        assert second == {"t1"}
+        lookup_mock.assert_called_once_with(["t1", "t2"])
+
 
 @pytest.mark.unit
 class TestSearchControllerCaching:
@@ -288,6 +302,33 @@ class TestSearchControllerCaching:
         merge_mock.assert_called_once()
         assert filtered_results == [["empty-theme"]]
         assert [result.id for result in results] == ["filled-theme"]
+
+    def test_execute_search_backfills_results_after_empty_theme_pages_are_removed(self, mocker):
+        ctrl = SearchController()
+        mock_search_svc = MagicMock()
+        mock_search_svc.search.return_value = [
+            _make_result("empty-1", 0.95, "temaside"),
+            _make_result("empty-2", 0.94, "temaside"),
+            _make_result("guide-1", 0.93, "veileder"),
+            _make_result("guide-2", 0.92, "veileder"),
+            _make_result("guide-3", 0.91, "veileder"),
+        ]
+        ctrl.search_service = mock_search_svc
+        mocker.patch.object(
+            ctrl,
+            "_filter_empty_theme_page_results",
+            return_value=[
+                _make_result("guide-1", 0.93, "veileder"),
+                _make_result("guide-2", 0.92, "veileder"),
+                _make_result("guide-3", 0.91, "veileder"),
+            ],
+        )
+        mocker.patch.object(ctrl, "_needs_theme_fuzzy_fallback", return_value=False)
+
+        results = ctrl._execute_search("diabetes", None, "keyword", 2)
+
+        assert [result.id for result in results] == ["guide-1", "guide-2"]
+        mock_search_svc.search.assert_called_once_with(query="diabetes", role=None, k=4)
 
 
 @pytest.mark.unit

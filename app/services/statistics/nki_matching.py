@@ -4,6 +4,7 @@ Helpers for matching NKI indicators to content rows.
 
 import re
 import unicodedata
+import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
@@ -111,13 +112,19 @@ def _build_title_index(
     normalized: bool,
 ) -> Dict[str, List[Dict[str, Any]]]:
     index: Dict[str, List[Dict[str, Any]]] = {}
+    seen_keys: Dict[str, set[str]] = {}
     for row in content_rows:
+        row_id = str(row.get("id") or "")
         for field in ("tittel", "kort_tittel"):
             value = row.get(field)
             if not isinstance(value, str) or not value.strip():
                 continue
             key = normalize_match_text(value) if normalized else value.strip()
+            row_ids_for_key = seen_keys.setdefault(key, set())
+            if row_id in row_ids_for_key:
+                continue
             index.setdefault(key, []).append(row)
+            row_ids_for_key.add(row_id)
     return index
 
 
@@ -271,5 +278,12 @@ def plan_indicator_backfill(
         updates.append(match)
 
     updates.sort(key=lambda item: (item["content_id"], item["indicator_id"]))
-    skipped.sort(key=lambda item: str(item))
+    skipped.sort(
+        key=lambda item: (
+            item.get("reason") or "",
+            item.get("content_id") or "",
+            item.get("indicator_id") or "",
+            json.dumps(item, sort_keys=True, ensure_ascii=False),
+        )
+    )
     return updates, skipped

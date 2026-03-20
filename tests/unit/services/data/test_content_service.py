@@ -56,3 +56,23 @@ def test_parse_ehelsestandard_fields_prefers_stored_metadata_json():
             "file_type": "PDF",
         }
     ]
+
+
+def test_load_from_api_reloads_from_database_cache_after_refresh(mocker):
+    from app.services.data.content_service import content_service
+
+    search_mock = mocker.patch(
+        "app.services.external.helsedir_api_service.helsedir_api_service.search_infobits",
+        return_value=[{"id": "001", "tittel": "Tittel", "tekst": "Tekst", "infoType": "statistikk"}],
+    )
+    cache_mock = mocker.patch(
+        "app.services.data.content_service.database_service.cache_content_batch",
+        return_value=1,
+    )
+    load_mock = mocker.patch.object(content_service, "load_content")
+
+    content_service.load_from_api(query_text="test", max_items=1)
+
+    search_mock.assert_called_once_with(query_text="test", get_full_infobits=True)
+    cache_mock.assert_called_once()
+    load_mock.assert_called_once()

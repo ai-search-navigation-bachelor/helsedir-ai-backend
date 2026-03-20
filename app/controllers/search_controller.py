@@ -68,8 +68,8 @@ class SearchController:
             Tuple[float, List["SearchResult"]],
         ] = {}
         self._theme_page_non_empty_cache: Dict[
-            Tuple[str, ...],
-            Tuple[float, set[str]],
+            str,
+            Tuple[float, bool],
         ] = {}
 
     @staticmethod
@@ -100,20 +100,32 @@ class SearchController:
         unique_theme_page_ids = tuple(dict.fromkeys(theme_page_ids))
         now = time.monotonic()
 
-        cached = self._theme_page_non_empty_cache.get(unique_theme_page_ids)
-        if cached and now - cached[0] < self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS:
-            return cached[1]
-
         stale_keys = [
             cache_key
-            for cache_key, (cached_at, _) in self._theme_page_non_empty_cache.items()
+            for cache_key, (cached_at, _) in list(self._theme_page_non_empty_cache.items())
             if now - cached_at >= self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS
         ]
         for cache_key in stale_keys:
             del self._theme_page_non_empty_cache[cache_key]
 
+        cached_non_empty_theme_page_ids = {
+            theme_page_id
+            for theme_page_id in unique_theme_page_ids
+            if (cached := self._theme_page_non_empty_cache.get(theme_page_id))
+            and now - cached[0] < self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS
+            and cached[1]
+        }
+        missing_theme_page_ids = [
+            theme_page_id
+            for theme_page_id in unique_theme_page_ids
+            if theme_page_id not in self._theme_page_non_empty_cache
+            or now - self._theme_page_non_empty_cache[theme_page_id][0] >= self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS
+        ]
+        if not missing_theme_page_ids:
+            return cached_non_empty_theme_page_ids
+
         non_empty_theme_page_ids = content_repository.get_non_empty_theme_page_ids(
-            list(unique_theme_page_ids)
+            missing_theme_page_ids
         )
         if non_empty_theme_page_ids is None:
             logger.warning(
@@ -122,11 +134,13 @@ class SearchController:
             )
             return set(unique_theme_page_ids)
 
-        self._theme_page_non_empty_cache[unique_theme_page_ids] = (
-            now,
-            set(non_empty_theme_page_ids),
-        )
-        return set(non_empty_theme_page_ids)
+        fetched_non_empty_theme_page_ids = set(non_empty_theme_page_ids)
+        for theme_page_id in missing_theme_page_ids:
+            self._theme_page_non_empty_cache[theme_page_id] = (
+                now,
+                theme_page_id in fetched_non_empty_theme_page_ids,
+            )
+        return cached_non_empty_theme_page_ids | fetched_non_empty_theme_page_ids
 
     def _filter_empty_theme_page_results(
         self,
@@ -802,14 +816,17 @@ class SearchController:
         for k in stale_keys:
             del self._search_cache[k]
 
+        requested_results = max(1, int(max_results))
+        search_k = min(1000, max(requested_results, requested_results * 2))
+
         # Execute regular search
         if method == "semantic":
-            regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_semantic(query=query, role=role, k=search_k)
         elif method == "keyword":
-            regular_results = self.search_service.search(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search(query=query, role=role, k=search_k)
         else:  # hybrid
             regular_results = self.search_service.search_hybrid(
-                query=query, role=role, k=max_results,
+                query=query, role=role, k=search_k,
                 bm25_weight=bm25_weight, semantic_weight=semantic_weight,
                 rrf_k=max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
                 temaside_boost=temaside_boost,
@@ -823,10 +840,9 @@ class SearchController:
         # Coerce None to empty list
         if regular_results is None:
             regular_results = []
-        else:
-            regular_results = regular_results[:max(1, int(max_results))]
 
         regular_results = self._filter_empty_theme_page_results(regular_results)
+        regular_results = regular_results[:requested_results]
 
         if self._needs_theme_fuzzy_fallback(regular_results):
             # Controlled fallback for typo tolerance on theme pages only.

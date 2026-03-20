@@ -38,6 +38,36 @@ class HelseDirectorateAPIService:
             "Accept": "application/json",
         }
 
+    def _parse_nki_response(
+        self,
+        response: httpx.Response,
+        *,
+        indicator_id: Optional[str] = None,
+        allow_no_content: bool = False,
+    ) -> Optional[Any]:
+        """Validate common NKI responses and return parsed JSON."""
+        if allow_no_content and response.status_code == 204:
+            return None
+        if response.status_code == 401:
+            raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+        if response.status_code == 403:
+            raise HelseDirectorateAPIError(
+                "Forbidden: API key does not have access to this resource"
+            )
+        if response.status_code == 404:
+            if allow_no_content and indicator_id:
+                raise HelseDirectorateAPIError(f"NKI indicator data not found: {indicator_id}")
+            if indicator_id:
+                raise HelseDirectorateAPIError(f"NKI indicator not found: {indicator_id}")
+            raise HelseDirectorateAPIError("NKI resource not found")
+        if response.status_code >= 400:
+            raise HelseDirectorateAPIError(
+                f"API request failed with status {response.status_code}: {response.text}"
+            )
+
+        response.raise_for_status()
+        return response.json()
+
     def search_infobits(
         self,
         query_text: Optional[str] = None,
@@ -135,7 +165,7 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     def get_infobit_by_id(
@@ -180,7 +210,7 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     def get_file_by_id(
@@ -242,13 +272,13 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     def list_nki_quality_indicators(
         self,
         timeout: float = 15.0,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """
         List NKI quality indicators.
 
@@ -269,25 +299,14 @@ class HelseDirectorateAPIService:
                     headers=self._get_headers(self.nki_api_key),
                     timeout=timeout,
                 )
-
-                if response.status_code == 401:
-                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
-                elif response.status_code == 403:
-                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
-                elif response.status_code >= 400:
-                    raise HelseDirectorateAPIError(
-                        f"API request failed with status {response.status_code}: {response.text}"
-                    )
-
-                response.raise_for_status()
-                return response.json()
+                return self._parse_nki_response(response)
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     def get_nki_quality_indicator_by_id(
@@ -312,27 +331,14 @@ class HelseDirectorateAPIService:
                     headers=self._get_headers(self.nki_api_key),
                     timeout=timeout,
                 )
-
-                if response.status_code == 401:
-                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
-                elif response.status_code == 403:
-                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
-                elif response.status_code == 404:
-                    raise HelseDirectorateAPIError(f"NKI indicator not found: {indicator_id}")
-                elif response.status_code >= 400:
-                    raise HelseDirectorateAPIError(
-                        f"API request failed with status {response.status_code}: {response.text}"
-                    )
-
-                response.raise_for_status()
-                return response.json()
+                return self._parse_nki_response(response, indicator_id=indicator_id)
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     def get_nki_quality_indicator_data(
@@ -340,7 +346,7 @@ class HelseDirectorateAPIService:
         indicator_id: str,
         timeout: float = 20.0,
         content_type: str = "application/json",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[Any]:
         """
         Get a single NKI quality indicator dataset payload.
 
@@ -362,29 +368,18 @@ class HelseDirectorateAPIService:
                     params={"contentType": content_type},
                     timeout=timeout,
                 )
-
-                if response.status_code == 204:
-                    return None
-                if response.status_code == 401:
-                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
-                elif response.status_code == 403:
-                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
-                elif response.status_code == 404:
-                    raise HelseDirectorateAPIError(f"NKI indicator data not found: {indicator_id}")
-                elif response.status_code >= 400:
-                    raise HelseDirectorateAPIError(
-                        f"API request failed with status {response.status_code}: {response.text}"
-                    )
-
-                response.raise_for_status()
-                return response.json()
+                return self._parse_nki_response(
+                    response,
+                    indicator_id=indicator_id,
+                    allow_no_content=True,
+                )
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def get_infobit_by_id_async(
@@ -448,7 +443,7 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def get_kapittel_by_id_async(
@@ -502,7 +497,7 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def get_file_by_id_async(
@@ -564,7 +559,7 @@ class HelseDirectorateAPIService:
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def get_content_by_href_async(
@@ -632,7 +627,7 @@ class HelseDirectorateAPIService:
             )
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             )
 
     async def get_nki_quality_indicator_by_id_async(
@@ -657,27 +652,14 @@ class HelseDirectorateAPIService:
                     headers=self._get_headers(self.nki_api_key),
                     timeout=timeout,
                 )
-
-                if response.status_code == 401:
-                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
-                elif response.status_code == 403:
-                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
-                elif response.status_code == 404:
-                    raise HelseDirectorateAPIError(f"NKI indicator not found: {indicator_id}")
-                elif response.status_code >= 400:
-                    raise HelseDirectorateAPIError(
-                        f"API request failed with status {response.status_code}: {response.text}"
-                    )
-
-                response.raise_for_status()
-                return response.json()
+                return self._parse_nki_response(response, indicator_id=indicator_id)
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def get_nki_quality_indicator_data_async(
@@ -685,7 +667,7 @@ class HelseDirectorateAPIService:
         indicator_id: str,
         timeout: float = 20.0,
         content_type: str = "application/json",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[Any]:
         """
         Async version of get_nki_quality_indicator_data.
         """
@@ -704,29 +686,18 @@ class HelseDirectorateAPIService:
                     params={"contentType": content_type},
                     timeout=timeout,
                 )
-
-                if response.status_code == 204:
-                    return None
-                if response.status_code == 401:
-                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
-                elif response.status_code == 403:
-                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
-                elif response.status_code == 404:
-                    raise HelseDirectorateAPIError(f"NKI indicator data not found: {indicator_id}")
-                elif response.status_code >= 400:
-                    raise HelseDirectorateAPIError(
-                        f"API request failed with status {response.status_code}: {response.text}"
-                    )
-
-                response.raise_for_status()
-                return response.json()
+                return self._parse_nki_response(
+                    response,
+                    indicator_id=indicator_id,
+                    allow_no_content=True,
+                )
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
             ) from e
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             ) from e
 
     async def search_infobits_async(
@@ -809,7 +780,7 @@ class HelseDirectorateAPIService:
             )
         except httpx.RequestError as e:
             raise HelseDirectorateAPIError(
-                f"API request failed: {str(e)}"
+                f"API request failed: {e!s}"
             )
 
 

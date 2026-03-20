@@ -11,6 +11,7 @@ Ambiguous matches are skipped.
 """
 
 import argparse
+import json
 import sys
 import time
 from collections import Counter
@@ -144,6 +145,9 @@ def save_matches_batch(updates: List[Dict[str, Any]]) -> int:
         )
         conn.commit()
         return cursor.rowcount
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         if cursor:
             cursor.close()
@@ -264,7 +268,14 @@ def _match_indicators_with_progress(
         updates.append(match)
 
     updates.sort(key=lambda item: (item["content_id"], item["indicator_id"]))
-    skipped.sort(key=lambda item: str(item))
+    skipped.sort(
+        key=lambda item: (
+            item.get("reason") or "",
+            item.get("content_id") or "",
+            item.get("indicator_id") or "",
+            json.dumps(item, sort_keys=True, ensure_ascii=False),
+        )
+    )
     return updates, skipped
 
 

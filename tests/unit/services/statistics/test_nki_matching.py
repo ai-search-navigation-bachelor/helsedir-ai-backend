@@ -86,5 +86,23 @@ def test_plan_indicator_backfill_skips_existing_mapping_without_force():
 
 
 @pytest.mark.unit
+def test_find_indicator_match_does_not_treat_same_row_title_and_short_title_as_ambiguous():
+    indicator = {"id": "0003-0010-330", "tittel": "Lik tittel"}
+    content_rows = [
+        {
+            "id": "content-1",
+            "tittel": "Lik tittel",
+            "kort_tittel": "Lik tittel",
+            "path": "/lik-tittel",
+        }
+    ]
+
+    result = find_indicator_match(indicator, content_rows)
+
+    assert result["match"]["id"] == "content-1"
+    assert result["strategy"] == "exact_title"
+
+
+@pytest.mark.unit
 def test_normalize_match_text_collapses_spacing_and_normalizes_case():
     assert normalize_match_text("  Kvalitet   På  Tvers ") == "kvalitet pa tvers"
