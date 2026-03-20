@@ -196,6 +196,7 @@ class SearchController:
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
         explain: bool = False,
+        no_cache: bool = False,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -209,6 +210,7 @@ class SearchController:
             search_id: Existing search_id for pagination (None = new search)
             category: Optional category (info_type) to filter results by
             background_tasks: FastAPI background tasks for async logging
+            no_cache: Bypass controller-level result cache
 
         Returns:
             SearchResponse with paginated results
@@ -239,6 +241,7 @@ class SearchController:
             role_penalty=role_penalty,
             rerank=rerank,
             explain=explain,
+            no_cache=no_cache,
         )
 
         # Coerce None to empty list
@@ -748,6 +751,7 @@ class SearchController:
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
         explain: bool = False,
+        no_cache: bool = False,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -784,8 +788,8 @@ class SearchController:
         )
         now = time.monotonic()
 
-        # Check cache
-        if cache_key in self._search_cache:
+        # Check cache (skip when no_cache requested)
+        if not no_cache and cache_key in self._search_cache:
             cached_time, cached_results = self._search_cache[cache_key]
             if now - cached_time < self._CACHE_TTL_SECONDS:
                 return cached_results
@@ -1132,6 +1136,7 @@ class SearchController:
                 short_title=page.short_title,
                 display_title=page.display_title,
                 info_type=page.content_type,
+                path=page.path,
             )
             for page in top
         ]
