@@ -18,6 +18,7 @@ class RerankInfo(BaseModel):
     """ML reranking details for a search result."""
     score: float
     rank_change: int  # Positive = moved up, negative = moved down
+    features: Dict[str, float]  # Raw feature values used by the model
     contributions: Dict[str, float]  # Per-feature SHAP contributions
 
 
@@ -134,6 +135,7 @@ class Suggestion(BaseModel):
     short_title: Optional[str] = None
     display_title: str
     info_type: Optional[str] = None
+    path: Optional[str] = None
 
 
 class SuggestionResponse(BaseModel):
