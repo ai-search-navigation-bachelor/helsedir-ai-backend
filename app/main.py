@@ -13,7 +13,7 @@ logging.basicConfig(
 )
 
 # Import routers
-from app.routes import health, search, logging, helsedir, content, temaside, roles
+from app.routes import health, search, logging, helsedir, content, temaside, roles, dev
 
 
 @asynccontextmanager
@@ -102,6 +102,7 @@ app.include_router(logging.router)
 app.include_router(helsedir.router)
 app.include_router(temaside.router)
 app.include_router(roles.router)
+app.include_router(dev.router)
 
 
 if __name__ == "__main__":
