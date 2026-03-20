@@ -54,7 +54,11 @@ def train_preset(preset_id: int) -> dict:
 
     conn = get_connection()
     try:
-        # Clear existing logs
+        # Clear existing logs (dev-only safety gate)
+        import os
+        if os.environ.get("PRETRAIN_ALLOW_TRUNCATE", "").lower() != "true":
+            print("  ERROR: Set PRETRAIN_ALLOW_TRUNCATE=true to allow log clearing")
+            return {}
         cursor = conn.cursor()
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         for tbl in ("click_logs", "search_results_shown", "search_logs"):

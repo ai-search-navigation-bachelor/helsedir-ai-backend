@@ -244,6 +244,7 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
+        w_all: List[float] = []
         qid_all: List[int] = []
 
         used_groups = 0
@@ -264,6 +265,7 @@ class HealthContentReranker:
             # First pass: build feature dicts
             feat_dicts: List[Dict[str, float]] = []
             labels: List[float] = []
+            ips_sample_weights: List[float] = []
 
             any_pos = False
             any_click = False
@@ -303,12 +305,10 @@ class HealthContentReranker:
 
                 feat_dicts.append(feat_dict)
 
-                # IPS-weighted label: clicks at lower positions get higher
-                # relevance because they overcame position bias.
-                # Non-clicks stay at 0.0.
+                # Binary label + IPS sample weight for position bias correction
+                labels.append(float(clicked))
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_weight = 1.0 / max(float(prop), 1e-6)
-                labels.append(float(clicked) * ips_weight)
+                ips_sample_weights.append(1.0 / max(float(prop), 1e-6))
 
             if not any_pos:
                 continue
@@ -322,6 +322,7 @@ class HealthContentReranker:
 
             X_all.extend(feats)
             y_all.extend(labels)
+            w_all.extend(ips_sample_weights)
             qid_all.extend([used_groups] * len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -331,6 +332,7 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
+        w = np.asarray(w_all, dtype=np.float32)
         qid = np.asarray(qid_all, dtype=np.int32)
 
         self.model = xgb.XGBRanker(
@@ -345,7 +347,7 @@ class HealthContentReranker:
             tree_method="hist",
         )
 
-        self.model.fit(X, y, qid=qid, verbose=verbose)
+        self.model.fit(X, y, qid=qid, sample_weight=w, verbose=verbose)
         self.model.get_booster().feature_names = self.feature_names
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
@@ -378,6 +380,7 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
+        w_all: List[float] = []
         qid_all: List[int] = []
         used_groups = 0
         used_rows = 0
@@ -393,6 +396,7 @@ class HealthContentReranker:
 
             feat_dicts: List[Dict[str, float]] = []
             labels: List[float] = []
+            ips_sample_weights: List[float] = []
             any_pos = False
             any_click = False
 
@@ -426,11 +430,10 @@ class HealthContentReranker:
                     "content_freshness": freshness,
                 })
 
-                # IPS-weighted label: clicks at lower positions get higher
-                # relevance because they overcame position bias.
+                # Binary label + IPS sample weight for position bias correction
+                labels.append(float(clicked))
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_weight = 1.0 / max(float(prop), 1e-6)
-                labels.append(float(clicked) * ips_weight)
+                ips_sample_weights.append(1.0 / max(float(prop), 1e-6))
 
             if not any_pos:
                 continue
@@ -440,6 +443,7 @@ class HealthContentReranker:
             feats = [[fd[n] for n in self.feature_names] for fd in feat_dicts]
             X_all.extend(feats)
             y_all.extend(labels)
+            w_all.extend(ips_sample_weights)
             qid_all.extend([used_groups] * len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -449,6 +453,7 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
+        w = np.asarray(w_all, dtype=np.float32)
         qid = np.asarray(qid_all, dtype=np.int32)
 
         self.model = xgb.XGBRanker(
@@ -462,7 +467,7 @@ class HealthContentReranker:
             random_state=42,
             tree_method="hist",
         )
-        self.model.fit(X, y, qid=qid, verbose=verbose)
+        self.model.fit(X, y, qid=qid, sample_weight=w, verbose=verbose)
         self.model.get_booster().feature_names = self.feature_names
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}

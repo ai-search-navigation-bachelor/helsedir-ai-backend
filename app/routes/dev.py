@@ -506,9 +506,12 @@ async def dev_generate(request: GenerateRequest = GenerateRequest()):
         if preset is None:
             return GenerateResponse(success=False, error=f"Preset {request.preset_id} not found")
         effective["dataset_id"] = preset["dataset_id"]
+        explicitly_set = request.model_fields_set
         for field in ("top_n", "k", "target_click_min", "target_click_max",
                       "temaside_click_weight", "retningslinje_click_weight", "other_click_weight"):
-            effective[field] = preset[field]
+            # Only use preset value if caller did not explicitly provide one
+            if field not in explicitly_set:
+                effective[field] = preset[field]
 
     if effective.get("dataset_id") is None:
         return GenerateResponse(success=False, error="Provide either preset_id or dataset_id.")
@@ -655,11 +658,13 @@ async def delete_dataset(dataset_id: int):
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Delete file from disk
+    # Delete from DB first, then remove file only on success
+    deleted = training_repository.delete_dataset(dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=500, detail="Failed to delete dataset from database")
+
     csv_path = DATASETS_DIR / dataset["filename"]
     csv_path.unlink(missing_ok=True)
-
-    training_repository.delete_dataset(dataset_id)
     return {"deleted": True, "id": dataset_id}
 
 

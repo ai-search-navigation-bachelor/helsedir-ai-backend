@@ -224,6 +224,8 @@ def generate_training_data(
     content_role_tags = {item.id: item.role_tags or [] for item in all_content}
 
     max_views = max(p["views"] for p in pages) if pages else 1
+    if max_views == 0:
+        max_views = 1
 
     searches_created = 0
     results_shown = 0

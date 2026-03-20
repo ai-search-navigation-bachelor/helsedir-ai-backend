@@ -260,6 +260,10 @@ def main():
 
         rows = compute_views(rows, weight_by_recency=args.weight_by_recency)
 
+        if '/' in args.output or '\\' in args.output or '..' in args.output:
+            print(f"Error: output must be a plain filename, got '{args.output}'")
+            return
+
         output_path = DATASETS_DIR / args.output
         row_count = write_csv(rows, output_path)
         print(f"\nWrote {row_count} rows to: {output_path}")
