@@ -66,6 +66,79 @@ class SearchController:
             Tuple[float, List["SearchResult"]],
         ] = {}
 
+    @staticmethod
+    def _is_theme_page_info_type(info_type: Optional[str]) -> bool:
+        """Return True when the supplied info type is a theme page."""
+        return (info_type or "").strip().lower() == "temaside"
+
+    def _get_non_empty_theme_page_ids(self, theme_page_ids: List[str]) -> set[str]:
+        """
+        Return theme-page IDs that have linked content in theme_page_content.
+
+        Theme pages with text content are handled separately by the caller.
+        """
+        if not theme_page_ids:
+            return set()
+
+        linked_content = content_repository.get_theme_pages_content_batch(theme_page_ids)
+        return {
+            theme_page_id
+            for theme_page_id in theme_page_ids
+            if linked_content.get(theme_page_id)
+        }
+
+    def _filter_empty_theme_page_results(
+        self,
+        results: List[SearchResult],
+    ) -> List[SearchResult]:
+        """Remove theme pages with neither text content nor linked child content."""
+        theme_page_ids = [
+            result.id
+            for result in results
+            if self._is_theme_page_info_type(result.info_type)
+        ]
+        if not theme_page_ids:
+            return results
+
+        non_empty_theme_page_ids = self._get_non_empty_theme_page_ids(theme_page_ids)
+        return [
+            result
+            for result in results
+            if not self._is_theme_page_info_type(result.info_type)
+            or result.has_text_content
+            or result.id in non_empty_theme_page_ids
+        ]
+
+    def _filter_empty_theme_page_items(
+        self,
+        theme_pages: List[object],
+    ) -> List[object]:
+        """Remove theme pages with neither text content nor linked child content."""
+        if not theme_pages:
+            return theme_pages
+
+        theme_page_ids = []
+        for item in theme_pages:
+            item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+            if item_id:
+                theme_page_ids.append(item_id)
+
+        non_empty_theme_page_ids = self._get_non_empty_theme_page_ids(theme_page_ids)
+
+        filtered = []
+        for item in theme_pages:
+            item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+            has_text_content = (
+                bool(item.get("has_text_content"))
+                if isinstance(item, dict)
+                else bool(getattr(item, "has_text_content", False))
+            )
+
+            if has_text_content or item_id in non_empty_theme_page_ids:
+                filtered.append(item)
+
+        return filtered
+
     async def search(
         self,
         query: str,
@@ -404,7 +477,11 @@ class SearchController:
 
         # Get all theme pages
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        theme_pages = [
+            item for item in all_content
+            if item.content_type.lower() == "temaside"
+        ]
+        theme_pages = self._filter_empty_theme_page_items(theme_pages)
 
         for theme_page in theme_pages:
             title = theme_page.title.lower()
@@ -721,6 +798,8 @@ class SearchController:
                 max_results=max_results,
             )
 
+        regular_results = self._filter_empty_theme_page_results(regular_results)
+
         # Store in cache
         self._search_cache[cache_key] = (now, regular_results)
 
@@ -914,6 +993,7 @@ class SearchController:
 
         # Get theme pages from repository
         theme_pages = content_repository.get_theme_pages(category=category)
+        theme_pages = self._filter_empty_theme_page_items(theme_pages)
 
         # Convert to ThemePageResult objects
         results = []
@@ -956,6 +1036,15 @@ class SearchController:
 
         all_content = content_service.get_all_content()
         searchable = [item for item in all_content if item.content_type in content_service.searchable_types]
+        searchable = [
+            item
+            for item in searchable
+            if not self._is_theme_page_info_type(item.content_type)
+        ] + self._filter_empty_theme_page_items([
+            item
+            for item in searchable
+            if self._is_theme_page_info_type(item.content_type)
+        ])
 
         TYPE_PRIORITY = {"temaside": 0, "retningslinje": 1}
 

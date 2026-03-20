@@ -162,6 +162,37 @@ class TestSearchControllerHelpers:
         merged = ctrl._merge_theme_fallback_results(regular, fallback, max_results=4)
         assert len(merged) <= 4
 
+    def test_filter_empty_theme_page_results_removes_empty_theme_pages(self, mocker):
+        ctrl = SearchController()
+        empty_theme = _make_result("empty-theme", 0.8, "temaside")
+        empty_theme.has_text_content = False
+        filled_theme = _make_result("filled-theme", 0.7, "temaside")
+        filled_theme.has_text_content = False
+        results = [
+            empty_theme,
+            filled_theme,
+            _make_result("guide", 0.6, "veileder"),
+        ]
+        mocker.patch.object(
+            ctrl,
+            "_get_non_empty_theme_page_ids",
+            return_value={"filled-theme"},
+        )
+
+        filtered = ctrl._filter_empty_theme_page_results(results)
+
+        assert [result.id for result in filtered] == ["filled-theme", "guide"]
+
+    def test_filter_empty_theme_page_results_keeps_theme_pages_with_text_content(self, mocker):
+        ctrl = SearchController()
+        text_theme = _make_result("text-theme", 0.8, "temaside")
+        text_theme.has_text_content = True
+        mocker.patch.object(ctrl, "_get_non_empty_theme_page_ids", return_value=set())
+
+        filtered = ctrl._filter_empty_theme_page_results([text_theme])
+
+        assert [result.id for result in filtered] == ["text-theme"]
+
 
 @pytest.mark.unit
 class TestSearchControllerCaching:
@@ -410,14 +441,16 @@ class TestSearchControllerSearchAsync:
 
     def test_get_suggestions_prefix_match(self, mock_content):
         ctrl = SearchController()
-        response = ctrl.get_suggestions("psykisk")
+        with patch.object(ctrl, "_get_non_empty_theme_page_ids", return_value={"004"}):
+            response = ctrl.get_suggestions("psykisk")
         ids = [s.id for s in response.suggestions]
         assert "004" in ids  # "Psykisk helse temaside"
 
     def test_get_suggestions_case_insensitive(self, mock_content):
         ctrl = SearchController()
-        response_lower = ctrl.get_suggestions("psykisk")
-        response_upper = ctrl.get_suggestions("PSYKISK")
+        with patch.object(ctrl, "_get_non_empty_theme_page_ids", return_value={"004"}):
+            response_lower = ctrl.get_suggestions("psykisk")
+            response_upper = ctrl.get_suggestions("PSYKISK")
         assert {s.id for s in response_lower.suggestions} == {
             s.id for s in response_upper.suggestions
         }
@@ -448,6 +481,37 @@ class TestSearchControllerSearchAsync:
         ctrl = SearchController()
         response = ctrl.get_suggestions("test")
         assert len(response.suggestions) <= 5
+
+    def test_get_suggestions_excludes_empty_theme_pages(self, mock_content, mocker):
+        ctrl = SearchController()
+        mocker.patch.object(
+            ctrl,
+            "_get_non_empty_theme_page_ids",
+            return_value=set(),
+        )
+
+        response = ctrl.get_suggestions("psykisk")
+
+        assert response.suggestions == []
+
+    async def test_get_theme_pages_excludes_empty_theme_pages(self, mocker):
+        ctrl = SearchController()
+        mocker.patch(
+            "app.controllers.search_controller.content_repository.get_theme_pages",
+            return_value=[
+                {"id": "empty", "tittel": "Tom temaside", "path": "/tema/tom", "has_text_content": 0},
+                {"id": "filled", "tittel": "Fylt temaside", "path": "/tema/fylt", "has_text_content": 0},
+            ],
+        )
+        mocker.patch.object(
+            ctrl,
+            "_get_non_empty_theme_page_ids",
+            return_value={"filled"},
+        )
+
+        response = await ctrl.get_theme_pages()
+
+        assert [result.id for result in response.results] == ["filled"]
 
 
 @pytest.mark.unit

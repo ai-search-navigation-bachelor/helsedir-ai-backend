@@ -16,6 +16,8 @@ from app.dto.response.search import (
     Suggestion,
     CategorizedSearchResponse,
     CategoryResults,
+    ThemePageResponse,
+    ThemePageResult,
 )
 from app.dto.response.content import ContentSummaryResponse
 
@@ -354,3 +356,39 @@ class TestCategorySearchRoute:
         )
         response = client.get(self.BASE_URL)
         assert response.status_code == 500
+
+
+@pytest.mark.integration
+class TestThemePagesRoute:
+    def test_valid_request_returns_200(self, client, mocker):
+        mocker.patch(
+            "app.routes.temaside.search_controller.get_theme_pages",
+            new=AsyncMock(return_value=ThemePageResponse(results=[], total=0)),
+        )
+        response = client.get("/theme-pages")
+        assert response.status_code == 200
+
+    def test_response_contains_only_filtered_theme_pages(self, client, mocker):
+        mocker.patch(
+            "app.routes.temaside.search_controller.get_theme_pages",
+            new=AsyncMock(
+                return_value=ThemePageResponse(
+                    results=[
+                        ThemePageResult(
+                            id="filled",
+                            title="Fylt temaside",
+                            short_title=None,
+                            display_title="Fylt temaside",
+                            info_type="temaside",
+                            path="/tema/fylt",
+                        )
+                    ],
+                    total=1,
+                )
+            ),
+        )
+
+        data = client.get("/theme-pages").json()
+
+        assert data["total"] == 1
+        assert [result["id"] for result in data["results"]] == ["filled"]
