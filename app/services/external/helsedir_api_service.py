@@ -23,15 +23,18 @@ class HelseDirectorateAPIService:
     def __init__(self):
         self.base_url = settings.helsedir_api_url
         self.api_key = settings.helsedir_api_key
+        self.nki_api_key = settings.helsedir_nki_api_key or settings.helsedir_api_key
 
         # Validate that API key is configured
         if not self.api_key:
             print("WARNING: HELSEDIR_API_KEY not configured in .env")
+        if not self.nki_api_key:
+            print("WARNING: HELSEDIR_NKI_API_KEY not configured in .env")
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self, api_key: Optional[str] = None) -> Dict[str, str]:
         """Get required headers for API requests."""
         return {
-            "Ocp-Apim-Subscription-Key": self.api_key,
+            "Ocp-Apim-Subscription-Key": api_key or self.api_key,
             "Accept": "application/json",
         }
 
@@ -233,6 +236,148 @@ class HelseDirectorateAPIService:
                 response.raise_for_status()
                 return response.json()
 
+        except httpx.TimeoutException as e:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            ) from e
+
+    def list_nki_quality_indicators(
+        self,
+        timeout: float = 15.0,
+    ) -> Dict[str, Any]:
+        """
+        List NKI quality indicators.
+
+        Returns:
+            Parsed JSON payload from /innhold/nki/kvalitetsindikatorer
+        """
+        if not self.nki_api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_NKI_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/nki/kvalitetsindikatorer"
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    url,
+                    headers=self._get_headers(self.nki_api_key),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException as e:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            ) from e
+
+    def get_nki_quality_indicator_by_id(
+        self,
+        indicator_id: str,
+        timeout: float = 15.0,
+    ) -> Dict[str, Any]:
+        """
+        Get a single NKI quality indicator metadata payload.
+        """
+        if not self.nki_api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_NKI_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/nki/kvalitetsindikatorer/{indicator_id}"
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    url,
+                    headers=self._get_headers(self.nki_api_key),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(f"NKI indicator not found: {indicator_id}")
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException as e:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            ) from e
+
+    def get_nki_quality_indicator_data(
+        self,
+        indicator_id: str,
+        timeout: float = 20.0,
+        content_type: str = "application/json",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a single NKI quality indicator dataset payload.
+
+        Returns:
+            Parsed JSON payload, or None when the endpoint responds with 204.
+        """
+        if not self.nki_api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_NKI_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/nki/kvalitetsindikatorer/{indicator_id}/data"
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    url,
+                    headers=self._get_headers(self.nki_api_key),
+                    params={"contentType": content_type},
+                    timeout=timeout,
+                )
+
+                if response.status_code == 204:
+                    return None
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(f"NKI indicator data not found: {indicator_id}")
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
         except httpx.TimeoutException as e:
             raise HelseDirectorateAPIError(
                 f"API request timed out after {timeout} seconds"
@@ -489,6 +634,100 @@ class HelseDirectorateAPIService:
             raise HelseDirectorateAPIError(
                 f"API request failed: {str(e)}"
             )
+
+    async def get_nki_quality_indicator_by_id_async(
+        self,
+        indicator_id: str,
+        timeout: float = 15.0,
+    ) -> Dict[str, Any]:
+        """
+        Async version of get_nki_quality_indicator_by_id.
+        """
+        if not self.nki_api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_NKI_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/nki/kvalitetsindikatorer/{indicator_id}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=self._get_headers(self.nki_api_key),
+                    timeout=timeout,
+                )
+
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(f"NKI indicator not found: {indicator_id}")
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException as e:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            ) from e
+
+    async def get_nki_quality_indicator_data_async(
+        self,
+        indicator_id: str,
+        timeout: float = 20.0,
+        content_type: str = "application/json",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Async version of get_nki_quality_indicator_data.
+        """
+        if not self.nki_api_key:
+            raise HelseDirectorateAPIError(
+                "HELSEDIR_NKI_API_KEY not configured. Add it to your .env file."
+            )
+
+        url = f"{self.base_url}/innhold/nki/kvalitetsindikatorer/{indicator_id}/data"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=self._get_headers(self.nki_api_key),
+                    params={"contentType": content_type},
+                    timeout=timeout,
+                )
+
+                if response.status_code == 204:
+                    return None
+                if response.status_code == 401:
+                    raise HelseDirectorateAPIError("Unauthorized: Invalid API key")
+                elif response.status_code == 403:
+                    raise HelseDirectorateAPIError("Forbidden: API key does not have access to this resource")
+                elif response.status_code == 404:
+                    raise HelseDirectorateAPIError(f"NKI indicator data not found: {indicator_id}")
+                elif response.status_code >= 400:
+                    raise HelseDirectorateAPIError(
+                        f"API request failed with status {response.status_code}: {response.text}"
+                    )
+
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException as e:
+            raise HelseDirectorateAPIError(
+                f"API request timed out after {timeout} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise HelseDirectorateAPIError(
+                f"API request failed: {str(e)}"
+            ) from e
 
     async def search_infobits_async(
         self,

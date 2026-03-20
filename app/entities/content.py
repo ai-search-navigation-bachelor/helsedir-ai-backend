@@ -76,6 +76,7 @@ class ContentItem(BaseModel):
     body: str
     content_type: str
     path: Optional[str] = None
+    nki_indicator_id: Optional[str] = None
     forst_publisert: Optional[datetime] = None
     sist_faglig_oppdatert: Optional[datetime] = None
     role_tags: List[str] = []
