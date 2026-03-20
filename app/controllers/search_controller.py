@@ -11,7 +11,7 @@ import time
 import difflib
 import hashlib
 import json
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any, Union
 from collections import defaultdict
 from fastapi import BackgroundTasks
 
@@ -26,7 +26,7 @@ from app.dto.response.search import (
     SuggestionResponse,
 )
 from app.dto.response.content import ContentSummaryResponse
-from app.entities.content import ContentLink
+from app.entities.content import ContentLink, ContentItem
 from app.services.search.search_service import search_service
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
@@ -41,6 +41,7 @@ from app.constants import (
 )
 
 logger = logging.getLogger(__name__)
+ThemePageItem = Union[ContentItem, Dict[str, Any]]
 
 
 class SearchController:
@@ -51,6 +52,7 @@ class SearchController:
     _CACHE_TTL_SECONDS = 30.0
     _SEARCH_ID_SIGNATURE_MARKER = "c0de"
     _SEARCH_ID_SIGNATURE_HEX_LENGTH = 8
+    _THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS = 30.0
 
     @staticmethod
     def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str:
@@ -65,6 +67,114 @@ class SearchController:
             Tuple[object, ...],
             Tuple[float, List["SearchResult"]],
         ] = {}
+        self._theme_page_non_empty_cache: Dict[
+            Tuple[str, ...],
+            Tuple[float, set[str]],
+        ] = {}
+
+    @staticmethod
+    def _is_theme_page_info_type(info_type: Optional[str]) -> bool:
+        """Return True when the supplied info type is a theme page."""
+        return (info_type or "").strip().lower() == "temaside"
+
+    @staticmethod
+    def _get_theme_page_item_id(item: ThemePageItem) -> Optional[str]:
+        """Extract the item ID from a theme-page content item or repository row."""
+        return item.get("id") if isinstance(item, dict) else item.id
+
+    @staticmethod
+    def _theme_page_item_has_text_content(item: ThemePageItem) -> bool:
+        """Return True when the theme page has its own text content."""
+        return bool(item.get("has_text_content")) if isinstance(item, dict) else item.has_text_content
+
+    def _get_non_empty_theme_page_ids(self, theme_page_ids: List[str]) -> set[str]:
+        """
+        Return theme-page IDs that have linked content in theme_page_content.
+
+        Theme pages with text content are handled separately by the caller.
+        On lookup failures, fail open and keep the requested IDs visible.
+        """
+        if not theme_page_ids:
+            return set()
+
+        unique_theme_page_ids = tuple(dict.fromkeys(theme_page_ids))
+        now = time.monotonic()
+
+        cached = self._theme_page_non_empty_cache.get(unique_theme_page_ids)
+        if cached and now - cached[0] < self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        stale_keys = [
+            cache_key
+            for cache_key, (cached_at, _) in self._theme_page_non_empty_cache.items()
+            if now - cached_at >= self._THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS
+        ]
+        for cache_key in stale_keys:
+            del self._theme_page_non_empty_cache[cache_key]
+
+        non_empty_theme_page_ids = content_repository.get_non_empty_theme_page_ids(
+            list(unique_theme_page_ids)
+        )
+        if non_empty_theme_page_ids is None:
+            logger.warning(
+                "Failed to determine empty theme pages; keeping %d theme pages visible",
+                len(unique_theme_page_ids),
+            )
+            return set(unique_theme_page_ids)
+
+        self._theme_page_non_empty_cache[unique_theme_page_ids] = (
+            now,
+            set(non_empty_theme_page_ids),
+        )
+        return set(non_empty_theme_page_ids)
+
+    def _filter_empty_theme_page_results(
+        self,
+        results: List[SearchResult],
+    ) -> List[SearchResult]:
+        """Remove theme pages with neither text content nor linked child content."""
+        theme_page_ids = [
+            result.id
+            for result in results
+            if self._is_theme_page_info_type(result.info_type)
+        ]
+        if not theme_page_ids:
+            return results
+
+        non_empty_theme_page_ids = self._get_non_empty_theme_page_ids(theme_page_ids)
+        return [
+            result
+            for result in results
+            if not self._is_theme_page_info_type(result.info_type)
+            or result.has_text_content
+            or result.id in non_empty_theme_page_ids
+        ]
+
+    def _filter_empty_theme_page_items(
+        self,
+        theme_pages: List[ThemePageItem],
+    ) -> List[ThemePageItem]:
+        """Remove theme pages with neither text content nor linked child content."""
+        if not theme_pages:
+            return theme_pages
+
+        theme_page_ids = []
+        for item in theme_pages:
+            item_id = self._get_theme_page_item_id(item)
+            if item_id:
+                theme_page_ids.append(item_id)
+
+        non_empty_theme_page_ids = self._get_non_empty_theme_page_ids(theme_page_ids)
+
+        filtered = []
+        for item in theme_pages:
+            item_id = self._get_theme_page_item_id(item)
+            has_text_content = self._theme_page_item_has_text_content(item)
+
+            if has_text_content or item_id in non_empty_theme_page_ids:
+                filtered.append(item)
+
+        return filtered
 
     async def search(
         self,
@@ -407,7 +517,11 @@ class SearchController:
 
         # Get all theme pages
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        theme_pages = [
+            item for item in all_content
+            if item.content_type.lower() == "temaside"
+        ]
+        theme_pages = self._filter_empty_theme_page_items(theme_pages)
 
         for theme_page in theme_pages:
             title = theme_page.title.lower()
@@ -712,6 +826,8 @@ class SearchController:
         else:
             regular_results = regular_results[:max(1, int(max_results))]
 
+        regular_results = self._filter_empty_theme_page_results(regular_results)
+
         if self._needs_theme_fuzzy_fallback(regular_results):
             # Controlled fallback for typo tolerance on theme pages only.
             theme_page_results = self._search_theme_pages_fuzzy(
@@ -918,6 +1034,7 @@ class SearchController:
 
         # Get theme pages from repository
         theme_pages = content_repository.get_theme_pages(category=category)
+        theme_pages = self._filter_empty_theme_page_items(theme_pages)
 
         # Convert to ThemePageResult objects
         results = []
@@ -959,13 +1076,17 @@ class SearchController:
             return SuggestionResponse(suggestions=[])
 
         all_content = content_service.get_all_content()
-        searchable = [item for item in all_content if item.content_type in content_service.searchable_types]
-
         TYPE_PRIORITY = {"temaside": 0, "retningslinje": 1}
-
         matches = []  # (match_type 0=prefix/1=substring, type_priority, display_title_len, page)
+        pending_theme_matches: List[Tuple[int, int, int, ContentItem]] = []
 
-        for page in searchable:
+        searchable_items = [
+            item
+            for item in all_content
+            if item.content_type in content_service.searchable_types
+        ]
+
+        for page in searchable_items:
             title_lower = page.title.lower()
             short_title_lower = (page.short_title or "").strip().lower()
             display_title_lower = page.display_title.lower()
@@ -983,7 +1104,27 @@ class SearchController:
                 continue
 
             type_priority = TYPE_PRIORITY.get(page.content_type, 2)
-            matches.append((match_type, type_priority, len(page.display_title), page))
+            match_entry = (match_type, type_priority, len(page.display_title), page)
+            if not self._is_theme_page_info_type(page.content_type):
+                matches.append(match_entry)
+                continue
+
+            if page.has_text_content:
+                matches.append(match_entry)
+                continue
+
+            pending_theme_matches.append(match_entry)
+
+        if pending_theme_matches:
+            filtered_theme_items = self._filter_empty_theme_page_items(
+                [entry[3] for entry in pending_theme_matches]
+            )
+            allowed_theme_ids = {item.id for item in filtered_theme_items}
+            matches.extend(
+                entry
+                for entry in pending_theme_matches
+                if entry[3].id in allowed_theme_ids
+            )
 
         matches.sort(key=lambda x: (x[0], x[1], x[2]))
         top = [m[3] for m in matches[:max_suggestions]]
