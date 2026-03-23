@@ -562,6 +562,11 @@ class SearchController:
 
         # Fetch all children in ONE database query (much faster!)
         all_children = content_repository.get_theme_pages_content_batch(theme_page_ids)
+        if all_children is None:
+            logger.warning(
+                "Could not load theme page children batch for search results; returning results without populated children"
+            )
+            return results
 
         # Populate each theme page with its children
         for result in results:

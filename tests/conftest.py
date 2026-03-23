@@ -10,6 +10,7 @@ Strategy:
 - client provides a session-scoped TestClient over the real FastAPI app.
 """
 
+import copy
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
@@ -83,12 +84,12 @@ def mock_content():
     orig_by_path = dict(content_service.content_by_path)
     orig_types = set(content_service.searchable_types)
 
-    content_service.content = list(SAMPLE_CONTENT)
-    content_service.content_by_id = {item.id: item for item in SAMPLE_CONTENT}
+    content_service.content = copy.deepcopy(SAMPLE_CONTENT)
+    content_service.content_by_id = {item.id: item for item in content_service.content}
     content_service.content_by_path = {
-        item.path: item for item in SAMPLE_CONTENT if item.path
+        item.path: item for item in content_service.content if item.path
     }
-    content_service.searchable_types = {item.content_type for item in SAMPLE_CONTENT}
+    content_service.searchable_types = {item.content_type for item in content_service.content}
 
     yield content_service
 

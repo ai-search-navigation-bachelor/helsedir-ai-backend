@@ -75,6 +75,11 @@ class ContentRepository:
             logger.info("Added content.is_dead_end_theme_page column")
             return True
         except mysql.connector.Error as e:
+            if getattr(e, "errno", None) == 1060:
+                logger.info(
+                    "content.is_dead_end_theme_page column already exists; treating concurrent ALTER TABLE as success"
+                )
+                return True
             conn.rollback()
             logger.error("Failed to ensure content.is_dead_end_theme_page column: %s", e)
             return False
@@ -88,6 +93,11 @@ class ContentRepository:
         if not flags_by_theme_page_id:
             return 0
         if not self.has_dead_end_theme_page_column():
+            if not self._warned_missing_dead_end_theme_page:
+                logger.warning(
+                    "Skipping dead-end theme page flag update because content.is_dead_end_theme_page is missing"
+                )
+                self._warned_missing_dead_end_theme_page = True
             return 0
 
         conn = db_pool.get_connection()
@@ -753,7 +763,7 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
-    def get_theme_pages_content_batch(self, theme_page_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    def get_theme_pages_content_batch(self, theme_page_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """
         Get all content linked to multiple theme pages in a single query (batch operation).
 
@@ -761,14 +771,15 @@ class ContentRepository:
             theme_page_ids: List of theme page IDs
 
         Returns:
-            Dict mapping theme_page_id -> list of linked content items
+            Dict mapping theme_page_id -> list of linked content items.
+            Returns None when the lookup could not be completed.
         """
         if not theme_page_ids:
             return {}
 
         conn = db_pool.get_connection()
         if not conn:
-            return {}
+            return None
 
         cursor = None
         try:
@@ -797,7 +808,7 @@ class ContentRepository:
 
         except mysql.connector.Error as e:
             print(f"Error getting theme pages content batch: {e}")
-            return {}
+            return None
         finally:
             if cursor:
                 cursor.close()

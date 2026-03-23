@@ -6,7 +6,9 @@ Loads content from database cache or Helsedirektoratet API.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import urlparse
 from pydantic import ValidationError
 from app.entities.content import (
     ContentItem,
@@ -19,8 +21,10 @@ from app.services.data.database_service import database_service
 from app.services.data.document_metadata import compute_document_metadata
 from app.services.repositories.content_repository import content_repository
 from app.constants import ALLOWED_INFO_TYPES_SET, normalize_content_type
+from app.config import settings
 
 logger = logging.getLogger(__name__)
+_HELSEDIR_ID_RE = re.compile(r'/innhold/[^/]+/([0-9]{4}-[0-9]{4}[-a-f0-9]+)', re.IGNORECASE)
 
 
 class ContentService:
@@ -129,6 +133,52 @@ class ContentService:
             normalized = f"/{normalized.lstrip('/')}"
         return normalized
 
+    @staticmethod
+    def _content_id_from_href(value: Optional[str]) -> Optional[str]:
+        """Extract a Helsedir content ID from an API href when present."""
+        if not value or not isinstance(value, str):
+            return None
+        match = _HELSEDIR_ID_RE.search(value.strip())
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _public_path_from_href(value: Optional[str]) -> Optional[str]:
+        """Resolve a public Helsedir path from a relative path or public URL."""
+        normalized = ContentService._normalize_internal_path(value)
+        if normalized:
+            return normalized
+        if not value or not isinstance(value, str):
+            return None
+
+        parsed = urlparse(value.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return None
+
+        public_base = urlparse(settings.helsedir_public_base_url)
+        if parsed.netloc != public_base.netloc:
+            return None
+
+        return (parsed.path or "").rstrip("/") or "/"
+
+    def _resolve_content_link_target(self, link: ContentLink) -> Optional[ContentItem]:
+        """Resolve a content link to a cached content item via id, public path, or API href."""
+        if link.id:
+            resolved_child = self.get_content_by_id(link.id)
+            if resolved_child is not None:
+                return resolved_child
+
+        child_path = self._normalize_internal_path(link.path) or self._public_path_from_href(link.href)
+        if child_path:
+            resolved_child = self.get_content_by_path(child_path)
+            if resolved_child is not None:
+                return resolved_child
+
+        href_id = self._content_id_from_href(link.href)
+        if href_id:
+            return self.get_content_by_id(href_id)
+
+        return None
+
     def _compute_dead_end_theme_page_flags(self) -> Dict[str, bool]:
         """Compute which theme pages are true dead ends and should get no_content."""
         theme_pages = [
@@ -140,6 +190,12 @@ class ContentService:
 
         theme_page_ids = [item.id for item in theme_pages]
         linked_children = content_repository.get_theme_pages_content_batch(theme_page_ids)
+        linked_children_available = linked_children is not None
+        if linked_children is None:
+            logger.warning(
+                "Could not load theme_page_content batch while computing dead-end theme page flags; falling back to inline links only"
+            )
+            linked_children = {}
 
         direct_theme_children: Dict[str, Set[str]] = {theme_id: set() for theme_id in theme_page_ids}
         direct_non_theme_child: Dict[str, bool] = {theme_id: False for theme_id in theme_page_ids}
@@ -158,13 +214,7 @@ class ContentService:
                 if link.rel != "barn":
                     continue
 
-                resolved_child = None
-                if link.id:
-                    resolved_child = self.get_content_by_id(link.id)
-                if resolved_child is None:
-                    child_path = self._normalize_internal_path(link.path) or self._normalize_internal_path(link.href)
-                    if child_path:
-                        resolved_child = self.get_content_by_path(child_path)
+                resolved_child = self._resolve_content_link_target(link)
 
                 if resolved_child is not None:
                     child_type = normalize_content_type(resolved_child.content_type)
@@ -189,6 +239,9 @@ class ContentService:
             if not theme_page:
                 return False
             if theme_page.has_text_content or direct_non_theme_child.get(theme_page_id, False):
+                navigable_cache[theme_page_id] = True
+                return True
+            if not linked_children_available and not direct_theme_children.get(theme_page_id):
                 navigable_cache[theme_page_id] = True
                 return True
             if theme_page_id in in_progress:
@@ -231,7 +284,10 @@ class ContentService:
         db_searchable = content_repository.get_searchable_info_types()
         self.searchable_types = db_searchable if db_searchable else ALLOWED_INFO_TYPES_SET
         logger.debug("Searchable info types (%d): %s", len(self.searchable_types), sorted(self.searchable_types))
-        content_repository.ensure_dead_end_theme_page_column()
+        if not content_repository.has_dead_end_theme_page_column():
+            logger.warning(
+                "content.is_dead_end_theme_page is missing; dead-end theme page persistence may be unavailable until migration/backfill is run"
+            )
 
         db_content = database_service.get_all_content()
 

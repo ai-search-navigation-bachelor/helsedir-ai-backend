@@ -47,7 +47,6 @@ class SearchResult(BaseModel):
     root_publication: Optional[ContentSummaryResponse] = None
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
     pipeline: Optional[PipelineScores] = None
-    tags: List[str] = Field(default_factory=list)
 
 
 class SearchResponse(BaseModel):
@@ -138,7 +137,6 @@ class Suggestion(BaseModel):
     display_title: str
     info_type: Optional[str] = None
     path: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
 
 
 class SuggestionResponse(BaseModel):
