@@ -58,6 +58,15 @@ def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str
     return title or ""
 
 
+def _theme_page_tags_for_content_item(content: Optional[ContentItem]) -> List[str]:
+    """Return no_content tag for theme-page items that are navigation dead ends."""
+    if not content or normalize_content_type(content.content_type) != "temaside":
+        return []
+    if content.is_dead_end_theme_page:
+        return ["no_content"]
+    return []
+
+
 class NormalizedRelations(TypedDict):
     parent: Optional[ContentSummaryResponse]
     root_publication: Optional[ContentSummaryResponse]
@@ -114,10 +123,17 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
         if gl.rel != "barn":
             continue
         last_reviewed_date = None
+        tags: List[str] = []
         if gl.id:
             child = content_service.get_content_by_id(gl.id)
             if child:
                 last_reviewed_date = child.sist_faglig_oppdatert
+                tags = _theme_page_tags_for_content_item(child)
+        elif gl.href:
+            child = content_service.get_content_by_path(_public_path_from_href(gl.href) or "")
+            if child:
+                last_reviewed_date = child.sist_faglig_oppdatert
+                tags = _theme_page_tags_for_content_item(child)
         result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
@@ -125,6 +141,7 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
             id=gl.id,
             href=gl.href,
             last_reviewed_date=last_reviewed_date,
+            tags=tags,
         ))
     return result
 
@@ -143,6 +160,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
     async def _build_link(link: ContentLink) -> ContentLinkResponse:
         children: List[ContentLinkResponse] = []
         last_reviewed_date = None
+        tags: List[str] = []
 
         # Look up cached content for id-based links
         cached = None
@@ -155,6 +173,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
 
         if cached:
             last_reviewed_date = cached.sist_faglig_oppdatert
+            tags = _theme_page_tags_for_content_item(cached)
 
         if link.rel == "barn":
             if cached:
@@ -170,6 +189,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                         child = content_service.get_content_by_path(public_path)
                         if child:
                             last_reviewed_date = child.sist_faglig_oppdatert
+                            tags = _theme_page_tags_for_content_item(child)
                             children = _children_from_content_links(child.links)
                     elif _is_api_href(link.href):
                         # Fallback: fetch from Helsedir API only for API URLs
@@ -182,6 +202,13 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                                     title=al.get("tittel"),
                                     id=al.get("id"),
                                     href=al.get("href"),
+                                    tags=_theme_page_tags_for_content_item(
+                                        content_service.get_content_by_id(al.get("id"))
+                                        if al.get("id")
+                                        else content_service.get_content_by_path(
+                                            _public_path_from_href(al.get("href") or "") or ""
+                                        )
+                                    ),
                                 )
                                 for al in (data.get("links") or [])
                                 if al.get("rel") == "barn"
@@ -204,6 +231,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
             path=link.path,
             last_reviewed_date=last_reviewed_date,
             children=children,
+            tags=tags,
         )
 
     return list(await asyncio.gather(*[_build_link(link) for link in links]))
@@ -378,6 +406,9 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
             has_text_content=metadata["has_text_content"],
             document_url=metadata["document_url"],
             is_pdf_only=metadata["is_pdf_only"],
+            tags=_theme_page_tags_for_content_item(
+                content_service.get_content_by_id(content_item.get('id', ''))
+            ),
         )
         grouped[info_type].append(linked_item)
 

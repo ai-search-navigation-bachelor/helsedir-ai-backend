@@ -21,6 +21,7 @@ class ContentRepository:
         self._warned_missing_attachments_json = False
         self._warned_missing_kort_tittel = False
         self._warned_missing_nki_indicator_id = False
+        self._warned_missing_dead_end_theme_page = False
 
     def _serialize_json_field(self, value) -> Optional[str]:
         """Serialize a field to JSON string if needed."""
@@ -34,6 +35,89 @@ class ContentRepository:
     def _is_unknown_column_error(error: mysql.connector.Error, column_name: str) -> bool:
         """Return True when MySQL reports a missing column for the given name."""
         return getattr(error, "errno", None) == 1054 and column_name in str(error)
+
+    def has_dead_end_theme_page_column(self) -> bool:
+        """Return True when content.is_dead_end_theme_page exists."""
+        conn = db_pool.get_connection()
+        if not conn:
+            return False
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SHOW COLUMNS FROM content LIKE 'is_dead_end_theme_page'")
+            return cursor.fetchone() is not None
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
+    def ensure_dead_end_theme_page_column(self) -> bool:
+        """Add the dead-end temaside column if it does not exist."""
+        if self.has_dead_end_theme_page_column():
+            return True
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return False
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                ALTER TABLE content
+                ADD COLUMN is_dead_end_theme_page TINYINT(1) NOT NULL DEFAULT 0
+                AFTER document_url
+                """
+            )
+            conn.commit()
+            logger.info("Added content.is_dead_end_theme_page column")
+            return True
+        except mysql.connector.Error as e:
+            conn.rollback()
+            logger.error("Failed to ensure content.is_dead_end_theme_page column: %s", e)
+            return False
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
+    def update_dead_end_theme_page_flags(self, flags_by_theme_page_id: Dict[str, bool]) -> int:
+        """Persist dead-end flags for theme pages."""
+        if not flags_by_theme_page_id:
+            return 0
+        if not self.has_dead_end_theme_page_column():
+            return 0
+
+        conn = db_pool.get_connection()
+        if not conn:
+            return 0
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                UPDATE content
+                SET is_dead_end_theme_page = %s
+                WHERE id = %s AND info_type = 'temaside'
+                """,
+                [
+                    (1 if is_dead_end else 0, theme_page_id)
+                    for theme_page_id, is_dead_end in flags_by_theme_page_id.items()
+                ],
+            )
+            conn.commit()
+            return cursor.rowcount
+        except mysql.connector.Error as e:
+            conn.rollback()
+            logger.error("Failed to update dead-end theme page flags: %s", e)
+            return 0
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
 
     def _execute_content_upsert(
         self,
