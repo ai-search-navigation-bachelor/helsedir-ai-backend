@@ -3,6 +3,7 @@ Developer tools endpoints for reranker inspection and training.
 
 Provides endpoints for:
 - /dev/search    - Search with configurable feature weights (linear or ML reranking)
+- /dev/role-tags - Documents grouped by role tag
 - /dev/generate  - Generate synthetic training data with configurable click simulation
 - /dev/train     - Retrain the LTR model from logged click data
 - /dev/model     - Inspect current model (feature importances, availability)
@@ -225,6 +226,31 @@ class CreatePresetRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Role-tags response models
+# ---------------------------------------------------------------------------
+
+class RoleTagDocument(BaseModel):
+    id: str
+    title: str
+    info_type: str
+    path: Optional[str] = None
+
+
+class RoleTagGroup(BaseModel):
+    slug: str
+    display_name: str
+    document_count: int
+    documents: List[RoleTagDocument]
+
+
+class RoleTagsResponse(BaseModel):
+    roles: List[RoleTagGroup]
+    untagged_count: int
+    untagged_documents: List[RoleTagDocument]
+    total_documents: int
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -402,6 +428,55 @@ async def dev_search(
     except Exception:
         logger.exception("Dev search failed for query=%r", query)
         raise HTTPException(status_code=500, detail="Dev search failed")
+
+
+@router.get("/role-tags", response_model=RoleTagsResponse)
+async def dev_role_tags():
+    """
+    Get all documents grouped by role tag.
+
+    Returns documents organized by role, with untagged documents listed separately.
+    """
+    from collections import defaultdict
+    from app.services.data.content_service import content_service
+    from app.constants import ROLE_INFO
+
+    all_content = content_service.get_all_content()
+
+    # Group documents by role tag
+    role_docs: Dict[str, List[RoleTagDocument]] = defaultdict(list)
+    untagged: List[RoleTagDocument] = []
+
+    for item in all_content:
+        doc = RoleTagDocument(
+            id=item.id,
+            title=item.title,
+            info_type=item.content_type,
+            path=item.path,
+        )
+        if item.role_tags:
+            for tag in item.role_tags:
+                role_docs[tag].append(doc)
+        else:
+            untagged.append(doc)
+
+    # Build role groups using ROLE_INFO for display names
+    roles = []
+    for slug, display_name in ROLE_INFO.items():
+        docs = role_docs.get(slug, [])
+        roles.append(RoleTagGroup(
+            slug=slug,
+            display_name=display_name,
+            document_count=len(docs),
+            documents=docs,
+        ))
+
+    return RoleTagsResponse(
+        roles=roles,
+        untagged_count=len(untagged),
+        untagged_documents=untagged,
+        total_documents=len(all_content),
+    )
 
 
 def _run_generate_job(job_id: str, effective: dict):
