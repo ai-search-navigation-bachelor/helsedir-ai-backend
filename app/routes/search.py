@@ -24,6 +24,7 @@ async def search(
     role_penalty: Optional[float] = Query(None, description="Score multiplier for documents not matching the role"),
     rerank: Optional[bool] = Query(None, include_in_schema=False),
     explain: bool = Query(False, description="Include per-feature SHAP contributions in rerank info"),
+    noCache: bool = Query(False, include_in_schema=False),
     method: Optional[str] = Query(None, include_in_schema=False),
 ):
     """
@@ -77,6 +78,7 @@ async def search(
             role_penalty=role_penalty,
             rerank=rerank,
             explain=explain,
+            no_cache=noCache,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -87,9 +89,9 @@ async def search(
 @router.get("/suggestions", response_model=SuggestionResponse)
 async def suggestions(query: str = Query(..., min_length=1, description="Partial search text")):
     """
-    Get autocomplete suggestions based on theme pages.
+    Get autocomplete suggestions based on all searchable content.
 
-    Returns up to 5 theme page titles matching the query.
+    Returns up to 5 titles matching the query.
     Designed for search bar autocomplete with ~1.5s debounce on frontend.
 
     Query params:

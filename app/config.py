@@ -28,8 +28,10 @@ class Settings(BaseSettings):
 
     # Helsedirektoratet API
     helsedir_api_key: str = ""
+    helsedir_nki_api_key: str = ""
     helsedir_api_url: str = "https://api.helsedirektoratet.no"
     helsedir_public_base_url: str = "https://www.helsedirektoratet.no"
+    nki_statistics_cache_ttl_seconds: int = 21600
 
     # Search method: 'keyword', 'semantic', or 'hybrid'
     search_method: str = "hybrid"

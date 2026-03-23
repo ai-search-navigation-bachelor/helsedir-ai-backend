@@ -19,6 +19,7 @@ USE helsedir_ai;
 CREATE TABLE IF NOT EXISTS content (
     id VARCHAR(100) PRIMARY KEY,
     tittel TEXT NOT NULL,
+    kort_tittel TEXT,
     tekst LONGTEXT,
     info_type VARCHAR(50),
     koder JSON,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS content (
     links JSON,
     has_text_content TINYINT(1),
     document_url TEXT,
+    nki_indicator_id VARCHAR(32),
     attachments_json JSON,
     ehelsestandard_fields_json JSON,
     embedding BLOB,
@@ -39,6 +41,7 @@ CREATE TABLE IF NOT EXISTS content (
     path VARCHAR(1000),
 
     INDEX idx_info_type (info_type),
+    INDEX idx_nki_indicator_id (nki_indicator_id),
     INDEX idx_path (path(255)),
     FULLTEXT INDEX idx_tittel (tittel),
     FULLTEXT INDEX idx_tekst (tekst)
@@ -224,6 +227,43 @@ INSERT INTO content_type_config (info_type, searchable, display_name) VALUES
 ('informasjon',                          0, 'Informasjon'),
 ('infobit',                              0, 'Infobit')
 ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), searchable = VALUES(searchable);
+
+-- ============================================================
+-- Training Datasets Table
+-- ============================================================
+-- Tracks CSV files uploaded for training data generation.
+-- Files are stored in data/training_datasets/ on disk.
+CREATE TABLE IF NOT EXISTS training_datasets (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    filename VARCHAR(255) NOT NULL,
+    row_count INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- Training Presets Table
+-- ============================================================
+-- Named configurations combining a dataset with click simulation params.
+-- Lets users switch between different ranking philosophies.
+CREATE TABLE IF NOT EXISTS training_presets (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    dataset_id INT NOT NULL,
+    top_n INT DEFAULT 200,
+    k INT DEFAULT 15,
+    target_click_min FLOAT DEFAULT 0.5,
+    target_click_max FLOAT DEFAULT 0.9,
+    temaside_click_weight FLOAT DEFAULT 0.35,
+    retningslinje_click_weight FLOAT DEFAULT 0.30,
+    other_click_weight FLOAT DEFAULT 0.15,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (dataset_id) REFERENCES training_datasets(id) ON DELETE CASCADE,
+    INDEX idx_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
 -- Verification Query

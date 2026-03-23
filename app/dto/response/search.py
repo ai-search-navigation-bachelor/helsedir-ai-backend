@@ -4,6 +4,7 @@ Search response DTOs.
 
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
+from app.dto.response.content import ContentSummaryResponse
 
 
 class GroupedContent(BaseModel):
@@ -17,6 +18,7 @@ class RerankInfo(BaseModel):
     """ML reranking details for a search result."""
     score: float
     rank_change: int  # Positive = moved up, negative = moved down
+    features: Dict[str, float]  # Raw feature values used by the model
     contributions: Dict[str, float]  # Per-feature SHAP contributions
 
 
@@ -33,12 +35,16 @@ class SearchResult(BaseModel):
     """Single search result."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: Optional[str] = None
     has_text_content: bool
     document_url: Optional[str]
     is_pdf_only: bool
     score: float  # Normalized 0-1
+    parent: Optional[ContentSummaryResponse] = None
+    root_publication: Optional[ContentSummaryResponse] = None
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content
     pipeline: Optional[PipelineScores] = None
 
@@ -110,8 +116,11 @@ class ThemePageResult(BaseModel):
     """Single theme page result."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: str
+    tags: List[str] = Field(default_factory=list)
 
 
 class ThemePageResponse(BaseModel):
@@ -124,6 +133,10 @@ class Suggestion(BaseModel):
     """Single autocomplete suggestion."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
+    info_type: Optional[str] = None
+    path: Optional[str] = None
 
 
 class SuggestionResponse(BaseModel):

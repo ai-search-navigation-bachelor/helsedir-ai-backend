@@ -11,13 +11,16 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from app.controllers.search_controller import SearchController
-from app.dto.response.search import SearchResult, SearchResponse
+from app.dto.response.search import SearchResult, SearchResponse, GroupedContent
+from app.entities.content import ContentItem, ContentLink
 
 
 def _make_result(result_id: str, score: float, info_type: str = "retningslinje") -> SearchResult:
     return SearchResult(
         id=result_id,
         title=f"Title {result_id}",
+        short_title=f"Short {result_id}",
+        display_title=f"Short {result_id}",
         info_type=info_type,
         has_text_content=True,
         document_url=None,
@@ -159,6 +162,39 @@ class TestSearchControllerHelpers:
         merged = ctrl._merge_theme_fallback_results(regular, fallback, max_results=4)
         assert len(merged) <= 4
 
+    def test_filter_empty_theme_page_results_removes_dead_end_theme_pages(self):
+        ctrl = SearchController()
+        empty_theme = _make_result("empty-theme", 0.8, "temaside")
+        empty_theme.has_text_content = False
+        filled_theme = _make_result("filled-theme", 0.7, "temaside")
+        filled_theme.has_text_content = False
+        results = [
+            empty_theme,
+            filled_theme,
+            _make_result("guide", 0.6, "veileder"),
+        ]
+        with patch(
+            "app.controllers.search_controller.content_service.get_content_by_id",
+            side_effect=lambda content_id: MagicMock(
+                is_dead_end_theme_page=(content_id == "empty-theme")
+            ),
+        ):
+            filtered = ctrl._filter_empty_theme_page_results(results)
+
+        assert [result.id for result in filtered] == ["filled-theme", "guide"]
+
+    def test_filter_empty_theme_page_results_keeps_theme_pages_with_text_content(self):
+        ctrl = SearchController()
+        text_theme = _make_result("text-theme", 0.8, "temaside")
+        text_theme.has_text_content = True
+        with patch(
+            "app.controllers.search_controller.content_service.get_content_by_id",
+            return_value=MagicMock(is_dead_end_theme_page=False),
+        ):
+            filtered = ctrl._filter_empty_theme_page_results([text_theme])
+
+        assert [result.id for result in filtered] == ["text-theme"]
+
 
 @pytest.mark.unit
 class TestSearchControllerCaching:
@@ -211,6 +247,65 @@ class TestSearchControllerCaching:
         ctrl._execute_search("diabetes", "lege", "keyword", 10)
 
         assert mock_search_svc.search.call_count == 2
+
+    def test_execute_search_filters_empty_theme_pages_before_fallback_check(self, mocker):
+        ctrl = SearchController()
+        mock_search_svc = MagicMock()
+        mock_search_svc.search.return_value = [_make_result("empty-theme", 0.9, "temaside")]
+        ctrl.search_service = mock_search_svc
+
+        filtered_results = []
+        fallback_result = [_make_result("filled-theme", 0.8, "temaside")]
+
+        def fake_filter(results):
+            filtered_results.append([result.id for result in results])
+            return []
+
+        fallback_mock = mocker.patch.object(
+            ctrl,
+            "_search_theme_pages_fuzzy",
+            return_value=fallback_result,
+        )
+        merge_mock = mocker.patch.object(
+            ctrl,
+            "_merge_theme_fallback_results",
+            side_effect=lambda regular, fallback, max_results=None: fallback,
+        )
+        mocker.patch.object(ctrl, "_filter_empty_theme_page_results", side_effect=fake_filter)
+
+        results = ctrl._execute_search("diabetes", None, "keyword", 10)
+
+        fallback_mock.assert_called_once()
+        merge_mock.assert_called_once()
+        assert filtered_results == [["empty-theme"]]
+        assert [result.id for result in results] == ["filled-theme"]
+
+    def test_execute_search_backfills_results_after_empty_theme_pages_are_removed(self, mocker):
+        ctrl = SearchController()
+        mock_search_svc = MagicMock()
+        mock_search_svc.search.return_value = [
+            _make_result("empty-1", 0.95, "temaside"),
+            _make_result("empty-2", 0.94, "temaside"),
+            _make_result("guide-1", 0.93, "veileder"),
+            _make_result("guide-2", 0.92, "veileder"),
+            _make_result("guide-3", 0.91, "veileder"),
+        ]
+        ctrl.search_service = mock_search_svc
+        mocker.patch.object(
+            ctrl,
+            "_filter_empty_theme_page_results",
+            return_value=[
+                _make_result("guide-1", 0.93, "veileder"),
+                _make_result("guide-2", 0.92, "veileder"),
+                _make_result("guide-3", 0.91, "veileder"),
+            ],
+        )
+        mocker.patch.object(ctrl, "_needs_theme_fuzzy_fallback", return_value=False)
+
+        results = ctrl._execute_search("diabetes", None, "keyword", 2)
+
+        assert [result.id for result in results] == ["guide-1", "guide-2"]
+        mock_search_svc.search.assert_called_once_with(query="diabetes", role=None, k=4)
 
 
 @pytest.mark.unit
@@ -280,6 +375,124 @@ class TestSearchControllerSearchAsync:
         assert response.offset == 2
         assert response.has_prev is True
 
+    async def test_search_includes_parent_and_root_publication(
+        self, mock_content, mock_database_service, mocker
+    ):
+        from app.services.data.content_service import content_service
+
+        recommendation = ContentItem(
+            id="100",
+            title="ADHD-anbefaling",
+            body="",
+            content_type="anbefaling",
+            path="/anbefalinger/adhd",
+            has_text_content=True,
+            links=[
+                ContentLink(rel="forelder", type="kapittel", id="500"),
+                ContentLink(rel="root", type="retningslinje", id="600"),
+            ],
+        )
+        parent = ContentItem(
+            id="500",
+            title="Kapittel om ADHD",
+            body="",
+            content_type="kapittel",
+            path="/kapitler/adhd",
+        )
+        root = ContentItem(
+            id="600",
+            title="Nasjonal faglig retningslinje for ADHD",
+            body="",
+            content_type="retningslinje",
+            path="/retningslinjer/adhd",
+        )
+        content_service.content = [recommendation, parent, root]
+        content_service.content_by_id = {item.id: item for item in content_service.content}
+        content_service.content_by_path = {
+            item.path: item for item in content_service.content if item.path
+        }
+        content_service.searchable_types = {item.content_type for item in content_service.content}
+
+        ctrl = SearchController()
+        mocker.patch.object(
+            ctrl,
+            "_execute_search",
+            return_value=[_make_result("100", 0.9, "anbefaling")],
+        )
+        mocker.patch.object(ctrl, "_populate_theme_page_children", side_effect=lambda x: x)
+        mocker.patch.object(ctrl, "_log_results")
+
+        response = await ctrl.search(query="adhd", method="keyword", log=False)
+
+        assert response.results[0].parent is not None
+        assert response.results[0].parent.id == "500"
+        assert response.results[0].root_publication is not None
+        assert response.results[0].root_publication.id == "600"
+
+    def test_populate_result_relations_updates_theme_page_children(self, mock_content):
+        from app.services.data.content_service import content_service
+
+        child = ContentItem(
+            id="100",
+            title="ADHD-anbefaling",
+            body="",
+            content_type="anbefaling",
+            path="/anbefalinger/adhd",
+            has_text_content=True,
+            links=[ContentLink(rel="root", type="retningslinje", id="600")],
+        )
+        root = ContentItem(
+            id="600",
+            title="Nasjonal faglig retningslinje for ADHD",
+            body="",
+            content_type="retningslinje",
+            path="/retningslinjer/adhd",
+        )
+        content_service.content = [child, root]
+        content_service.content_by_id = {item.id: item for item in content_service.content}
+        content_service.content_by_path = {
+            item.path: item for item in content_service.content if item.path
+        }
+        content_service.searchable_types = {item.content_type for item in content_service.content}
+
+        ctrl = SearchController()
+        theme_result = SearchResult(
+            id="004",
+            title="ADHD temaside",
+            short_title="ADHD",
+            display_title="ADHD",
+            info_type="temaside",
+            has_text_content=False,
+            document_url=None,
+            is_pdf_only=False,
+            score=0.9,
+            children=[
+                GroupedContent(
+                    info_type="anbefaling",
+                    display_name="Anbefalinger",
+                    items=[
+                        SearchResult(
+                            id="100",
+                            title="ADHD-anbefaling",
+                            short_title="ADHD-anbefaling",
+                            display_title="ADHD-anbefaling",
+                            info_type="anbefaling",
+                            has_text_content=True,
+                            document_url=None,
+                            is_pdf_only=False,
+                            score=1.0,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        ctrl._populate_result_relations([theme_result])
+
+        assert theme_result.children is not None
+        assert theme_result.children[0].items[0].root_publication is not None
+        assert theme_result.children[0].items[0].root_publication.id == "600"
+
     # ── get_suggestions ──────────────────────────────────────────────────────
 
     def test_get_suggestions_empty_query_returns_empty(self, mock_content):
@@ -301,15 +514,16 @@ class TestSearchControllerSearchAsync:
             s.id for s in response_upper.suggestions
         }
 
-    def test_get_suggestions_only_returns_temasider(self, mock_content):
+    def test_get_suggestions_returns_temasider_and_retningslinjer(self, mock_content):
         ctrl = SearchController()
-        # "diabetes" matches "Diabetes retningslinje" (not a temaside)
-        # and "Psykisk helse temaside" won't match "diabetes"
+        # "diabetes" matches "Diabetes retningslinje" (retningslinje, not temaside)
+        # suggestions now include both temasider and retningslinjer
         response = ctrl.get_suggestions("diabetes")
+        allowed_types = {"temaside", "retningslinje"}
         for s in response.suggestions:
             item = mock_content.content_by_id.get(s.id)
             if item:
-                assert item.content_type == "temaside"
+                assert item.content_type in allowed_types
 
     def test_get_suggestions_max_five_results(self, mock_content):
         from app.services.data.content_service import content_service
@@ -326,6 +540,71 @@ class TestSearchControllerSearchAsync:
         ctrl = SearchController()
         response = ctrl.get_suggestions("test")
         assert len(response.suggestions) <= 5
+
+    def test_get_suggestions_excludes_empty_theme_pages(self, mock_content, mocker):
+        from app.services.data.content_service import content_service
+
+        content_service.content_by_id["004"].is_dead_end_theme_page = True
+        ctrl = SearchController()
+
+        response = ctrl.get_suggestions("psykisk")
+
+        assert response.suggestions == []
+
+    async def test_get_theme_pages_includes_dead_end_theme_pages(self, mocker):
+        ctrl = SearchController()
+        mocker.patch(
+            "app.controllers.search_controller.content_repository.get_theme_pages",
+            return_value=[
+                {
+                    "id": "empty",
+                    "tittel": "Tom temaside",
+                    "path": "/tema/tom",
+                    "has_text_content": 0,
+                    "is_dead_end_theme_page": 1,
+                },
+                {
+                    "id": "filled",
+                    "tittel": "Fylt temaside",
+                    "path": "/tema/fylt",
+                    "has_text_content": 0,
+                    "is_dead_end_theme_page": 0,
+                },
+            ],
+        )
+
+        response = await ctrl.get_theme_pages()
+
+        assert [result.id for result in response.results] == ["empty", "filled"]
+
+    async def test_get_theme_pages_sets_no_content_tag_for_dead_end_theme_pages(self, mocker):
+        ctrl = SearchController()
+        mocker.patch(
+            "app.controllers.search_controller.content_repository.get_theme_pages",
+            return_value=[
+                {
+                    "id": "empty",
+                    "tittel": "Tom temaside",
+                    "path": "/tema/tom",
+                    "has_text_content": 0,
+                    "is_dead_end_theme_page": 1,
+                },
+                {
+                    "id": "filled",
+                    "tittel": "Fylt temaside",
+                    "path": "/tema/fylt",
+                    "has_text_content": 0,
+                    "is_dead_end_theme_page": 0,
+                },
+            ],
+        )
+
+        response = await ctrl.get_theme_pages()
+
+        assert next(result for result in response.results if result.id == "empty").tags == [
+            "no_content"
+        ]
+        assert next(result for result in response.results if result.id == "filled").tags == []
 
 
 @pytest.mark.unit

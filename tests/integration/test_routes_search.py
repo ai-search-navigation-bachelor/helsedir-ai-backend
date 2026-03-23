@@ -16,7 +16,10 @@ from app.dto.response.search import (
     Suggestion,
     CategorizedSearchResponse,
     CategoryResults,
+    ThemePageResponse,
+    ThemePageResult,
 )
+from app.dto.response.content import ContentSummaryResponse
 
 
 def _mock_search_response(
@@ -28,6 +31,8 @@ def _mock_search_response(
             SearchResult(
                 id="001",
                 title="Diabetes retningslinje",
+                short_title="Diabetes",
+                display_title="Diabetes",
                 info_type="retningslinje",
                 has_text_content=False,
                 document_url="https://example.test/doc/1",
@@ -64,6 +69,8 @@ def _mock_categorized_response(query: str = "diabetes") -> CategorizedSearchResp
                     SearchResult(
                         id="001",
                         title="Diabetes",
+                        short_title="Diabetes",
+                        display_title="Diabetes",
                         info_type="retningslinje",
                         has_text_content=False,
                         document_url="https://example.test/doc/1",
@@ -123,6 +130,40 @@ class TestSearchRoute:
             assert result["has_text_content"] is False
             assert result["document_url"] == "https://example.test/doc/1"
             assert result["is_pdf_only"] is True
+
+    def test_result_items_can_include_parent_and_root_publication(self, client, mocker):
+        result = SearchResult(
+            id="001",
+            title="ADHD-anbefaling",
+            short_title="ADHD",
+            display_title="ADHD",
+            info_type="anbefaling",
+            has_text_content=True,
+            document_url=None,
+            is_pdf_only=False,
+            score=0.9,
+            parent=ContentSummaryResponse(
+                id="500",
+                title="Kapittel om ADHD",
+                content_type="kapittel",
+                path="/kapitler/adhd",
+            ),
+            root_publication=ContentSummaryResponse(
+                id="600",
+                title="Nasjonal faglig retningslinje for ADHD",
+                content_type="retningslinje",
+                path="/retningslinjer/adhd",
+            ),
+        )
+        mocker.patch(
+            "app.routes.search.search_controller.search",
+            new=AsyncMock(return_value=_mock_search_response(results=[result])),
+        )
+
+        data = client.get("/search?query=adhd").json()
+
+        assert data["results"][0]["parent"]["id"] == "500"
+        assert data["results"][0]["root_publication"]["id"] == "600"
 
     def test_invalid_method_returns_400(self, client):
         response = client.get("/search?query=diabetes&method=invalid_method")
@@ -195,7 +236,14 @@ class TestSuggestionsRoute:
         mocker.patch(
             "app.routes.search.search_controller.get_suggestions",
             return_value=SuggestionResponse(
-                suggestions=[Suggestion(id="004", title="Psykisk helse temaside")]
+                suggestions=[
+                    Suggestion(
+                        id="004",
+                        title="Psykisk helse temaside",
+                        short_title="Psykisk helse",
+                        display_title="Psykisk helse",
+                    )
+                ]
             ),
         )
         data = client.get("/search/suggestions?query=psykisk").json()
@@ -206,7 +254,14 @@ class TestSuggestionsRoute:
         mocker.patch(
             "app.routes.search.search_controller.get_suggestions",
             return_value=SuggestionResponse(
-                suggestions=[Suggestion(id="004", title="Psykisk helse temaside")]
+                suggestions=[
+                    Suggestion(
+                        id="004",
+                        title="Psykisk helse temaside",
+                        short_title="Psykisk helse",
+                        display_title="Psykisk helse",
+                    )
+                ]
             ),
         )
         data = client.get("/search/suggestions?query=psykisk").json()
@@ -301,3 +356,39 @@ class TestCategorySearchRoute:
         )
         response = client.get(self.BASE_URL)
         assert response.status_code == 500
+
+
+@pytest.mark.integration
+class TestThemePagesRoute:
+    def test_valid_request_returns_200(self, client, mocker):
+        mocker.patch(
+            "app.routes.temaside.search_controller.get_theme_pages",
+            new=AsyncMock(return_value=ThemePageResponse(results=[], total=0)),
+        )
+        response = client.get("/theme-pages")
+        assert response.status_code == 200
+
+    def test_response_contains_only_filtered_theme_pages(self, client, mocker):
+        mocker.patch(
+            "app.routes.temaside.search_controller.get_theme_pages",
+            new=AsyncMock(
+                return_value=ThemePageResponse(
+                    results=[
+                        ThemePageResult(
+                            id="filled",
+                            title="Fylt temaside",
+                            short_title=None,
+                            display_title="Fylt temaside",
+                            info_type="temaside",
+                            path="/tema/fylt",
+                        )
+                    ],
+                    total=1,
+                )
+            ),
+        )
+
+        data = client.get("/theme-pages").json()
+
+        assert data["total"] == 1
+        assert [result["id"] for result in data["results"]] == ["filled"]

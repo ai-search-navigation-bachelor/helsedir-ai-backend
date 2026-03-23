@@ -11,7 +11,7 @@ import time
 import difflib
 import hashlib
 import json
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any, Union
 from collections import defaultdict
 from fastapi import BackgroundTasks
 
@@ -25,6 +25,8 @@ from app.dto.response.search import (
     Suggestion,
     SuggestionResponse,
 )
+from app.dto.response.content import ContentSummaryResponse
+from app.entities.content import ContentLink, ContentItem
 from app.services.search.search_service import search_service
 from app.services.data.database_service import database_service
 from app.services.data.content_service import content_service
@@ -35,9 +37,11 @@ from app.constants import (
     is_priority_category,
     get_category_display_name,
     PRIORITY_CATEGORIES,
+    normalize_content_type,
 )
 
 logger = logging.getLogger(__name__)
+ThemePageItem = Union[ContentItem, SearchResult, Dict[str, Any]]
 
 
 class SearchController:
@@ -48,6 +52,18 @@ class SearchController:
     _CACHE_TTL_SECONDS = 30.0
     _SEARCH_ID_SIGNATURE_MARKER = "c0de"
     _SEARCH_ID_SIGNATURE_HEX_LENGTH = 8
+    _THEME_PAGE_LOOKUP_CACHE_TTL_SECONDS = 30.0
+    _THEME_PAGE_NO_CONTENT_TAG = "no_content"
+
+    @staticmethod
+    def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str:
+        """Prefer short title for UI display when available."""
+        if short_title and short_title.strip():
+            return short_title.strip()
+        return title or ""
+
+    # TTL for locally-cached search_ids (avoid DB round-trip on pagination).
+    _RECENT_SEARCH_ID_TTL_SECONDS = 300.0
 
     def __init__(self):
         self.search_service = search_service
@@ -55,6 +71,108 @@ class SearchController:
             Tuple[object, ...],
             Tuple[float, List["SearchResult"]],
         ] = {}
+        # Local cache of recently created search_ids so we can validate
+        # pagination requests without a synchronous DB round-trip.
+        # Maps search_id -> (created_at, query, role)
+        self._recent_search_ids: Dict[str, Tuple[float, str, Optional[str]]] = {}
+        # Cache theme page children (rarely changes, avoids DB round-trip per search).
+        # Maps theme_page_id -> list of child content dicts
+        self._theme_children_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._preload_theme_children()
+
+    def _preload_theme_children(self):
+        """Pre-load all theme page children into memory at startup."""
+        all_children = content_repository.get_all_theme_pages_content()
+        if all_children is not None:
+            self._theme_children_cache = all_children
+            # Also mark all theme pages that have NO children as empty,
+            # so we don't hit the DB for them later.
+            for item in content_service.get_all_content():
+                if item.content_type.lower() == "temaside" and item.id not in self._theme_children_cache:
+                    self._theme_children_cache[item.id] = []
+            logger.info("Pre-loaded theme page children for %d theme pages", len(all_children))
+        else:
+            logger.warning("Failed to pre-load theme page children; will fetch on demand")
+
+    @staticmethod
+    def _is_theme_page_info_type(info_type: Optional[str]) -> bool:
+        """Return True when the supplied info type is a theme page."""
+        return (info_type or "").strip().lower() == "temaside"
+
+    @staticmethod
+    def _get_theme_page_item_id(item: ThemePageItem) -> Optional[str]:
+        """Extract the item ID from a theme-page content item or repository row."""
+        return item.get("id") if isinstance(item, dict) else item.id
+
+    @staticmethod
+    def _theme_page_item_has_text_content(item: ThemePageItem) -> bool:
+        """Return True when the theme page has its own text content."""
+        return bool(item.get("has_text_content")) if isinstance(item, dict) else item.has_text_content
+
+    @staticmethod
+    def _theme_page_item_is_dead_end(item: ThemePageItem) -> bool:
+        """Return True when the item is a theme page marked as a dead end in storage."""
+        if isinstance(item, dict):
+            return bool(item.get("is_dead_end_theme_page"))
+        if hasattr(item, "is_dead_end_theme_page"):
+            return bool(item.is_dead_end_theme_page)
+        content_item = content_service.get_content_by_id(item.id)
+        return bool(content_item.is_dead_end_theme_page) if content_item else False
+
+    def _filter_empty_theme_page_results(
+        self,
+        results: List[SearchResult],
+    ) -> List[SearchResult]:
+        """Remove theme pages with neither text content nor linked child content."""
+        theme_page_ids = [
+            result.id
+            for result in results
+            if self._is_theme_page_info_type(result.info_type)
+        ]
+        if not theme_page_ids:
+            return results
+
+        empty_theme_page_ids = self._get_empty_theme_page_ids([
+            result for result in results
+            if self._is_theme_page_info_type(result.info_type)
+        ])
+        return [
+            result
+            for result in results
+            if not self._is_theme_page_info_type(result.info_type)
+            or result.id not in empty_theme_page_ids
+        ]
+
+    def _filter_empty_theme_page_items(
+        self,
+        theme_pages: List[ThemePageItem],
+    ) -> List[ThemePageItem]:
+        """Remove theme pages with neither text content nor linked child content."""
+        if not theme_pages:
+            return theme_pages
+
+        empty_theme_page_ids = self._get_empty_theme_page_ids(theme_pages)
+        return [
+            item
+            for item in theme_pages
+            if (item_id := self._get_theme_page_item_id(item)) is None
+            or item_id not in empty_theme_page_ids
+        ]
+
+    def _get_empty_theme_page_ids(self, theme_page_items: List[ThemePageItem]) -> set[str]:
+        """Return theme-page IDs marked as dead ends in the database/content cache."""
+        return {
+            item_id
+            for item in theme_page_items
+            if (item_id := self._get_theme_page_item_id(item))
+            and self._theme_page_item_is_dead_end(item)
+        }
+
+    def _build_theme_page_tags(self, is_empty_theme_page: bool) -> List[str]:
+        """Return frontend-facing tags for a theme page."""
+        if is_empty_theme_page:
+            return [self._THEME_PAGE_NO_CONTENT_TAG]
+        return []
 
     async def search(
         self,
@@ -76,6 +194,7 @@ class SearchController:
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
         explain: bool = False,
+        no_cache: bool = False,
     ) -> SearchResponse:
         """
         Execute search with pagination and ML feature logging.
@@ -89,10 +208,13 @@ class SearchController:
             search_id: Existing search_id for pagination (None = new search)
             category: Optional category (info_type) to filter results by
             background_tasks: FastAPI background tasks for async logging
+            no_cache: Bypass controller-level result cache
 
         Returns:
             SearchResponse with paginated results
         """
+        t_total_start = time.perf_counter()
+
         # Validate method
         valid_methods = {"keyword", "semantic", "hybrid"}
         if method not in valid_methods:
@@ -105,6 +227,7 @@ class SearchController:
         # Fetch a fixed pool so that total and category_counts are stable across
         # all pagination requests for the same query.
         max_results = 500
+        t0 = time.perf_counter()
         all_results = self._execute_search(
             query,
             role,
@@ -119,7 +242,9 @@ class SearchController:
             role_penalty=role_penalty,
             rerank=rerank,
             explain=explain,
+            no_cache=no_cache,
         )
+        t_execute = time.perf_counter() - t0
 
         # Coerce None to empty list
         if all_results is None:
@@ -151,14 +276,22 @@ class SearchController:
         page_results = all_results[offset:offset + limit]
 
         # Populate theme page children AFTER pagination
+        t0 = time.perf_counter()
         page_results = self._populate_theme_page_children(page_results)
+        t_theme_children = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        page_results = self._populate_result_relations(page_results)
+        t_relations = time.perf_counter() - t0
 
         # Handle search_id (new search vs pagination)
+        t0 = time.perf_counter()
         search_id = self._handle_search_id(
             search_id=search_id,
             query=query,
             role=role,
             method=method,
+            background_tasks=background_tasks,
             bm25_weight=bm25_weight,
             semantic_weight=semantic_weight,
             rrf_k=rrf_k,
@@ -168,6 +301,7 @@ class SearchController:
             role_penalty=role_penalty,
             rerank=rerank,
         )
+        t_search_id = time.perf_counter() - t0
 
         # Extract ML features and log results (skip for prefetch requests)
         if log:
@@ -175,6 +309,14 @@ class SearchController:
                 background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
             else:
                 self._log_results(search_id, query, role, page_results, offset)
+
+        t_total = time.perf_counter() - t_total_start
+        logger.info(
+            "Search controller timings: execute=%.0fms  theme_children=%.0fms  "
+            "relations=%.0fms  search_id=%.0fms  Total=%.0fms",
+            t_execute * 1000, t_theme_children * 1000,
+            t_relations * 1000, t_search_id * 1000, t_total * 1000,
+        )
 
         return SearchResponse(
             results=page_results,
@@ -224,6 +366,7 @@ class SearchController:
 
         # Populate theme page children
         all_results = self._populate_theme_page_children(all_results)
+        all_results = self._populate_result_relations(all_results)
 
         # Filter by minimum score
         min_score = settings.search_min_score
@@ -339,6 +482,7 @@ class SearchController:
 
         # Populate theme page children
         all_results = self._populate_theme_page_children(all_results)
+        all_results = self._populate_result_relations(all_results)
 
         # Filter by minimum score and category
         min_score = settings.search_min_score
@@ -391,7 +535,11 @@ class SearchController:
 
         # Get all theme pages
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        theme_pages = [
+            item for item in all_content
+            if item.content_type.lower() == "temaside"
+        ]
+        theme_pages = self._filter_empty_theme_page_items(theme_pages)
 
         for theme_page in theme_pages:
             title = theme_page.title.lower()
@@ -420,13 +568,15 @@ class SearchController:
                 results.append(SearchResult(
                     id=theme_page.id,
                     title=theme_page.title,
+                    short_title=theme_page.short_title,
+                    display_title=theme_page.display_title,
                     info_type='temaside',
                     path=theme_page.path,
                     has_text_content=theme_page.has_text_content,
                     document_url=theme_page.public_document_url,
                     is_pdf_only=theme_page.is_pdf_only,
                     score=max_score,
-                    explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%"
+                    explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%",
                 ))
 
         # Sort by score descending
@@ -442,6 +592,7 @@ class SearchController:
 
         For each theme page result, fetch its linked content from the junction table
         and group by info_type. Uses a single database query for all theme pages.
+        Results are cached so subsequent requests don't hit the DB.
 
         Args:
             results: List of search results
@@ -455,8 +606,20 @@ class SearchController:
         if not theme_page_ids:
             return results  # No theme pages, nothing to do
 
-        # Fetch all children in ONE database query (much faster!)
-        all_children = content_repository.get_theme_pages_content_batch(theme_page_ids)
+        # Check which IDs are already cached
+        uncached_ids = [tid for tid in theme_page_ids if tid not in self._theme_children_cache]
+
+        if uncached_ids:
+            fetched = content_repository.get_theme_pages_content_batch(uncached_ids)
+            if fetched is None:
+                logger.warning(
+                    "Could not load theme page children batch for search results; returning results without populated children"
+                )
+                return results
+            for tid in uncached_ids:
+                self._theme_children_cache[tid] = fetched.get(tid, [])
+
+        all_children = {tid: self._theme_children_cache.get(tid, []) for tid in theme_page_ids}
 
         # Populate each theme page with its children
         for result in results:
@@ -484,6 +647,11 @@ class SearchController:
                 child_result = SearchResult(
                     id=content.get('id', ''),
                     title=content.get('tittel', ''),
+                    short_title=content.get('kort_tittel'),
+                    display_title=self._pick_display_title(
+                        content.get('tittel', ''),
+                        content.get('kort_tittel'),
+                    ),
                     info_type=info_type,
                     path=content.get('path'),
                     has_text_content=metadata["has_text_content"],
@@ -506,6 +674,51 @@ class SearchController:
             result.children = children
 
         return results
+
+    def _build_content_summary(self, link: ContentLink) -> ContentSummaryResponse:
+        """Build a lightweight related-content summary for search responses."""
+        linked_content = content_service.get_content_by_id(link.id) if link.id else None
+        return ContentSummaryResponse(
+            id=linked_content.id if linked_content else link.id,
+            title=linked_content.title if linked_content else (link.tittel or ""),
+            short_title=linked_content.short_title if linked_content else None,
+            display_title=(
+                linked_content.display_title
+                if linked_content
+                else self._pick_display_title(link.tittel or "", None)
+            ),
+            content_type=normalize_content_type(
+                linked_content.content_type if linked_content else link.type
+            ),
+            path=linked_content.path if linked_content else link.path,
+            href=link.href,
+        )
+
+    def _populate_result_relations(self, results: List[SearchResult]) -> List[SearchResult]:
+        """Attach parent/root metadata to search results and nested theme-page items."""
+        for result in results:
+            self._populate_single_result_relations(result)
+            for group in result.children or []:
+                for child in group.items:
+                    self._populate_single_result_relations(child)
+        return results
+
+    def _populate_single_result_relations(self, result: SearchResult) -> None:
+        """Attach parent/root metadata for a single search result when available."""
+        content_item = content_service.get_content_by_id(result.id)
+        if not content_item:
+            return
+
+        for link in content_item.links:
+            if link.rel == "forelder" and result.parent is None:
+                result.parent = self._build_content_summary(link)
+                continue
+
+            if link.rel in {"root", "publikasjon"} and result.root_publication is None:
+                result.root_publication = self._build_content_summary(link)
+
+            if result.parent is not None and result.root_publication is not None:
+                break
 
     def _needs_theme_fuzzy_fallback(
         self,
@@ -569,6 +782,7 @@ class SearchController:
         role_penalty: Optional[float] = None,
         rerank: Optional[bool] = None,
         explain: bool = False,
+        no_cache: bool = False,
     ) -> List[SearchResult]:
         """
         Execute the appropriate search method with short-lived caching.
@@ -605,8 +819,8 @@ class SearchController:
         )
         now = time.monotonic()
 
-        # Check cache
-        if cache_key in self._search_cache:
+        # Check cache (skip when no_cache requested)
+        if not no_cache and cache_key in self._search_cache:
             cached_time, cached_results = self._search_cache[cache_key]
             if now - cached_time < self._CACHE_TTL_SECONDS:
                 return cached_results
@@ -619,14 +833,17 @@ class SearchController:
         for k in stale_keys:
             del self._search_cache[k]
 
+        requested_results = max(1, int(max_results))
+        search_k = min(1000, max(requested_results, requested_results * 2))
+
         # Execute regular search
         if method == "semantic":
-            regular_results = self.search_service.search_semantic(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search_semantic(query=query, role=role, k=search_k)
         elif method == "keyword":
-            regular_results = self.search_service.search(query=query, role=role, k=max_results)
+            regular_results = self.search_service.search(query=query, role=role, k=search_k)
         else:  # hybrid
             regular_results = self.search_service.search_hybrid(
-                query=query, role=role, k=max_results,
+                query=query, role=role, k=search_k,
                 bm25_weight=bm25_weight, semantic_weight=semantic_weight,
                 rrf_k=max(1, int(rrf_k if rrf_k is not None else settings.search_rrf_k)),
                 temaside_boost=temaside_boost,
@@ -640,8 +857,9 @@ class SearchController:
         # Coerce None to empty list
         if regular_results is None:
             regular_results = []
-        else:
-            regular_results = regular_results[:max(1, int(max_results))]
+
+        regular_results = self._filter_empty_theme_page_results(regular_results)
+        regular_results = regular_results[:requested_results]
 
         if self._needs_theme_fuzzy_fallback(regular_results):
             # Controlled fallback for typo tolerance on theme pages only.
@@ -667,6 +885,7 @@ class SearchController:
         query: str,
         role: Optional[str],
         method: str,
+        background_tasks: Optional[BackgroundTasks] = None,
         bm25_weight: Optional[float] = None,
         semantic_weight: Optional[float] = None,
         rrf_k: Optional[int] = None,
@@ -689,17 +908,24 @@ class SearchController:
             rerank=rerank,
         )
 
-        if not search_id:
-            # New search — log synchronously so subsequent get_search_by_id
-            # (e.g. from pagination) can find it immediately.
-            search_id = self._build_signed_search_id(expected_signature)
-            database_service.log_search(search_id=search_id, query=query, role=role)
-        else:
-            # Validate existing search_id
-            stored_search = database_service.get_search_by_id(search_id)
-            if stored_search is None:
-                raise ValueError(f"Invalid search_id: {search_id}")
+        # Evict stale entries from local search_id cache
+        now = time.monotonic()
+        stale = [k for k, (t, _, _) in self._recent_search_ids.items()
+                 if now - t >= self._RECENT_SEARCH_ID_TTL_SECONDS]
+        for k in stale:
+            del self._recent_search_ids[k]
 
+        if not search_id:
+            # New search — cache locally and persist to DB in background.
+            search_id = self._build_signed_search_id(expected_signature)
+            self._recent_search_ids[search_id] = (now, query.strip().lower(), role or None)
+            if background_tasks:
+                background_tasks.add_task(database_service.log_search,
+                                          search_id=search_id, query=query, role=role)
+            else:
+                database_service.log_search(search_id=search_id, query=query, role=role)
+        else:
+            # Validate existing search_id — check local cache first, then DB.
             embedded_signature = self._extract_search_signature(search_id)
             if embedded_signature is None:
                 raise ValueError(
@@ -712,14 +938,26 @@ class SearchController:
                     "Please start a new search."
                 )
 
-            stored_query = (stored_search.get("query") or "").strip().lower()
-            stored_role = stored_search.get("role") or None
-            incoming_role = role or None
+            cached = self._recent_search_ids.get(search_id)
+            if cached is not None:
+                stored_query, stored_role = cached[1], cached[2]
+            else:
+                stored_search = database_service.get_search_by_id(search_id)
+                if stored_search is None:
+                    raise ValueError(f"Invalid search_id: {search_id}")
+                stored_query = (stored_search.get("query") or "").strip().lower()
+                stored_role = stored_search.get("role") or None
 
+            incoming_role = role or None
             if stored_query != query.strip().lower() or stored_role != incoming_role:
                 # Query or role changed — start a fresh search
                 search_id = self._build_signed_search_id(expected_signature)
-                database_service.log_search(search_id=search_id, query=query, role=role)
+                self._recent_search_ids[search_id] = (now, query.strip().lower(), incoming_role)
+                if background_tasks:
+                    background_tasks.add_task(database_service.log_search,
+                                              search_id=search_id, query=query, role=role)
+                else:
+                    database_service.log_search(search_id=search_id, query=query, role=role)
 
         return search_id
 
@@ -849,6 +1087,7 @@ class SearchController:
 
         # Get theme pages from repository
         theme_pages = content_repository.get_theme_pages(category=category)
+        empty_theme_page_ids = self._get_empty_theme_page_ids(theme_pages)
 
         # Convert to ThemePageResult objects
         results = []
@@ -856,8 +1095,14 @@ class SearchController:
             results.append(ThemePageResult(
                 id=item.get('id', ''),
                 title=item.get('tittel', ''),
+                short_title=item.get('kort_tittel'),
+                display_title=self._pick_display_title(
+                    item.get('tittel', ''),
+                    item.get('kort_tittel'),
+                ),
                 info_type='temaside',
                 path=item.get('path', ''),
+                tags=self._build_theme_page_tags(item.get('id', '') in empty_theme_page_ids),
             ))
 
         return ThemePageResponse(
@@ -867,9 +1112,9 @@ class SearchController:
 
     def get_suggestions(self, query: str) -> SuggestionResponse:
         """
-        Get autocomplete suggestions from theme pages.
+        Get autocomplete suggestions from all searchable content.
 
-        Matches theme page titles against query using prefix and substring matching.
+        Matches titles against query using prefix and substring matching.
         Returns up to 5 suggestions, with prefix matches ranked first.
 
         Args:
@@ -885,27 +1130,60 @@ class SearchController:
             return SuggestionResponse(suggestions=[])
 
         all_content = content_service.get_all_content()
-        theme_pages = [item for item in all_content if item.content_type.lower() == 'temaside']
+        TYPE_PRIORITY = {"temaside": 0, "retningslinje": 1}
+        matches = []  # (match_type 0=prefix/1=substring, type_priority, display_title_len, page)
 
-        prefix_matches = []
-        substring_matches = []
+        searchable_items = [
+            item
+            for item in all_content
+            if item.content_type in content_service.searchable_types
+        ]
+        empty_theme_page_ids = self._get_empty_theme_page_ids(
+            [item for item in searchable_items if self._is_theme_page_info_type(item.content_type)]
+        )
 
-        for page in theme_pages:
+        for page in searchable_items:
             title_lower = page.title.lower()
-            if title_lower.startswith(query_lower):
-                prefix_matches.append(page)
-            elif query_lower in title_lower:
-                substring_matches.append(page)
+            short_title_lower = (page.short_title or "").strip().lower()
+            display_title_lower = page.display_title.lower()
+            searchable_titles = [title_lower]
+            if short_title_lower:
+                searchable_titles.append(short_title_lower)
+            if display_title_lower not in searchable_titles:
+                searchable_titles.append(display_title_lower)
 
-        # Sort each group by title length (shorter = more specific)
-        prefix_matches.sort(key=lambda p: len(p.title))
-        substring_matches.sort(key=lambda p: len(p.title))
+            if any(value.startswith(query_lower) for value in searchable_titles):
+                match_type = 0
+            elif any(query_lower in value for value in searchable_titles):
+                match_type = 1
+            else:
+                continue
 
-        # Prefix matches first, then substring matches
-        matched = prefix_matches + substring_matches
-        top = matched[:max_suggestions]
+            type_priority = TYPE_PRIORITY.get(page.content_type, 2)
+            match_entry = (match_type, type_priority, len(page.display_title), page)
+            if not self._is_theme_page_info_type(page.content_type):
+                matches.append(match_entry)
+                continue
 
-        suggestions = [Suggestion(id=page.id, title=page.title) for page in top]
+            if page.id in empty_theme_page_ids:
+                continue
+
+            matches.append(match_entry)
+
+        matches.sort(key=lambda x: (x[0], x[1], x[2]))
+        top = [m[3] for m in matches[:max_suggestions]]
+
+        suggestions = [
+            Suggestion(
+                id=page.id,
+                title=page.title,
+                short_title=page.short_title,
+                display_title=page.display_title,
+                info_type=page.content_type,
+                path=page.path,
+            )
+            for page in top
+        ]
         return SuggestionResponse(suggestions=suggestions)
 
     @staticmethod

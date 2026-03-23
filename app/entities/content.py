@@ -72,15 +72,18 @@ class ContentItem(BaseModel):
 
     id: str
     title: str
+    short_title: Optional[str] = None
     body: str
     content_type: str
     path: Optional[str] = None
+    nki_indicator_id: Optional[str] = None
     forst_publisert: Optional[datetime] = None
     sist_faglig_oppdatert: Optional[datetime] = None
     role_tags: List[str] = []
     links: List[ContentLink] = []
     has_text_content: bool = False
     document_url: Optional[str] = None
+    is_dead_end_theme_page: bool = False
     url: Optional[str] = None
 
     # Info type-specific fields (extensible pattern for future types)
@@ -91,6 +94,13 @@ class ContentItem(BaseModel):
     def info_type(self) -> str:
         """Alias for content_type (used by ranking features)."""
         return self.content_type
+
+    @property
+    def display_title(self) -> str:
+        """Preferred title for UI display, falling back to full title."""
+        if self.short_title and self.short_title.strip():
+            return self.short_title.strip()
+        return self.title
 
     @property
     def target_groups(self) -> List[str]:

@@ -76,6 +76,7 @@ class TestContentItem:
     def test_path_defaults_to_none(self):
         item = ContentItem(id="1", title="T", body="B", content_type="faktaark")
         assert item.path is None
+        assert item.nki_indicator_id is None
 
     def test_anbefaling_fields_defaults_to_none(self):
         item = ContentItem(id="1", title="T", body="B", content_type="anbefaling")
@@ -96,6 +97,7 @@ class TestContentItem:
             body="Mye tekst.",
             content_type="anbefaling",
             path="/anbefalinger/full-001",
+            nki_indicator_id="0003-0010-330",
             forst_publisert=pub_date,
             sist_faglig_oppdatert=review_date,
             role_tags=["lege", "sykepleier"],
@@ -107,6 +109,7 @@ class TestContentItem:
         assert len(item.links) == 1
         assert item.target_groups == ["lege", "sykepleier"]
         assert item.anbefaling_fields.styrke == "A"
+        assert item.nki_indicator_id == "0003-0010-330"
         assert item.has_text_content is True
         assert item.forst_publisert == pub_date
         assert item.sist_faglig_oppdatert == review_date

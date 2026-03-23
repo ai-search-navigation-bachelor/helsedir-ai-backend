@@ -23,6 +23,7 @@ from app.dto.response.content import (
     ChildGroupResponse,
     RelatedLinkResponse,
 )
+from app.dto.response.statistics import ContentStatisticsResponse
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
 from app.services.data.document_metadata import (
@@ -34,6 +35,7 @@ from app.services.data.ehelsestandard_utils import normalize_attachment_entry
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
+from app.services.statistics.nki_statistics_service import nki_statistics_service
 from app.constants import get_category_display_name, normalize_content_type
 from app.config import settings
 
@@ -47,6 +49,22 @@ _CHILD_GROUP_LABELS = {
     "references": "Referanser",
     "related_content": "Relatert innhold",
 }
+
+
+def _pick_display_title(title: Optional[str], short_title: Optional[str]) -> str:
+    """Prefer short title for UI display when available."""
+    if short_title and short_title.strip():
+        return short_title.strip()
+    return title or ""
+
+
+def _theme_page_tags_for_content_item(content: Optional[ContentItem]) -> List[str]:
+    """Return no_content tag for theme-page items that are navigation dead ends."""
+    if not content or normalize_content_type(content.content_type) != "temaside":
+        return []
+    if content.is_dead_end_theme_page:
+        return ["no_content"]
+    return []
 
 
 class NormalizedRelations(TypedDict):
@@ -105,10 +123,17 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
         if gl.rel != "barn":
             continue
         last_reviewed_date = None
+        tags: List[str] = []
         if gl.id:
             child = content_service.get_content_by_id(gl.id)
             if child:
                 last_reviewed_date = child.sist_faglig_oppdatert
+                tags = _theme_page_tags_for_content_item(child)
+        elif gl.href:
+            child = content_service.get_content_by_path(_public_path_from_href(gl.href) or "")
+            if child:
+                last_reviewed_date = child.sist_faglig_oppdatert
+                tags = _theme_page_tags_for_content_item(child)
         result.append(ContentLinkResponse(
             rel=gl.rel,
             type=gl.type,
@@ -116,6 +141,7 @@ def _children_from_content_links(links: List) -> List[ContentLinkResponse]:
             id=gl.id,
             href=gl.href,
             last_reviewed_date=last_reviewed_date,
+            tags=tags,
         ))
     return result
 
@@ -134,6 +160,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
     async def _build_link(link: ContentLink) -> ContentLinkResponse:
         children: List[ContentLinkResponse] = []
         last_reviewed_date = None
+        tags: List[str] = []
 
         # Look up cached content for id-based links
         cached = None
@@ -146,6 +173,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
 
         if cached:
             last_reviewed_date = cached.sist_faglig_oppdatert
+            tags = _theme_page_tags_for_content_item(cached)
 
         if link.rel == "barn":
             if cached:
@@ -161,6 +189,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                         child = content_service.get_content_by_path(public_path)
                         if child:
                             last_reviewed_date = child.sist_faglig_oppdatert
+                            tags = _theme_page_tags_for_content_item(child)
                             children = _children_from_content_links(child.links)
                     elif _is_api_href(link.href):
                         # Fallback: fetch from Helsedir API only for API URLs
@@ -173,6 +202,13 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
                                     title=al.get("tittel"),
                                     id=al.get("id"),
                                     href=al.get("href"),
+                                    tags=_theme_page_tags_for_content_item(
+                                        content_service.get_content_by_id(al.get("id"))
+                                        if al.get("id")
+                                        else content_service.get_content_by_path(
+                                            _public_path_from_href(al.get("href") or "") or ""
+                                        )
+                                    ),
                                 )
                                 for al in (data.get("links") or [])
                                 if al.get("rel") == "barn"
@@ -195,6 +231,7 @@ async def _build_links_with_children(links: List[ContentLink]) -> List[ContentLi
             path=link.path,
             last_reviewed_date=last_reviewed_date,
             children=children,
+            tags=tags,
         )
 
     return list(await asyncio.gather(*[_build_link(link) for link in links]))
@@ -217,6 +254,12 @@ def _build_content_summary(link: ContentLinkResponse) -> ContentSummaryResponse:
     return ContentSummaryResponse(
         id=linked_content.id if linked_content else target_id,
         title=linked_content.title if linked_content else (link.title or ""),
+        short_title=linked_content.short_title if linked_content else None,
+        display_title=(
+            linked_content.display_title
+            if linked_content
+            else _pick_display_title(link.title or "", None)
+        ),
         content_type=normalize_content_type(
             linked_content.content_type if linked_content else link.type
         ),
@@ -353,11 +396,19 @@ def _get_theme_page_linked_content(theme_page_id: str) -> Optional[List[GroupedL
         linked_item = LinkedContentItem(
             id=content_item.get('id', ''),
             title=content_item.get('tittel', ''),
+            short_title=content_item.get('kort_tittel'),
+            display_title=_pick_display_title(
+                content_item.get('tittel', ''),
+                content_item.get('kort_tittel'),
+            ),
             info_type=info_type,
             path=content_item.get('path'),
             has_text_content=metadata["has_text_content"],
             document_url=metadata["document_url"],
             is_pdf_only=metadata["is_pdf_only"],
+            tags=_theme_page_tags_for_content_item(
+                content_service.get_content_by_id(content_item.get('id', ''))
+            ),
         )
         grouped[info_type].append(linked_item)
 
@@ -649,6 +700,8 @@ async def _build_content_response(content: ContentItem, search_id: Optional[str]
     return ContentResponse(
         id=content.id,
         title=content.title,
+        short_title=content.short_title,
+        display_title=content.display_title,
         body=response_body,
         content_type=normalize_content_type(content.content_type),
         path=content.path,
@@ -690,6 +743,22 @@ async def get_content_by_path(
         raise HTTPException(status_code=404, detail=f"Content not found for path: {path}")
 
     return await _build_content_response(content, search_id)
+
+
+@router.get("/{content_id}/statistics", response_model=ContentStatisticsResponse)
+async def get_content_statistics(content_id: str):
+    """
+    Get normalized NKI statistics for one content page.
+
+    Returns has_statistics=false with a controlled status when the page has no
+    configured NKI indicator or the upstream dataset is unavailable.
+    """
+    content = content_service.get_content_by_id(content_id)
+
+    if not content:
+        raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+    return await nki_statistics_service.get_statistics_for_content(content)
 
 
 @router.get("/{content_id}", response_model=ContentResponse)

@@ -3,7 +3,7 @@ Content response DTOs.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 
 
@@ -19,6 +19,7 @@ class ContentLinkResponse(BaseModel):
     path: Optional[str] = None
     last_reviewed_date: Optional[datetime] = None
     children: Optional[List["ContentLinkResponse"]] = None  # Populated for barn links (1st level only)
+    tags: List[str] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_id_or_href(self):
@@ -43,11 +44,14 @@ class LinkedContentItem(BaseModel):
     """A single linked content item under a theme page."""
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     info_type: str
     path: Optional[str] = None
     has_text_content: bool = False
     document_url: Optional[str] = None
     is_pdf_only: bool = False
+    tags: List[str] = Field(default_factory=list)
 
 
 class GroupedLinkedContent(BaseModel):
@@ -73,6 +77,8 @@ class ContentSummaryResponse(BaseModel):
     detail_level: str = "summary"
     id: Optional[str] = None
     title: str = ""
+    short_title: Optional[str] = None
+    display_title: str = ""
     content_type: str
     path: Optional[str] = None
     href: Optional[str] = None
@@ -129,6 +135,8 @@ class ContentResponse(BaseModel):
     detail_level: str = "full"
     id: str
     title: str
+    short_title: Optional[str] = None
+    display_title: str
     body: str
     content_type: str
     path: Optional[str] = None

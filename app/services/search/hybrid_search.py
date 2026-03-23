@@ -7,7 +7,6 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
 from typing import List, Optional, Dict
 
 import numpy as np
@@ -39,6 +38,7 @@ class HybridCandidate:
     pre_rerank_position: int = 0  # Position before ML reranking (1-indexed, 0 = not set)
     rerank_score: Optional[float] = None  # Raw ML model score (None = model not applied)
     rerank_contributions: Optional[Dict[str, float]] = None  # Per-feature SHAP contributions
+    ranking_features: Optional[Dict[str, float]] = None  # Raw feature values used by ML model
 
 
 class HybridSearch:
@@ -310,6 +310,7 @@ class HybridSearch:
                 rerank_info = RerankInfo(
                     score=round(c.rerank_score, 4),
                     rank_change=c.pre_rerank_position - position,
+                    features=c.ranking_features or {},
                     contributions=c.rerank_contributions or {},
                 )
 
@@ -325,6 +326,8 @@ class HybridSearch:
                 SearchResult(
                     id=c.item.id,
                     title=c.item.title,
+                    short_title=c.item.short_title,
+                    display_title=c.item.display_title,
                     info_type=c.item.content_type,
                     path=c.item.path,
                     has_text_content=c.item.has_text_content,
@@ -370,6 +373,10 @@ class HybridSearch:
                 features = self._extract_ranking_features(c, role, ctr_map, query_lower, query_keywords)
                 features_list.append(features)
             t_features = time.perf_counter() - t0
+
+            # Store raw feature values on each candidate
+            for i, c in enumerate(candidates):
+                c.ranking_features = features_list[i]
 
             t0 = time.perf_counter()
             if explain:
@@ -437,24 +444,6 @@ class HybridSearch:
         else:
             title_query_overlap = 0.0
 
-        # Content freshness
-        content_freshness = 0.5
-        if item.sist_faglig_oppdatert:
-            try:
-                dt = item.sist_faglig_oppdatert
-                if not isinstance(dt, datetime):
-                    dt = datetime.fromisoformat(str(dt))
-                # Strip timezone info for safe subtraction with naive datetime.now()
-                if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
-                    dt = dt.replace(tzinfo=None)
-                days = max(0, (datetime.now() - dt).days)
-                content_freshness = 1.0 / (1.0 + days / 365.0)
-            except (ValueError, TypeError):
-                logger.debug(
-                    "Could not parse freshness for %s: %r",
-                    item.id, item.sist_faglig_oppdatert,
-                )
-
         return {
             "semantic_score": candidate.semantic_norm,
             "bm25_score": candidate.keyword_norm,
@@ -462,7 +451,6 @@ class HybridSearch:
             "role_match": role_match,
             "query_length": query_length,
             "title_query_overlap": title_query_overlap,
-            "content_freshness": content_freshness,
         }
 
 

@@ -1,0 +1,2 @@
+ALTER TABLE content
+ADD COLUMN IF NOT EXISTS kort_tittel TEXT NULL AFTER tittel;
