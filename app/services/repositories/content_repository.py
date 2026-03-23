@@ -730,6 +730,30 @@ class ContentRepository:
                 cursor.close()
             conn.close()
 
+    def get_all_info_type_configs(self) -> List[Dict[str, Any]]:
+        """
+        Return all rows from content_type_config with info_type, searchable, and display_name.
+        Falls back to an empty list if the table doesn't exist yet.
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return []
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT info_type, searchable, display_name FROM content_type_config ORDER BY info_type"
+            )
+            return cursor.fetchall()
+        except mysql.connector.Error:
+            logger.debug("Could not read content_type_config from DB", exc_info=True)
+            return []
+        finally:
+            if cursor:
+                cursor.close()
+            conn.close()
+
     def get_theme_page_content(self, theme_page_id: str) -> List[Dict[str, Any]]:
         """
         Get all content linked to a theme page via the junction table.

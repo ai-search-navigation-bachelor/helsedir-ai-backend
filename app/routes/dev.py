@@ -479,6 +479,27 @@ async def dev_role_tags():
     )
 
 
+@router.get("/info-types")
+async def dev_info_types():
+    """
+    Get all info type configurations from the database.
+
+    Returns every row from content_type_config, showing which info types
+    are searchable and their display names.
+    """
+    from app.services.repositories.content_repository import content_repository
+
+    rows = content_repository.get_all_info_type_configs()
+    return [
+        {
+            "slug": row["info_type"],
+            "display_name": row["display_name"],
+            "searchable": bool(row["searchable"]),
+        }
+        for row in rows
+    ]
+
+
 def _run_generate_job(job_id: str, effective: dict):
     """Background worker for training data generation."""
     job = _generate_jobs[job_id]
