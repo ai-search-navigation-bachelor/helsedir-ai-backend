@@ -83,6 +83,7 @@ class ContentItem(BaseModel):
     links: List[ContentLink] = []
     has_text_content: bool = False
     document_url: Optional[str] = None
+    is_dead_end_theme_page: bool = False
     url: Optional[str] = None
 
     # Info type-specific fields (extensible pattern for future types)

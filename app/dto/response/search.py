@@ -120,6 +120,7 @@ class ThemePageResult(BaseModel):
     display_title: str
     info_type: str
     path: str
+    tags: List[str] = Field(default_factory=list)
 
 
 class ThemePageResponse(BaseModel):

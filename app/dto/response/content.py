@@ -3,7 +3,7 @@ Content response DTOs.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 
 
@@ -19,6 +19,7 @@ class ContentLinkResponse(BaseModel):
     path: Optional[str] = None
     last_reviewed_date: Optional[datetime] = None
     children: Optional[List["ContentLinkResponse"]] = None  # Populated for barn links (1st level only)
+    tags: List[str] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_id_or_href(self):
@@ -50,6 +51,7 @@ class LinkedContentItem(BaseModel):
     has_text_content: bool = False
     document_url: Optional[str] = None
     is_pdf_only: bool = False
+    tags: List[str] = Field(default_factory=list)
 
 
 class GroupedLinkedContent(BaseModel):

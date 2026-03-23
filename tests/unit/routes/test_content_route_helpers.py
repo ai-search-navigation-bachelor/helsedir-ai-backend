@@ -95,6 +95,39 @@ class TestBuildLinksWithChildren:
         assert results[0].children == []
         api_mock.assert_not_called()
 
+    async def test_public_theme_href_includes_no_content_tag_for_dead_end_child(self, mock_content, mocker):
+        from app.services.data.content_service import content_service
+
+        dead_end_child = ContentItem(
+            id="child-theme-002",
+            title="Dead-end child",
+            body="",
+            content_type="temaside",
+            path="/digitalisering-og-e-helse/dead-end-child",
+            is_dead_end_theme_page=True,
+        )
+
+        content_service.content.append(dead_end_child)
+        content_service.content_by_id[dead_end_child.id] = dead_end_child
+        content_service.content_by_path[dead_end_child.path] = dead_end_child
+
+        api_mock = mocker.patch(
+            "app.routes.content.helsedir_api_service.get_content_by_href_async"
+        )
+
+        results = await _build_links_with_children([
+            ContentLink(
+                rel="barn",
+                type="temaside",
+                href=dead_end_child.path,
+                tittel=dead_end_child.title,
+            )
+        ])
+
+        assert len(results) == 1
+        assert results[0].tags == ["no_content"]
+        api_mock.assert_not_called()
+
 
 @pytest.mark.unit
 class TestEhelsestandardHelpers:
