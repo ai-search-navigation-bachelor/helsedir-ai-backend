@@ -62,12 +62,37 @@ class SearchController:
             return short_title.strip()
         return title or ""
 
+    # TTL for locally-cached search_ids (avoid DB round-trip on pagination).
+    _RECENT_SEARCH_ID_TTL_SECONDS = 300.0
+
     def __init__(self):
         self.search_service = search_service
         self._search_cache: Dict[
             Tuple[object, ...],
             Tuple[float, List["SearchResult"]],
         ] = {}
+        # Local cache of recently created search_ids so we can validate
+        # pagination requests without a synchronous DB round-trip.
+        # Maps search_id -> (created_at, query, role)
+        self._recent_search_ids: Dict[str, Tuple[float, str, Optional[str]]] = {}
+        # Cache theme page children (rarely changes, avoids DB round-trip per search).
+        # Maps theme_page_id -> list of child content dicts
+        self._theme_children_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._preload_theme_children()
+
+    def _preload_theme_children(self):
+        """Pre-load all theme page children into memory at startup."""
+        all_children = content_repository.get_all_theme_pages_content()
+        if all_children is not None:
+            self._theme_children_cache = all_children
+            # Also mark all theme pages that have NO children as empty,
+            # so we don't hit the DB for them later.
+            for item in content_service.get_all_content():
+                if item.content_type.lower() == "temaside" and item.id not in self._theme_children_cache:
+                    self._theme_children_cache[item.id] = []
+            logger.info("Pre-loaded theme page children for %d theme pages", len(all_children))
+        else:
+            logger.warning("Failed to pre-load theme page children; will fetch on demand")
 
     @staticmethod
     def _is_theme_page_info_type(info_type: Optional[str]) -> bool:
@@ -188,6 +213,8 @@ class SearchController:
         Returns:
             SearchResponse with paginated results
         """
+        t_total_start = time.perf_counter()
+
         # Validate method
         valid_methods = {"keyword", "semantic", "hybrid"}
         if method not in valid_methods:
@@ -200,6 +227,7 @@ class SearchController:
         # Fetch a fixed pool so that total and category_counts are stable across
         # all pagination requests for the same query.
         max_results = 500
+        t0 = time.perf_counter()
         all_results = self._execute_search(
             query,
             role,
@@ -216,6 +244,7 @@ class SearchController:
             explain=explain,
             no_cache=no_cache,
         )
+        t_execute = time.perf_counter() - t0
 
         # Coerce None to empty list
         if all_results is None:
@@ -247,15 +276,22 @@ class SearchController:
         page_results = all_results[offset:offset + limit]
 
         # Populate theme page children AFTER pagination
+        t0 = time.perf_counter()
         page_results = self._populate_theme_page_children(page_results)
+        t_theme_children = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         page_results = self._populate_result_relations(page_results)
+        t_relations = time.perf_counter() - t0
 
         # Handle search_id (new search vs pagination)
+        t0 = time.perf_counter()
         search_id = self._handle_search_id(
             search_id=search_id,
             query=query,
             role=role,
             method=method,
+            background_tasks=background_tasks,
             bm25_weight=bm25_weight,
             semantic_weight=semantic_weight,
             rrf_k=rrf_k,
@@ -265,6 +301,7 @@ class SearchController:
             role_penalty=role_penalty,
             rerank=rerank,
         )
+        t_search_id = time.perf_counter() - t0
 
         # Extract ML features and log results (skip for prefetch requests)
         if log:
@@ -272,6 +309,14 @@ class SearchController:
                 background_tasks.add_task(self._log_results, search_id, query, role, page_results, offset)
             else:
                 self._log_results(search_id, query, role, page_results, offset)
+
+        t_total = time.perf_counter() - t_total_start
+        logger.info(
+            "Search controller timings: execute=%.0fms  theme_children=%.0fms  "
+            "relations=%.0fms  search_id=%.0fms  Total=%.0fms",
+            t_execute * 1000, t_theme_children * 1000,
+            t_relations * 1000, t_search_id * 1000, t_total * 1000,
+        )
 
         return SearchResponse(
             results=page_results,
@@ -547,6 +592,7 @@ class SearchController:
 
         For each theme page result, fetch its linked content from the junction table
         and group by info_type. Uses a single database query for all theme pages.
+        Results are cached so subsequent requests don't hit the DB.
 
         Args:
             results: List of search results
@@ -560,13 +606,20 @@ class SearchController:
         if not theme_page_ids:
             return results  # No theme pages, nothing to do
 
-        # Fetch all children in ONE database query (much faster!)
-        all_children = content_repository.get_theme_pages_content_batch(theme_page_ids)
-        if all_children is None:
-            logger.warning(
-                "Could not load theme page children batch for search results; returning results without populated children"
-            )
-            return results
+        # Check which IDs are already cached
+        uncached_ids = [tid for tid in theme_page_ids if tid not in self._theme_children_cache]
+
+        if uncached_ids:
+            fetched = content_repository.get_theme_pages_content_batch(uncached_ids)
+            if fetched is None:
+                logger.warning(
+                    "Could not load theme page children batch for search results; returning results without populated children"
+                )
+                return results
+            for tid in uncached_ids:
+                self._theme_children_cache[tid] = fetched.get(tid, [])
+
+        all_children = {tid: self._theme_children_cache.get(tid, []) for tid in theme_page_ids}
 
         # Populate each theme page with its children
         for result in results:
@@ -832,6 +885,7 @@ class SearchController:
         query: str,
         role: Optional[str],
         method: str,
+        background_tasks: Optional[BackgroundTasks] = None,
         bm25_weight: Optional[float] = None,
         semantic_weight: Optional[float] = None,
         rrf_k: Optional[int] = None,
@@ -854,17 +908,24 @@ class SearchController:
             rerank=rerank,
         )
 
-        if not search_id:
-            # New search — log synchronously so subsequent get_search_by_id
-            # (e.g. from pagination) can find it immediately.
-            search_id = self._build_signed_search_id(expected_signature)
-            database_service.log_search(search_id=search_id, query=query, role=role)
-        else:
-            # Validate existing search_id
-            stored_search = database_service.get_search_by_id(search_id)
-            if stored_search is None:
-                raise ValueError(f"Invalid search_id: {search_id}")
+        # Evict stale entries from local search_id cache
+        now = time.monotonic()
+        stale = [k for k, (t, _, _) in self._recent_search_ids.items()
+                 if now - t >= self._RECENT_SEARCH_ID_TTL_SECONDS]
+        for k in stale:
+            del self._recent_search_ids[k]
 
+        if not search_id:
+            # New search — cache locally and persist to DB in background.
+            search_id = self._build_signed_search_id(expected_signature)
+            self._recent_search_ids[search_id] = (now, query.strip().lower(), role or None)
+            if background_tasks:
+                background_tasks.add_task(database_service.log_search,
+                                          search_id=search_id, query=query, role=role)
+            else:
+                database_service.log_search(search_id=search_id, query=query, role=role)
+        else:
+            # Validate existing search_id — check local cache first, then DB.
             embedded_signature = self._extract_search_signature(search_id)
             if embedded_signature is None:
                 raise ValueError(
@@ -877,14 +938,26 @@ class SearchController:
                     "Please start a new search."
                 )
 
-            stored_query = (stored_search.get("query") or "").strip().lower()
-            stored_role = stored_search.get("role") or None
-            incoming_role = role or None
+            cached = self._recent_search_ids.get(search_id)
+            if cached is not None:
+                stored_query, stored_role = cached[1], cached[2]
+            else:
+                stored_search = database_service.get_search_by_id(search_id)
+                if stored_search is None:
+                    raise ValueError(f"Invalid search_id: {search_id}")
+                stored_query = (stored_search.get("query") or "").strip().lower()
+                stored_role = stored_search.get("role") or None
 
+            incoming_role = role or None
             if stored_query != query.strip().lower() or stored_role != incoming_role:
                 # Query or role changed — start a fresh search
                 search_id = self._build_signed_search_id(expected_signature)
-                database_service.log_search(search_id=search_id, query=query, role=role)
+                self._recent_search_ids[search_id] = (now, query.strip().lower(), incoming_role)
+                if background_tasks:
+                    background_tasks.add_task(database_service.log_search,
+                                              search_id=search_id, query=query, role=role)
+                else:
+                    database_service.log_search(search_id=search_id, query=query, role=role)
 
         return search_id
 

@@ -763,6 +763,46 @@ class ContentRepository:
             cursor.close()
             conn.close()
 
+    def get_all_theme_pages_content(self) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """
+        Pre-load ALL theme page children in a single query (for startup caching).
+
+        Returns:
+            Dict mapping theme_page_id -> list of linked content items (lightweight columns only).
+            Returns None when the lookup could not be completed.
+        """
+        conn = db_pool.get_connection()
+        if not conn:
+            return None
+
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT tpc.theme_page_id,
+                       c.id, c.tittel, c.kort_tittel, c.info_type,
+                       c.path, c.has_text_content, c.document_url
+                FROM content c
+                INNER JOIN theme_page_content tpc ON c.id = tpc.content_id
+                ORDER BY tpc.theme_page_id, tpc.display_order, c.tittel
+            """)
+            rows = cursor.fetchall()
+
+            result: Dict[str, List[Dict[str, Any]]] = {}
+            for row in rows:
+                theme_id = row.pop('theme_page_id')
+                result.setdefault(theme_id, []).append(row)
+
+            return result
+        except mysql.connector.Error as e:
+            logger.error("Error pre-loading all theme page children: %s", e)
+            return None
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
     def get_theme_pages_content_batch(self, theme_page_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """
         Get all content linked to multiple theme pages in a single query (batch operation).
@@ -785,10 +825,13 @@ class ContentRepository:
         try:
             cursor = conn.cursor(dictionary=True)
 
-            # Use IN clause to fetch all at once
+            # Use IN clause to fetch all at once — select only columns used by
+            # _populate_theme_page_children to avoid transferring large tekst blobs.
             placeholders = ','.join(['%s'] * len(theme_page_ids))
             query = f"""
-                SELECT tpc.theme_page_id, c.*
+                SELECT tpc.theme_page_id,
+                       c.id, c.tittel, c.kort_tittel, c.info_type,
+                       c.path, c.has_text_content, c.document_url
                 FROM content c
                 INNER JOIN theme_page_content tpc ON c.id = tpc.content_id
                 WHERE tpc.theme_page_id IN ({placeholders})
