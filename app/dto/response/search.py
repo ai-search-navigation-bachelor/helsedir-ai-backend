@@ -43,6 +43,7 @@ class SearchResult(BaseModel):
     document_url: Optional[str]
     is_pdf_only: bool
     score: float  # Normalized 0-1
+    role_tags: List[str] = []  # Role slugs from the document
     parent: Optional[ContentSummaryResponse] = None
     root_publication: Optional[ContentSummaryResponse] = None
     children: Optional[List[GroupedContent]] = None  # For theme pages with linked content

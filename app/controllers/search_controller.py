@@ -531,6 +531,7 @@ class SearchController:
                     document_url=theme_page.public_document_url,
                     is_pdf_only=theme_page.is_pdf_only,
                     score=max_score,
+                    role_tags=theme_page.role_tags,
                     explanation=f"Theme fallback (fuzzy): {int(max_score * 100)}%",
                 ))
 
@@ -590,6 +591,15 @@ class SearchController:
                     content.get('document_url'),
                 )
 
+                # Parse role_tags from DB JSON
+                raw_role_tags = content.get('role_tags')
+                if isinstance(raw_role_tags, str):
+                    try:
+                        raw_role_tags = json.loads(raw_role_tags)
+                    except (json.JSONDecodeError, TypeError):
+                        raw_role_tags = []
+                child_role_tags = raw_role_tags if isinstance(raw_role_tags, list) else []
+
                 # Create SearchResult for child content
                 child_result = SearchResult(
                     id=content.get('id', ''),
@@ -605,6 +615,7 @@ class SearchController:
                     document_url=metadata["document_url"],
                     is_pdf_only=metadata["is_pdf_only"],
                     score=1.0,  # Children inherit parent's relevance
+                    role_tags=child_role_tags,
                     explanation=f"Under {result.title}"
                 )
                 grouped[info_type].append(child_result)

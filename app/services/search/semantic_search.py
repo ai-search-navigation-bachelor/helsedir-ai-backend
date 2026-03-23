@@ -193,6 +193,7 @@ class SemanticSearch:
                     document_url=item.public_document_url,
                     is_pdf_only=item.is_pdf_only,
                     score=round(norm_score, 3),
+                    role_tags=item.role_tags,
                 )
             )
 

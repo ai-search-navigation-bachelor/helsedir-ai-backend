@@ -335,6 +335,7 @@ class HybridSearch:
                     document_url=c.item.public_document_url,
                     is_pdf_only=c.item.is_pdf_only,
                     score=round(c.combined_score, 3),
+                    role_tags=c.item.role_tags,
                     pipeline=pipeline,
                 )
             )
