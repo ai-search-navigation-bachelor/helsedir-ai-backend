@@ -20,6 +20,7 @@ class ContentRepository:
     def __init__(self):
         self._warned_missing_attachments_json = False
         self._warned_missing_kort_tittel = False
+        self._warned_missing_nki_indicator_id = False
 
     def _serialize_json_field(self, value) -> Optional[str]:
         """Serialize a field to JSON string if needed."""
@@ -51,6 +52,7 @@ class ContentRepository:
         path,
         has_text_content,
         document_url,
+        nki_indicator_id,
         attachments_json,
         ehelsestandard_fields_json,
     ) -> None:
@@ -58,6 +60,7 @@ class ContentRepository:
         def execute_upsert(
             *,
             include_short_title: bool,
+            include_nki_indicator_id: bool,
             include_attachments_json: bool,
             include_ehelsestandard_fields_json: bool,
         ) -> None:
@@ -122,6 +125,13 @@ class ContentRepository:
                 ]
             )
 
+            if include_nki_indicator_id:
+                insert_columns.append("nki_indicator_id")
+                values.append(nki_indicator_id)
+                update_assignments.append(
+                    "nki_indicator_id = COALESCE(VALUES(nki_indicator_id), nki_indicator_id)"
+                )
+
             if include_attachments_json:
                 insert_columns.append("attachments_json")
                 values.append(attachments_json)
@@ -155,16 +165,23 @@ class ContentRepository:
         try:
             execute_upsert(
                 include_short_title=True,
+                include_nki_indicator_id=True,
                 include_attachments_json=True,
                 include_ehelsestandard_fields_json=True,
             )
         except mysql.connector.Error as e:
             missing_kort_tittel = self._is_unknown_column_error(e, "kort_tittel")
+            missing_nki_indicator_id = self._is_unknown_column_error(e, "nki_indicator_id")
             missing_attachments_json = self._is_unknown_column_error(e, "attachments_json")
             missing_ehelsestandard_fields_json = self._is_unknown_column_error(
                 e, "ehelsestandard_fields_json"
             )
-            if not (missing_kort_tittel or missing_attachments_json or missing_ehelsestandard_fields_json):
+            if not (
+                missing_kort_tittel
+                or missing_nki_indicator_id
+                or missing_attachments_json
+                or missing_ehelsestandard_fields_json
+            ):
                 raise
 
             if missing_kort_tittel and not self._warned_missing_kort_tittel:
@@ -173,6 +190,13 @@ class ContentRepository:
                     e,
                 )
                 self._warned_missing_kort_tittel = True
+
+            if missing_nki_indicator_id and not self._warned_missing_nki_indicator_id:
+                logger.warning(
+                    "content schema is missing nki_indicator_id; retrying without it until migration is applied: %s",
+                    e,
+                )
+                self._warned_missing_nki_indicator_id = True
 
             if (missing_attachments_json or missing_ehelsestandard_fields_json) and not self._warned_missing_attachments_json:
                 logger.warning(
@@ -183,6 +207,7 @@ class ContentRepository:
 
             execute_upsert(
                 include_short_title=not missing_kort_tittel,
+                include_nki_indicator_id=not missing_nki_indicator_id,
                 include_attachments_json=not missing_attachments_json,
                 include_ehelsestandard_fields_json=not missing_ehelsestandard_fields_json,
             )
@@ -282,6 +307,7 @@ class ContentRepository:
                 path=content.get("path"),
                 has_text_content=has_text_content,
                 document_url=document_url,
+                nki_indicator_id=content.get("nki_indicator_id"),
                 attachments_json=attachments_json,
                 ehelsestandard_fields_json=ehelsestandard_fields_json,
             )
@@ -357,6 +383,7 @@ class ContentRepository:
                         path=content.get("path"),
                         has_text_content=has_text_content,
                         document_url=document_url,
+                        nki_indicator_id=content.get("nki_indicator_id"),
                         attachments_json=attachments_json,
                         ehelsestandard_fields_json=ehelsestandard_fields_json,
                     )

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS content (
     links JSON,
     has_text_content TINYINT(1),
     document_url TEXT,
+    nki_indicator_id VARCHAR(32),
     attachments_json JSON,
     ehelsestandard_fields_json JSON,
     embedding BLOB,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS content (
     path VARCHAR(1000),
 
     INDEX idx_info_type (info_type),
+    INDEX idx_nki_indicator_id (nki_indicator_id),
     INDEX idx_path (path(255)),
     FULLTEXT INDEX idx_tittel (tittel),
     FULLTEXT INDEX idx_tekst (tekst)

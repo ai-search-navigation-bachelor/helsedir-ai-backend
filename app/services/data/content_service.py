@@ -174,6 +174,7 @@ class ContentService:
                 body=item.get("tekst") or "",
                 content_type=canonical_info_type or "unknown",
                 path=item.get("path"),
+                nki_indicator_id=item.get("nki_indicator_id"),
                 forst_publisert=item.get("forst_publisert"),
                 sist_faglig_oppdatert=item.get("sist_faglig_oppdatert"),
                 role_tags=role_tags if isinstance(role_tags, list) else [],
@@ -265,33 +266,9 @@ class ContentService:
             cached_count = database_service.cache_content_batch(api_items)
             print(f"Cached {cached_count} content items in database")
 
-            # Parse into ContentItem format
-            self.content = []
-            for item in api_items:
-                role_tags = self._parse_json_field(item.get("role_tags"), [])
-                links = self._parse_links(item.get("links"))
-                document_meta = compute_document_metadata(item)
-
-                content_item = ContentItem(
-                    id=str(item.get("id", item.get("infoId", ""))),
-                    title=item.get("tittel", ""),
-                    short_title=item.get("kortTittel") or item.get("kort_tittel"),
-                    body=item.get("tekst", ""),
-                    content_type=item.get("infoType", "unknown"),
-                    path=item.get("path"),
-                    forst_publisert=item.get("forstPublisert") or item.get("forst_publisert"),
-                    sist_faglig_oppdatert=item.get("sistFagligOppdatert") or item.get("sist_faglig_oppdatert"),
-                    role_tags=role_tags if isinstance(role_tags, list) else [],
-                    links=links,
-                    has_text_content=document_meta["has_text_content"],
-                    document_url=document_meta["document_url"],
-                )
-                self.content.append(content_item)
-
-            self._rebuild_lookup_dicts()
-            self._content_version += 1
-            self._enrich_with_theme_page_links()
-            print(f"Loaded {len(self.content)} content items from API")
+            # Reload from DB so local-only fields like nki_indicator_id survive refreshes.
+            self.load_content()
+            print(f"Reloaded {len(self.content)} content items from database cache after API refresh")
 
         except HelseDirectorateAPIError as e:
             print(f"Error loading from API: {e}")

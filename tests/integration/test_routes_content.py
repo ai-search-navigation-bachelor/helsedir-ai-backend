@@ -14,6 +14,8 @@ from app.entities.content import (
     EhelsestandardAttachment,
     EhelsestandardFields,
 )
+from app.exceptions.helsedir import HelseDirectorateAPIError
+from app.services.statistics.nki_statistics_service import nki_statistics_service
 
 
 @pytest.mark.integration
@@ -740,3 +742,136 @@ class TestPdfReportChapters:
         data = client.get("/content/pdf-chapter-1").json()
         assert data["document_url"] == "https://www.helsedirektoratet.no/rapporter/test/pdf-av-rapporten/test.pdf"
         assert data["is_pdf_only"] is True
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("mock_content")
+class TestContentStatistics:
+    def setup_method(self):
+        nki_statistics_service.clear_cache()
+
+    def teardown_method(self):
+        nki_statistics_service.clear_cache()
+
+    def test_statistics_for_unknown_content_returns_404(self, client):
+        response = client.get("/content/unknown/statistics")
+        assert response.status_code == 404
+
+    def test_statistics_for_content_without_indicator_returns_not_configured(self, client):
+        data = client.get("/content/001/statistics").json()
+
+        assert data == {
+            "has_statistics": False,
+            "statistics_status": "not_configured",
+            "content_id": "001",
+            "nki_indicator_id": None,
+            "title": None,
+            "description": None,
+            "attachments": [],
+            "series": [],
+            "dimensions": {
+                "measures": [],
+                "locations": [],
+                "parent_locations": [],
+                "period_types": [],
+            },
+        }
+
+    def test_statistics_for_content_with_indicator_returns_normalized_payload(self, client, mock_content, mocker):
+        item = ContentItem(
+            id="stats-1",
+            title="Fastleger",
+            body="",
+            content_type="statistikk",
+            path="/statistikk/fastleger",
+            nki_indicator_id="0003-0010-330",
+        )
+        mock_content.content.append(item)
+        mock_content.content_by_id[item.id] = item
+        mock_content.content_by_path[item.path] = item
+
+        mocker.patch(
+            "app.services.statistics.nki_statistics_service.helsedir_api_service.get_nki_quality_indicator_by_id_async",
+            new=AsyncMock(
+                return_value={
+                    "id": "0003-0010-330",
+                    "tittel": "Avtalevarighet på kommunenes fastleger",
+                    "tekst": "Beskrivelse av indikatoren",
+                }
+            ),
+        )
+        mocker.patch(
+            "app.services.statistics.nki_statistics_service.helsedir_api_service.get_nki_quality_indicator_data_async",
+            new=AsyncMock(
+                return_value={
+                    "ColumnNames": [
+                        "MeasureName",
+                        "LocationName",
+                        "ParentName",
+                        "Value",
+                        "TimeFrom",
+                        "TimeTo",
+                        "PeriodType",
+                    ],
+                    "AttachmentDataRows": [
+                        [
+                            "Gjennomsnittlig avtalevarighet år",
+                            "Kommunegruppe 1",
+                            "Norge",
+                            "6.15",
+                            "2017-01-01T00:00:00",
+                            "2017-12-31T00:00:00",
+                            "year",
+                        ]
+                    ],
+                }
+            ),
+        )
+
+        data = client.get("/content/stats-1/statistics").json()
+
+        assert data["has_statistics"] is True
+        assert data["statistics_status"] == "available"
+        assert data["title"] == "Avtalevarighet på kommunenes fastleger"
+        assert data["dimensions"]["measures"] == ["Gjennomsnittlig avtalevarighet år"]
+        assert data["series"] == [
+            {
+                "name": "Gjennomsnittlig avtalevarighet år",
+                "points": [
+                    {
+                        "x": "2017-12-31",
+                        "y": 6.15,
+                        "location": "Kommunegruppe 1",
+                        "parent_location": "Norge",
+                        "time_from": "2017-01-01",
+                        "time_to": "2017-12-31",
+                        "period_type": "year",
+                    }
+                ],
+            }
+        ]
+
+    def test_statistics_returns_unavailable_when_upstream_fails(self, client, mock_content, mocker):
+        item = ContentItem(
+            id="stats-2",
+            title="Fastleger",
+            body="",
+            content_type="statistikk",
+            nki_indicator_id="0003-0010-330",
+        )
+        mock_content.content.append(item)
+        mock_content.content_by_id[item.id] = item
+
+        mocker.patch(
+            "app.services.statistics.nki_statistics_service.helsedir_api_service.get_nki_quality_indicator_by_id_async",
+            new=AsyncMock(side_effect=HelseDirectorateAPIError("boom")),
+        )
+        mocker.patch(
+            "app.services.statistics.nki_statistics_service.helsedir_api_service.get_nki_quality_indicator_data_async",
+            new=AsyncMock(return_value=None),
+        )
+
+        data = client.get("/content/stats-2/statistics").json()
+
+        assert data["has_statistics"] is False
+        assert data["statistics_status"] == "unavailable"

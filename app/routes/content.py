@@ -23,6 +23,7 @@ from app.dto.response.content import (
     ChildGroupResponse,
     RelatedLinkResponse,
 )
+from app.dto.response.statistics import ContentStatisticsResponse
 from app.entities.content import ContentItem, ContentLink
 from app.services.data.content_service import content_service
 from app.services.data.document_metadata import (
@@ -34,6 +35,7 @@ from app.services.data.ehelsestandard_utils import normalize_attachment_entry
 from app.services.data.database_service import database_service
 from app.services.repositories.content_repository import content_repository
 from app.services.external.helsedir_api_service import helsedir_api_service
+from app.services.statistics.nki_statistics_service import nki_statistics_service
 from app.constants import get_category_display_name, normalize_content_type
 from app.config import settings
 
@@ -710,6 +712,22 @@ async def get_content_by_path(
         raise HTTPException(status_code=404, detail=f"Content not found for path: {path}")
 
     return await _build_content_response(content, search_id)
+
+
+@router.get("/{content_id}/statistics", response_model=ContentStatisticsResponse)
+async def get_content_statistics(content_id: str):
+    """
+    Get normalized NKI statistics for one content page.
+
+    Returns has_statistics=false with a controlled status when the page has no
+    configured NKI indicator or the upstream dataset is unavailable.
+    """
+    content = content_service.get_content_by_id(content_id)
+
+    if not content:
+        raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+    return await nki_statistics_service.get_statistics_for_content(content)
 
 
 @router.get("/{content_id}", response_model=ContentResponse)
