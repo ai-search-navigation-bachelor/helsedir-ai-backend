@@ -57,9 +57,6 @@ RERANK_FEATURES: List[str] = [
     # Query features
     "query_length",                 # number of terms in query
     "title_query_overlap",          # Jaccard overlap between query and title terms
-
-    # Freshness
-    "content_freshness",            # 1.0 / (1.0 + days_since_update / 365.0)
 ]
 
 
@@ -163,8 +160,6 @@ class RerankCandidate:
     query_length: float = 0.0
     title_query_overlap: float = 0.0
 
-    # Freshness
-    content_freshness: float = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -290,9 +285,6 @@ class HealthContentReranker:
                 else:
                     overlap = 0.0
 
-                # Content freshness
-                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
-
                 feat_dict = {
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
@@ -300,15 +292,15 @@ class HealthContentReranker:
                     "role_match": _f(rr.get("role_match"), 0.0),
                     "query_length": query_len,
                     "title_query_overlap": overlap,
-                    "content_freshness": freshness,
                 }
 
                 feat_dicts.append(feat_dict)
 
-                # Binary label + IPS sample weight for position bias correction
-                labels.append(float(clicked))
+                # IPS-weighted label: scale click signal by inverse propensity
+                # to correct for position bias (items shown higher get more clicks).
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_sample_weights.append(1.0 / max(float(prop), 1e-6))
+                ips_weight = 1.0 / max(float(prop), 1e-6)
+                labels.append(float(clicked) * ips_weight)
 
             if not any_pos:
                 continue
@@ -322,7 +314,6 @@ class HealthContentReranker:
 
             X_all.extend(feats)
             y_all.extend(labels)
-            w_all.extend(ips_sample_weights)
             qid_all.extend([used_groups] * len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -332,7 +323,6 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
-        w = np.asarray(w_all, dtype=np.float32)
         qid = np.asarray(qid_all, dtype=np.int32)
 
         self.model = xgb.XGBRanker(
@@ -347,7 +337,7 @@ class HealthContentReranker:
             tree_method="hist",
         )
 
-        self.model.fit(X, y, qid=qid, sample_weight=w, verbose=verbose)
+        self.model.fit(X, y, qid=qid, verbose=verbose)
         self.model.get_booster().feature_names = self.feature_names
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
@@ -418,8 +408,6 @@ class HealthContentReranker:
                 else:
                     overlap = 0.0
 
-                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
-
                 feat_dicts.append({
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
@@ -427,13 +415,12 @@ class HealthContentReranker:
                     "role_match": _f(rr.get("role_match"), 0.0),
                     "query_length": query_len,
                     "title_query_overlap": overlap,
-                    "content_freshness": freshness,
                 })
 
-                # Binary label + IPS sample weight for position bias correction
-                labels.append(float(clicked))
+                # IPS-weighted label
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
-                ips_sample_weights.append(1.0 / max(float(prop), 1e-6))
+                ips_weight = 1.0 / max(float(prop), 1e-6)
+                labels.append(float(clicked) * ips_weight)
 
             if not any_pos:
                 continue
@@ -443,7 +430,6 @@ class HealthContentReranker:
             feats = [[fd[n] for n in self.feature_names] for fd in feat_dicts]
             X_all.extend(feats)
             y_all.extend(labels)
-            w_all.extend(ips_sample_weights)
             qid_all.extend([used_groups] * len(labels))
             used_groups += 1
             used_rows += len(labels)
@@ -453,7 +439,6 @@ class HealthContentReranker:
 
         X = np.asarray(X_all, dtype=np.float32)
         y = np.asarray(y_all, dtype=np.float32)
-        w = np.asarray(w_all, dtype=np.float32)
         qid = np.asarray(qid_all, dtype=np.int32)
 
         self.model = xgb.XGBRanker(
@@ -467,7 +452,7 @@ class HealthContentReranker:
             random_state=42,
             tree_method="hist",
         )
-        self.model.fit(X, y, qid=qid, sample_weight=w, verbose=verbose)
+        self.model.fit(X, y, qid=qid, verbose=verbose)
         self.model.get_booster().feature_names = self.feature_names
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
@@ -506,7 +491,7 @@ class HealthContentReranker:
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored
 
-        # Build feature matrix (7 features)
+        # Build feature matrix (6 features)
         X = []
         for c in candidates:
             feat_dict = {
@@ -516,7 +501,6 @@ class HealthContentReranker:
                 "role_match": _f(c.role_match),
                 "query_length": _f(c.query_length),
                 "title_query_overlap": _f(c.title_query_overlap),
-                "content_freshness": _f(c.content_freshness),
             }
             X.append([feat_dict[n] for n in self.feature_names])
 
@@ -579,8 +563,6 @@ class HealthContentReranker:
                 else:
                     overlap = 0.0
 
-                freshness = _compute_freshness(rr.get("sist_faglig_oppdatert"))
-
                 feat_dict = {
                     "semantic_score": _f(rr.get("semantic_score"), 0.0),
                     "bm25_score": _f(rr.get("bm25_score"), 0.0),
@@ -588,7 +570,6 @@ class HealthContentReranker:
                     "role_match": _f(rr.get("role_match"), 0.0),
                     "query_length": query_len,
                     "title_query_overlap": overlap,
-                    "content_freshness": freshness,
                 }
                 features_list.append(feat_dict)
                 relevance.append(float(rr.get("clicked", 0)))
@@ -734,7 +715,6 @@ def extract_features_for_candidate(
     role_match: float = 0.0,
     query_length: float = 0.0,
     title_query_overlap: float = 0.0,
-    content_freshness: float = 0.0,
 ) -> Dict[str, float]:
     """
     Optional helper if your pipeline builds dict features first.
@@ -747,7 +727,6 @@ def extract_features_for_candidate(
         "role_match": float(role_match),
         "query_length": float(query_length),
         "title_query_overlap": float(title_query_overlap),
-        "content_freshness": float(content_freshness),
     }
 
 
