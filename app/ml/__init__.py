@@ -19,26 +19,17 @@ Purpose:
     Example: A search for "hodepine" could find content about "migrene" even if
     the word "hodepine" doesn't appear in the text.
 
-Training data:
-    - Source: Content corpus from MySQL database (content table)
-    - NOT trained on user logs
-    - Requires content cached from Helsedir API
-
 How it works:
-    1. Text is tokenized into words/subwords
-    2. Each token is converted to a learned embedding vector
-    3. A Bidirectional LSTM processes the sequence
-    4. Output is a fixed-size vector (default: 256 dimensions)
-    5. Vectors are L2-normalized for cosine similarity
+    Uses intfloat/multilingual-e5-base (768-dim) via sentence-transformers,
+    fine-tuned with GPL on health content (saved to models/finetuned-e5-gpl/).
+
+    1. Content is formatted as structured passages with metadata
+    2. E5 prefix ("query: " / "passage: ") is added for retrieval
+    3. Embeddings are L2-normalized for cosine similarity
 
 Training process:
-    python scripts/train_embedding_model.py
-
-    The script:
-    1. Loads content from MySQL database
-    2. Builds vocabulary from the corpus
-    3. Creates the model architecture
-    4. Saves to models/embedding/model.keras
+    python scripts/ml/2_finetune_gpl.py    # Fine-tune E5 model
+    python scripts/ml/3_generate_embeddings.py  # Generate embeddings
 
 Usage in search:
     When ML_EMBEDDING_ENABLED=true:
@@ -46,11 +37,6 @@ Usage in search:
     2. For each search, the query is embedded
     3. Cosine similarity is computed between query and all content
     4. Semantic scores are combined with keyword scores
-
-Limitations:
-    - Requires content to be cached in database
-    - Model quality depends on corpus size and diversity
-    - Initial training can be slow for large corpora
 
 
 RANKING MODEL
@@ -111,13 +97,13 @@ How it works:
     4. Results are re-ranked by predicted relevance
 
 Training process:
-    python scripts/train_ranking_model.py
+    python scripts/ml/train_ranking_model.py
 
     The script:
     1. Loads search and click events from MySQL database
-    2. Creates training examples (positive/negative pairs)
-    3. Trains the ranking model
-    4. Saves to models/ranking/model.keras
+    2. Creates training examples with IPS position bias correction
+    3. Trains XGBoost LambdaMART model
+    4. Saves to models/ranking/
 
     Minimum recommended: 100+ search sessions with clicks
 
@@ -184,12 +170,15 @@ FILE STRUCTURE
     └── ranking_model.py      # TensorFlow ranking model class
 
     models/
-    ├── embedding/
-    │   └── model.keras       # Trained embedding model
-    └── ranking/
-        └── model.keras       # Trained ranking model
+    ├── finetuned-e5-gpl/     # Fine-tuned E5 embedding model
+    │   ├── model.safetensors
+    │   ├── config.json
+    │   └── tokenizer.json
+    └── ranking/              # XGBoost LTR model
+        └── reranker.json
 
-    scripts/
-    ├── train_embedding_model.py  # Embedding training script
-    └── train_ranking_model.py    # Ranking training script
+    scripts/ml/
+    ├── 1_generate_queries.py     # Generate synthetic queries
+    ├── 2_finetune_gpl.py         # Fine-tune E5 model
+    └── 3_generate_embeddings.py  # Generate embeddings
 """
