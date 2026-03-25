@@ -49,6 +49,7 @@ pip-delete-this-directory.txt
 
 # ML Models (large binary files)
 models/
+!models/ranking/
 checkpoints/
 
 # Testing
