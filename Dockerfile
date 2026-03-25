@@ -26,9 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 COPY scripts/ ./scripts/
-
-# Create models directory (for ML models)
-RUN mkdir -p models
+COPY models/ranking/ ./models/ranking/
 
 # Expose port
 EXPOSE 8000
