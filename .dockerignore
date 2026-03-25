@@ -53,8 +53,9 @@ docker-compose.yml
 # Old structure (before refactor)
 main.py
 config.py
-models/
+models/*
 !models/ranking/
+!models/ranking/**
 services/
 routes/
 run.py
