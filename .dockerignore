@@ -54,6 +54,7 @@ docker-compose.yml
 main.py
 config.py
 models/
+!models/ranking/
 services/
 routes/
 run.py
