@@ -389,8 +389,7 @@ _SYNONYM_GROUPS = [
     ("helikobakterinfeksjon", "helicobacter pylori-infeksjon"),
 
     # ── Kvinnehelse og svangerskap ────────────────────────────────
-    ("graviditet", "svangerskap"),
-    ("gravid", "svanger"),
+    ("graviditet", "svangerskap", "gravid", "svanger", "gravide"),
     ("fødsel", "forløsning", "nedkomst"),
     ("vaginal fødsel", "naturlig fødsel"),
     ("keisersnitt", "sectio", "sectio caesarea"),
@@ -413,6 +412,7 @@ _SYNONYM_GROUPS = [
     ("overgangsalder", "menopause", "klimakteriet"),
     ("hetetokter", "varmebyger"),
     ("bekkenløsning", "bekkenleddssmerter i svangerskap"),
+    ("bekkenbunnstrening", "bekkenbunnsøvelser", "bekkenbunn", "bekkenbunnsmuskeltrening"),
     ("framfall", "prolaps", "underlivsprolaps"),
     ("livmorframfall", "uterin prolaps"),
     ("vaginal tørrhet", "atrofisk vaginitt"),
@@ -663,7 +663,8 @@ _SYNONYM_GROUPS = [
     ("røykeslutt", "slutte å røyke"),
     ("snus", "snusbruk"),
     ("nikotinavhengighet", "nikotinavhengig"),
-    ("fysisk aktivitet", "mosjon", "trening"),
+    ("fysisk aktivitet", "mosjon", "trening", "øvelser"),
+    ("stillesitting", "inaktivitet", "sedentær"),
     ("kosthold", "ernæring", "diett"),
     ("sunn mat", "helsevennlig kosthold"),
     ("søvnhygiene", "gode søvnvaner"),
