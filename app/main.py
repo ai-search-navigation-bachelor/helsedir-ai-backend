@@ -13,7 +13,7 @@ logging.basicConfig(
 )
 
 # Import routers
-from app.routes import health, search, logging, helsedir, content, temaside, roles, dev
+from app.routes import health, search, logging, helsedir, content, temaside, roles, dev  # noqa: E402
 
 
 @asynccontextmanager

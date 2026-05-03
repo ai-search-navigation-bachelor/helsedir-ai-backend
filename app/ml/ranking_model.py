@@ -239,7 +239,6 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
-        w_all: List[float] = []
         qid_all: List[int] = []
 
         used_groups = 0
@@ -260,7 +259,6 @@ class HealthContentReranker:
             # First pass: build feature dicts
             feat_dicts: List[Dict[str, float]] = []
             labels: List[float] = []
-            ips_sample_weights: List[float] = []
 
             any_pos = False
             any_click = False
@@ -370,7 +368,6 @@ class HealthContentReranker:
 
         X_all: List[List[float]] = []
         y_all: List[float] = []
-        w_all: List[float] = []
         qid_all: List[int] = []
         used_groups = 0
         used_rows = 0
@@ -386,7 +383,6 @@ class HealthContentReranker:
 
             feat_dicts: List[Dict[str, float]] = []
             labels: List[float] = []
-            ips_sample_weights: List[float] = []
             any_pos = False
             any_click = False
 

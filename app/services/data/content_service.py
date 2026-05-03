@@ -420,7 +420,7 @@ class ContentService:
         from app.exceptions.helsedir import HelseDirectorateAPIError
 
         try:
-            print(f"Loading content from Helsedirektoratet API...")
+            print("Loading content from Helsedirektoratet API...")
 
             results = helsedir_api_service.search_infobits(
                 query_text=query_text,
