@@ -47,18 +47,6 @@ class LoggingController:
         Raises:
             Exception: If logging fails
         """
-        # Convert results_shown to list of dicts if provided
-        results_dict = None
-        if results_shown:
-            results_dict = [
-                {
-                    "content_id": r.content_id,
-                    "position": r.position,
-                    "score": r.score,
-                }
-                for r in results_shown
-            ]
-
         success = self.logging_service.log_event(
             event_type=event_type,
             query=query,

@@ -34,7 +34,6 @@ from app.services.data.document_metadata import build_content_metadata
 from app.services.repositories.content_repository import content_repository
 from app.config import settings
 from app.constants import (
-    is_priority_category,
     get_category_display_name,
     PRIORITY_CATEGORIES,
     normalize_content_type,

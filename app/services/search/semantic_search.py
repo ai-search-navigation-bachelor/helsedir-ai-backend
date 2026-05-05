@@ -4,7 +4,6 @@ Semantic search functionality using embeddings.
 
 from collections import OrderedDict
 from typing import List, Optional, Dict
-from pathlib import Path
 
 import numpy as np
 

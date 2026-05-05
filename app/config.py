@@ -117,7 +117,7 @@ Path(settings.ml_models_dir).mkdir(parents=True, exist_ok=True)
 
 # Print loaded configuration (useful for debugging)
 if settings.debug:
-    print(f"Configuration loaded:")
+    print("Configuration loaded:")
     print(f"  Host: {settings.host}")
     print(f"  Port: {settings.port}")
     print(f"  Environment: {settings.environment}")
