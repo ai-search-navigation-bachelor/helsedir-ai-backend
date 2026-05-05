@@ -533,8 +533,8 @@ def main():
     parser.add_argument(
         "--learning-rate",
         type=float,
-        default=5e-6,
-        help="Learning rate (default: 5e-6, low to prevent catastrophic forgetting)",
+        default=1e-5,
+        help="Learning rate (default: 1e-5, scaled up from 5e-6 to match larger batch size of 32)",
     )
     parser.add_argument(
         "--scheduler",
@@ -546,7 +546,7 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=8,
+        default=32,
         help="Training batch size",
     )
     parser.add_argument(
