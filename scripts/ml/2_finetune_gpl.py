@@ -568,6 +568,17 @@ def main():
     )
     args = parser.parse_args()
 
+    # Seed all random number generators for reproducibility
+    import numpy as np
+    import torch
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    print(f"Random seed: {seed}")
+
     # Check dependencies
     try:
         from sentence_transformers import SentenceTransformer, InputExample, losses
