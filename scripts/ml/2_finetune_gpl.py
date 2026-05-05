@@ -605,10 +605,17 @@ def main():
             sys.exit(1)
         print(f"Using Groq API (llama-3.1-8b-instant)")
 
-    # Load content
+    # Load content — only searchable types (excluding temasider, handled separately)
     print("\nLoading content from database...")
-    content_items = database_service.get_all_content()
-    print(f"Found {len(content_items)} content items")
+    from app.services.repositories.content_repository import content_repository
+    searchable_types = content_repository.get_searchable_info_types()
+    all_content = database_service.get_all_content()
+    content_items = [
+        item for item in all_content
+        if item.get("info_type", "").lower() in searchable_types
+        and item.get("info_type", "").lower() != "temaside"
+    ]
+    print(f"Found {len(all_content)} total, using {len(content_items)} searchable non-temaside documents")
 
     # Load or generate queries
     cache_path = project_root / "data" / "gpl_queries.json"
