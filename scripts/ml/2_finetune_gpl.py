@@ -759,38 +759,30 @@ def main():
     )
 
     # InformationRetrievalEvaluator: Realistic search metrics (NDCG, MAP, MRR, Recall)
-    # Uses a shared corpus so the model must find the right document among many,
-    # not just among 6 hand-picked candidates.
     print("\nCreating Information Retrieval evaluators...")
 
-    # Build shared corpus: sample up to 2000 random passages + ensure all
-    # relevant documents are included. This gives a realistic retrieval task
-    # without making evaluation too slow.
-    corpus_sample_size = 2000
     all_passage_ids = list(id_to_passage.keys())
 
-    # Collect IDs of all relevant documents in val and test sets
+    # Val corpus: val_relevant_ids + 5000 random distractors (fast training-time eval).
+    # 5000 compensates for no longer including test_relevant_ids, keeping total
+    # corpus size (~8300) comparable to the previous shared corpus (~8615).
+    corpus_sample_size = 5000
     val_relevant_ids = {t["positive_id"] for t in val_triplets}
-    test_relevant_ids = {t["positive_id"] for t in test_triplets}
-    required_ids = val_relevant_ids | test_relevant_ids
+    available_for_val_sampling = [cid for cid in all_passage_ids if cid not in val_relevant_ids]
+    n_val_sample = min(corpus_sample_size, len(available_for_val_sampling))
+    val_corpus_ids = val_relevant_ids | set(random.sample(available_for_val_sampling, n_val_sample))
+    val_corpus = {cid: id_to_passage[cid] for cid in val_corpus_ids}
 
-    # Sample random IDs for corpus padding
-    available_for_sampling = [cid for cid in all_passage_ids if cid not in required_ids]
-    n_sample = min(corpus_sample_size, len(available_for_sampling))
-    sampled_ids = set(random.sample(available_for_sampling, n_sample))
-
-    shared_corpus_ids = required_ids | sampled_ids
-    shared_corpus = {cid: id_to_passage[cid] for cid in shared_corpus_ids}
+    # Test corpus: full corpus (all documents) for realistic final evaluation
+    test_corpus = id_to_passage
 
     # Validation set
     val_queries = {f"q{i}": t["query"] for i, t in enumerate(val_triplets)}
-    val_relevant_docs = {}
-    for i, t in enumerate(val_triplets):
-        val_relevant_docs[f"q{i}"] = {t["positive_id"]}
+    val_relevant_docs = {f"q{i}": {t["positive_id"]} for i, t in enumerate(val_triplets)}
 
     evaluator_ir_val = InformationRetrievalEvaluator(
         val_queries,
-        shared_corpus,
+        val_corpus,
         val_relevant_docs,
         name="ir-val",
         show_progress_bar=False,
@@ -798,19 +790,24 @@ def main():
 
     # Test set
     test_queries = {f"q{i}": t["query"] for i, t in enumerate(test_triplets)}
-    test_relevant_docs = {}
-    for i, t in enumerate(test_triplets):
-        test_relevant_docs[f"q{i}"] = {t["positive_id"]}
+    test_relevant_docs = {f"q{i}": {t["positive_id"]} for i, t in enumerate(test_triplets)}
 
     evaluator_ir_test = InformationRetrievalEvaluator(
         test_queries,
-        shared_corpus,
+        test_corpus,
         test_relevant_docs,
         name="ir-test",
         show_progress_bar=False,
     )
 
-    print(f"  Shared corpus: {len(shared_corpus)} documents (sampled {n_sample} + {len(required_ids)} relevant)")
+    # Save test triplets so 4_evaluate_model.py can reuse the same held-out set
+    test_triplets_path = project_root / "data" / "gpl_test_triplets.json"
+    with open(test_triplets_path, "w", encoding="utf-8") as f:
+        json.dump(test_triplets, f, ensure_ascii=False)
+    print(f"  Saved {len(test_triplets)} test triplets to {test_triplets_path}")
+
+    print(f"  Val corpus: {len(val_corpus)} documents (val_relevant + {n_val_sample} random)")
+    print(f"  Test corpus: {len(test_corpus)} documents (full corpus)")
     print(f"  Validation: {len(val_queries)} queries")
     print(f"  Test: {len(test_queries)} queries")
 
@@ -900,10 +897,15 @@ def main():
         print(f"\n  Information Retrieval Metrics:")
         ir_result = evaluator_ir_test(trained_model)
         if isinstance(ir_result, dict):
-            # Show key metrics
-            for metric in ["cos_sim-NDCG@10", "cos_sim-MAP@10", "cos_sim-Recall@10", "cos_sim-MRR@10"]:
-                if metric in ir_result:
-                    print(f"    {metric}: {ir_result[metric]:.4f}")
+            key_patterns = ["ndcg@10", "map@100", "mrr@10", "recall@10", "accuracy@1", "accuracy@3", "accuracy@5"]
+            printed = False
+            for key, value in sorted(ir_result.items()):
+                if any(p in key.lower() for p in key_patterns):
+                    print(f"    {key}: {value:.4f}")
+                    printed = True
+            if not printed:
+                for key, value in sorted(ir_result.items()):
+                    print(f"    {key}: {value:.4f}")
         else:
             print(f"    Score: {ir_result:.4f}")
 
