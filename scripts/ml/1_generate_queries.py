@@ -49,11 +49,11 @@ async def generate_queries_async(
     _retries: int = 0,
 ) -> List[str]:
     """
-    Use Groq API (free tier) to generate synthetic search queries.
+    Use OpenAI API to generate synthetic search queries.
 
     Args:
         client: Shared async HTTP client
-        api_key: Groq API key
+        api_key: OpenAI API key
         passage: Formatted passage (same as used for embeddings)
         info_type: Document type (e.g., 'retningslinje', 'veileder')
         num_queries: Number of queries to generate
@@ -82,13 +82,13 @@ Returner kun søkefrasene, én per linje:"""
 
     try:
         response = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.8,
                 "max_tokens": 200,
@@ -106,7 +106,7 @@ Returner kun søkefrasene, én per linje:"""
             return await generate_queries_async(client, api_key, passage, info_type, num_queries, _retries + 1)
 
         if response.status_code != 200:
-            print(f"  Groq error: {response.status_code} - {response.text[:200]}")
+            print(f"  OpenAI error: {response.status_code} - {response.text[:200]}")
             return []
 
         data = response.json()
@@ -155,7 +155,7 @@ Returner kun søkefrasene, én per linje:"""
         return cleaned
 
     except Exception as e:
-        print(f"  Error with Groq: {e}")
+        print(f"  Error with OpenAI: {e}")
         return []
 
 
@@ -170,10 +170,9 @@ async def api_worker(
     output_path: Path,
 ) -> None:
     """
-    Async worker that consumes items from the queue and calls the Groq API.
+    Async worker that consumes items from the queue and calls the OpenAI API.
 
-    Each worker is tied to one API key and sleeps 2s between requests
-    to stay within the 30 req/min rate limit.
+    Sleeps 0.1s between requests — OpenAI gpt-4o-mini supports ~500 req/min.
     """
     async with httpx.AsyncClient() as client:
         while True:
@@ -229,7 +228,7 @@ async def api_worker(
                 )
 
             queue.task_done()
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.1)
 
 
 def main():
@@ -259,12 +258,11 @@ def main():
     from app.ml.embedding_model import HealthContentEmbedding
     from app.services.data.database_service import database_service
 
-    # Check Groq API keys
-    api_keys = settings.groq_api_keys
-    if not api_keys:
-        print("Error: GROQ_API_KEY not configured in .env")
-        print("Get a free key at: https://console.groq.com/keys")
+    # Check OpenAI API key
+    if not settings.openai_api_key:
+        print("Error: OPENAI_API_KEY not configured in .env")
         sys.exit(1)
+    api_keys = [settings.openai_api_key]
 
     # Check database
     if not database_service.is_connected():
@@ -275,19 +273,26 @@ def main():
     print("=" * 60)
     print("QUERY GENERATION FOR GPL TRAINING")
     print("=" * 60)
-    print(f"\nGroq API keys configured: {len(api_keys)}")
+    print(f"\nOpenAI API configured (model: gpt-4o-mini)")
     print("\nLoading content from database...")
     all_content = database_service.get_all_content()
     print(f"Found {len(all_content)} total content items")
 
+    from app.services.repositories.content_repository import content_repository
+    searchable_types = content_repository.get_searchable_info_types()
+    print(f"Searchable content types ({len(searchable_types)}): {sorted(searchable_types)}")
+
     content_items = [
         item for item in all_content
-        if item.get("info_type", "").lower() != "temaside"
+        if item.get("info_type", "").lower() in searchable_types
+        and item.get("info_type", "").lower() != "temaside"
     ]
-    n_temasider = len(all_content) - len(content_items)
+    n_excluded = len(all_content) - len(content_items)
+    n_temasider = sum(1 for item in all_content if item.get("info_type", "").lower() == "temaside")
+    n_non_searchable = n_excluded - n_temasider
     print(
-        f"Filtered: {len(content_items)} documents "
-        f"(excluding {n_temasider} temasider)"
+        f"Filtered: {len(content_items)} searchable documents "
+        f"(excluded {n_temasider} temasider, {n_non_searchable} non-searchable)"
     )
     if n_temasider > 0:
         print(
@@ -343,11 +348,10 @@ def main():
     print(f"  Documents needing queries: {len(items_needing_queries)}/{len(content_items)}")
     print(f"  Total queries to generate: {total_needed}")
     print(f"  Target per document: {args.queries_per_doc}")
-    print(f"  Parallel workers (API keys): {num_workers}")
-    print(f"  Rate per worker: 30 req/min (2s sleep)")
-    print(f"  Effective rate: ~{num_workers * 30} req/min")
+    print(f"  Parallel workers: {num_workers}")
+    print(f"  Rate: ~500 req/min (OpenAI gpt-4o-mini)")
 
-    estimated_seconds = (len(items_needing_queries) / num_workers) * 2
+    estimated_seconds = (len(items_needing_queries) / num_workers) * 0.1
     print(f"  Estimated time: ~{estimated_seconds / 60:.1f} minutes")
 
     print(f"\nPress Ctrl+C to cancel, or Enter to continue...")
