@@ -20,6 +20,28 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 
+def resolve_triplets_path(path_arg: str) -> Path:
+    """Resolve test triplets from the common repo locations."""
+    raw_path = Path(path_arg)
+    candidates = []
+
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.extend([
+            project_root / raw_path,
+            Path.cwd() / raw_path,
+            project_root / "scripts" / "data" / raw_path.name,
+            project_root / "data" / raw_path.name,
+        ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return candidates[0].resolve()
+
+
 def ndcg_at_k(rank: int | None, k: int) -> float:
     if rank is None or rank > k:
         return 0.0
@@ -130,9 +152,10 @@ def main():
     args = parser.parse_args()
 
     # Load test triplets
-    triplets_path = project_root / args.test_triplets
+    triplets_path = resolve_triplets_path(args.test_triplets)
     if not triplets_path.exists():
         print(f"Error: test triplets not found at {triplets_path}")
+        print("Also checked scripts/data/gpl_test_triplets.json and data/gpl_test_triplets.json.")
         print("Run 2_finetune_gpl.py first to generate the test triplets.")
         sys.exit(1)
 
@@ -148,8 +171,8 @@ def main():
     from app.services.search.hybrid_search import hybrid_search
     from app.config import settings
 
-    content_service.load_all_content()
-    bm25_search._ensure_index()
+    indexed_count = bm25_search.prebuild()
+    print(f"BM25 index ready ({indexed_count} documents)")
 
     if "semantic" in args.methods or "hybrid" in args.methods:
         if not settings.ml_embedding_enabled:

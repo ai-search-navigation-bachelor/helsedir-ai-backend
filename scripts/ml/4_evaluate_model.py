@@ -30,11 +30,39 @@ sys.path.insert(0, str(project_root))
 from scripts.ml.utils import enrich_temasider_with_children, enrich_with_child_content  # noqa: E402
 
 
+def resolve_triplets_path(path_arg: str) -> Path:
+    """Resolve test triplets from the common repo locations."""
+    raw_path = Path(path_arg)
+    candidates = []
+
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.extend([
+            project_root / raw_path,
+            Path.cwd() / raw_path,
+            project_root / "scripts" / "data" / raw_path.name,
+            project_root / "data" / raw_path.name,
+        ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return candidates[0].resolve()
+
+
 def load_content(db_service) -> list:
     conn = db_service._get_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
-        "SELECT id, tittel, tekst, info_type, role_tags, links FROM content WHERE searchable = 1 OR searchable IS NULL"
+        """
+        SELECT c.id, c.tittel, c.tekst, c.info_type, c.role_tags, c.links
+        FROM content c
+        JOIN content_type_config ctc
+          ON LOWER(c.info_type) = LOWER(ctc.info_type)
+        WHERE ctc.searchable = 1
+        """
     )
     items = cursor.fetchall()
     cursor.close()
@@ -130,9 +158,10 @@ def main():
     print("Database pool initialized")
 
     # Load test triplets
-    test_triplets_path = project_root / args.test_triplets
+    test_triplets_path = resolve_triplets_path(args.test_triplets)
     if not test_triplets_path.exists():
         print(f"Error: Test triplets not found at {test_triplets_path}")
+        print("Also checked scripts/data/gpl_test_triplets.json and data/gpl_test_triplets.json.")
         print("Run 2_finetune_gpl.py first to generate and save the test triplets.")
         sys.exit(1)
 
