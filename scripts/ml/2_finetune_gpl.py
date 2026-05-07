@@ -24,7 +24,7 @@ OPTIMIZATIONS:
 
 4. Better Evaluation Metrics
    - TripletEvaluator: Simple accuracy
-   - InformationRetrievalEvaluator: NDCG@10, MAP@10, MRR@10, Recall@10
+   - InformationRetrievalEvaluator: NDCG@10, MRR@10, Recall@10
    - More realistic search task metrics
 
 Recommended workflow:
@@ -915,7 +915,7 @@ def main():
         print(f"\n  Information Retrieval Metrics:")
         ir_result = evaluator_ir_test(trained_model)
         if isinstance(ir_result, dict):
-            key_patterns = ["ndcg@10", "map@100", "mrr@10", "recall@10", "accuracy@1", "accuracy@3", "accuracy@5"]
+            key_patterns = ["ndcg@10", "mrr@10", "recall@10", "accuracy@1", "accuracy@3", "accuracy@5"]
             printed = False
             for key, value in sorted(ir_result.items()):
                 if any(p in key.lower() for p in key_patterns):

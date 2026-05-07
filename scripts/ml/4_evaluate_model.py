@@ -69,7 +69,7 @@ def evaluate_model(model_name: str, test_queries: dict, test_relevant_docs: dict
 
 
 def print_comparison(model_names: list, results: list[dict]) -> None:
-    metrics = ["ndcg@10", "mrr@10", "map@100", "accuracy@1", "accuracy@3", "accuracy@5", "accuracy@10"]
+    metrics = ["ndcg@10", "mrr@10", "recall@10", "accuracy@1", "accuracy@3", "accuracy@5", "accuracy@10"]
 
     col_width = max(len(m) for m in model_names) + 2
     header_width = 22
