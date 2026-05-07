@@ -159,6 +159,14 @@ def main():
             semantic_search.load_content_embeddings()
 
     # Build search functions
+    hybrid_weights = [
+        (0.9, 0.1),
+        (0.7, 0.3),
+        (0.5, 0.5),
+        (0.3, 0.7),
+        (0.1, 0.9),
+    ]
+
     method_map = {
         "bm25":     ("BM25",     lambda q, k: bm25_search.search(q, k=k)),
         "semantic": ("Semantic", lambda q, k: semantic_search.search(q, k=k)),
@@ -170,6 +178,24 @@ def main():
         name, fn = method_map[m]
         method_names.append(name)
         search_fns.append(fn)
+
+    # Add hybrid weight variants if hybrid is included
+    if "hybrid" in args.methods:
+        for bm25_w, sem_w in hybrid_weights:
+            label = f"H {bm25_w:.1f}/{sem_w:.1f}"
+            bm25_w_captured, sem_w_captured = bm25_w, sem_w
+            method_names.append(label)
+            search_fns.append(
+                lambda q, k, b=bm25_w_captured, s=sem_w_captured: hybrid_search.search(
+                    q, k=k, rerank=False, bm25_weight=b, semantic_weight=s
+                )
+            )
+
+    # Remove the generic "Hybrid" entry since weight variants cover it
+    if "hybrid" in args.methods:
+        idx = method_names.index("Hybrid")
+        method_names.pop(idx)
+        search_fns.pop(idx)
 
     # Evaluate
     results = []
