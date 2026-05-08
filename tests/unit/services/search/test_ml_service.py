@@ -178,7 +178,7 @@ class TestGetCTRMap:
 
     def test_refreshes_from_db_when_ttl_expired(self):
         svc = MLService()
-        svc._ctr_last_refresh = 0.0  # expired (time.monotonic() >> 600s after boot)
+        svc._ctr_last_refresh = float("-inf")  # always expired regardless of system uptime
 
         with patch(
             "app.services.data.database_service.database_service.get_content_ctr_map",
@@ -190,7 +190,7 @@ class TestGetCTRMap:
 
     def test_ctr_map_is_empty_dict_on_db_exception(self):
         svc = MLService()
-        svc._ctr_last_refresh = 0.0  # force refresh
+        svc._ctr_last_refresh = float("-inf")  # always expired regardless of system uptime
 
         with patch(
             "app.services.data.database_service.database_service.get_content_ctr_map",
