@@ -2,16 +2,18 @@
 
 FastAPI backend for AI-powered health content search for Helsedirektoratet (Norwegian Directorate of Health).
 
+The system implements **hybrid search** — combining BM25 keyword matching with a domain-adapted semantic embedding model, fused via Reciprocal Rank Fusion (RRF). The semantic model is fine-tuned specifically on Norwegian health content using GPL (Generative Pseudo Labeling), requiring no manual data annotation. The training pipeline is described in [How the Semantic Search Model Was Trained](#how-the-semantic-search-model-was-trained).
+
 ## Features
 
 - **Hybrid search** - BM25 keyword + semantic embeddings combined with Reciprocal Rank Fusion (RRF)
-- **Learning-to-rank** - XGBoost LambdaMART model for result reranking based on click data
+- **Domain-adapted semantic model** - E5 embedding model fine-tuned on Norwegian health content via GPL ([see training pipeline →](#how-the-semantic-search-model-was-trained))
+- **Learning-to-rank** - XGBoost LambdaMART reranker trained on click data (disabled by default — requires sufficient click volume)
 - **BM25 hierarchy** - Parent content inherits relevance from child matches for better recall
 - **Click tracking** - Search logs, impressions, and clicks with CTR-based popularity signals
 - **NKI statistics** - Quality indicator integration from Helsedirektoratet's NKI API
 - **Theme pages** - Curated navigation pages with content grouping by category
 - **Role personalization** - Score boosting/penalty based on user role matching
-- **Developer tools** - Training pipeline UI for synthetic data generation, model training, and evaluation
 - **Norwegian NLP** - Snowball stemming and synonym expansion for Norwegian text
 
 ---
@@ -89,17 +91,21 @@ When a user role is provided (e.g. `lege`, `sykepleier`), results whose target g
 
 ## How the Semantic Search Model Was Trained
 
-The semantic search component uses a **domain-adapted embedding model** fine-tuned specifically on Norwegian health content.
+The semantic search component uses a **domain-adapted embedding model** fine-tuned specifically on Norwegian health content. This is one of the core technical contributions of the project.
 
-### Base Model
+### The Challenge
 
-`intfloat/multilingual-e5-base` — a multilingual transformer model pre-trained on 1.1 billion text pairs. It produces 768-dimensional embeddings suitable for semantic similarity search.
+Standard embedding models — even multilingual ones — are trained on general web text. They do not understand Norwegian medical terminology, the structure of Helsedirektoratet's content types, or that a query for "kreft" should surface pages about "kreftsykdommer" and "onkologi". Fine-tuning on domain-specific data addresses this, but normally requires thousands of manually labeled (query → relevant document) pairs.
 
-### Fine-tuning Method: GPL (Generative Pseudo Labeling)
+### Solution: GPL — No Labeled Data Needed
 
-Standard fine-tuning requires large sets of manually labeled (query → relevant document) pairs. To avoid expensive manual annotation, we use **GPL**: an unsupervised domain adaptation technique that generates synthetic training data using a large language model.
+We use **GPL (Generative Pseudo Labeling)**, an unsupervised domain adaptation technique. An LLM generates realistic synthetic queries for each document, and the model is then fine-tuned contrastively on those pairs — no manual annotation required.
 
-The full training pipeline lives in [`scripts/ml/`](scripts/ml/):
+**Base model**: `intfloat/multilingual-e5-base` — a multilingual transformer pretrained on 1.1 billion text pairs, producing 768-dimensional embeddings.
+
+### Training Pipeline
+
+The full pipeline lives in [`scripts/ml/`](scripts/ml/) and runs in four steps:
 
 ```
 Step 1 — Query Generation     (scripts/ml/1_generate_queries.py)
@@ -109,11 +115,12 @@ Step 1 — Query Generation     (scripts/ml/1_generate_queries.py)
      Time: ~1–2 hours for ~3000 documents.
 
 Step 2 — Model Fine-tuning    (scripts/ml/2_finetune_gpl.py)
-  └─ Train E5 using contrastive learning (MNRL loss):
+  └─ Fine-tune E5 using Multiple Negatives Ranking Loss (MNRL):
      • Each (query, document) pair is a positive example.
      • Hard negatives are mined: for each query, find documents
-       that are most similar to the correct document but wrong
-       — forcing the model to learn fine-grained distinctions.
+       most similar to the correct one but actually wrong —
+       forcing the model to learn fine-grained distinctions.
+     • In-batch negatives give additional signal at no extra cost.
      • Mixed precision (AMP) for 2× training speed.
      • Saves fine-tuned model to models/finetuned-e5-gpl/.
      Time: ~30–60 minutes (GPU recommended).
@@ -124,30 +131,33 @@ Step 3 — Embedding Generation (scripts/ml/3_generate_embeddings.py)
      Time: ~15–30 minutes.
 
 Step 4 — Evaluation           (scripts/ml/4_evaluate_model.py)
-  └─ Compare base model vs fine-tuned model on held-out test
-     triplets using NDCG@10, MRR@10, and Recall@10.
+  └─ Compare base model vs fine-tuned on held-out test triplets
+     using NDCG@10, MRR@10, and Recall@10 over the full corpus.
 ```
 
-### Why GPL Works
+See [`scripts/ml/README.md`](scripts/ml/README.md) for a detailed walkthrough of each step.
 
-GPT generates queries that a health professional might actually type, then fine-tuning teaches the embedding model:
-- "This query belongs to this document" (positive signal)
-- "This query does NOT belong to these similar-looking documents" (hard negative signal)
+### Why It Works
 
-The result is an embedding space where Norwegian health queries are closer to their correct documents than the generic multilingual model achieves out of the box.
+GPT-4o-mini generates queries that health professionals would actually type. Fine-tuning then teaches the embedding model two things:
+- *"This query belongs to this document"* — positive signal
+- *"This query does NOT belong to these similar-looking documents"* — hard negative signal
+
+The result is an embedding space where Norwegian health queries land closer to their correct documents than the generic multilingual baseline achieves.
 
 ### Evaluating Search Quality
 
-To measure and compare search methods objectively, use the evaluation script:
+To compare search methods objectively on held-out test queries:
 
 ```bash
-# Compare BM25 vs semantic vs hybrid on held-out test queries
+# Compare BM25 vs semantic vs hybrid
 python scripts/test/search/evaluate_search_methods.py
 
-# Outputs NDCG@10, MRR@10, Recall@10 for each method
+# Compare base model vs fine-tuned model
+python scripts/ml/4_evaluate_model.py
 ```
 
-See [`scripts/test/search/`](scripts/test/search/) for the full evaluation suite.
+Both scripts report NDCG@10, MRR@10, and Recall@10. See [`scripts/test/search/`](scripts/test/search/) for the full evaluation suite.
 
 ---
 
