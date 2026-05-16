@@ -1,3 +1,10 @@
+"""
+FastAPI application entry point.
+
+Defines the app instance, CORS middleware, lifespan hooks (BM25 index
+pre-build, embedding model load, ranking model load), and registers all routers.
+"""
+
 import logging
 from contextlib import asynccontextmanager
 

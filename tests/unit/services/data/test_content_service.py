@@ -1,3 +1,5 @@
+"""Unit tests for content_service — field parsing and content enrichment."""
+
 from app.entities.content import ContentItem, ContentLink
 
 

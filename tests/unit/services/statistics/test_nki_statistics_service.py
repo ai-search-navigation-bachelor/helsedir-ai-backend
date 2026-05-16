@@ -1,3 +1,5 @@
+"""Unit tests for NKIStatisticsService — caching, API error handling, and indicator matching."""
+
 import asyncio
 
 import pytest

@@ -1,3 +1,5 @@
+"""Unit tests for SearchRepository — verifies correct SQL schema usage for logging search events."""
+
 from unittest.mock import MagicMock
 
 import mysql.connector

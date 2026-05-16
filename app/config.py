@@ -1,3 +1,10 @@
+"""
+Application settings loaded from environment variables via pydantic-settings.
+
+Values are read (in priority order) from system env vars, then .env file, then defaults.
+See .env.example for the full list of available variables.
+"""
+
 from typing import Any
 
 from pydantic import Field, field_validator
