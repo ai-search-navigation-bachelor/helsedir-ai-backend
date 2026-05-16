@@ -44,6 +44,8 @@ pip-delete-this-directory.txt
 
 # Data
 /data/
+scripts/data/gpl_queries.json
+scripts/data/gpl_test_triplets.json
 *.pkl
 *.npy
 
