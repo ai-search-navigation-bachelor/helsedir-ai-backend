@@ -1,4 +1,13 @@
-from pydantic import Field
+"""
+Application settings loaded from environment variables via pydantic-settings.
+
+Values are read (in priority order) from system env vars, then .env file, then defaults.
+See .env.example for the full list of available variables.
+"""
+
+from typing import Any
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
@@ -108,6 +117,18 @@ class Settings(BaseSettings):
     mysql_pool_size: int = Field(default=10, le=32)
     mysql_root_password: str = ""
 
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, value: Any) -> Any:
+        """Handle common DEBUG values from shells and hosting environments."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "production", "prod", "off"}:
+                return False
+            if normalized in {"debug", "development", "dev", "on"}:
+                return True
+        return value
+
 
 # Create settings instance
 settings = Settings()
@@ -117,7 +138,7 @@ Path(settings.ml_models_dir).mkdir(parents=True, exist_ok=True)
 
 # Print loaded configuration (useful for debugging)
 if settings.debug:
-    print(f"Configuration loaded:")
+    print("Configuration loaded:")
     print(f"  Host: {settings.host}")
     print(f"  Port: {settings.port}")
     print(f"  Environment: {settings.environment}")

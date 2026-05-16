@@ -1,51 +1,25 @@
 # Migration Scripts
 
-Database migrations for schema and data updates.
+One-time database backfills for enriching existing content rows. These scripts are safe to re-run — they skip rows that are already populated.
+
+If you are setting up the project from scratch, run `scripts/setup/init_database.sql` instead — the schema is already up to date.
 
 ## Scripts
 
-- **`migrate_links.py`** - Migrate links to new id/href format
-  - Converts internal links from `href` to `id` format
-  - Removes invalid links with empty `href`
-  - Normalizes `"None"` strings to actual `None`
-- **`backfill_pdf_report_chapter_urls.py`** - Backfill `document_url` for `pdf-av-rapporten` chapters
-  - Fetches the public Helsedirektoratet HTML page for each matching chapter
-  - Extracts the first `<a href="...pdf">` link and stores it in `content.document_url`
-  - Reclassifies shortcode-only PDF chapters as `has_text_content = 0`
+- **`backfill_dead_end_theme_pages.py`** - Flag theme pages that have no linked content (`is_dead_end_theme_page`)
+- **`backfill_generisk_normerende_enheter.py`** - Import GNE content that is not exposed through normal API relations
+- **`backfill_nki_indicator_ids.py`** - Match NKI quality indicators to content pages by URL and title
+- **`backfill_pdf_report_chapter_urls.py`** - Set `document_url` for chapter pages that link to a PDF report
+- **`backfill_publish_dates.py`** - Populate `forst_publisert` and `sist_faglig_oppdatert` from the API
+- **`backfill_short_titles.py`** - Populate `kort_tittel` from the API for items where it is missing
 
 ## Usage
 
 ```bash
-# Preview changes (dry-run)
-python scripts/data/migration/migrate_links.py --dry-run
-
-# Apply migration
-python scripts/data/migration/migrate_links.py
-
-# Preview PDF chapter URL backfill
+# Preview changes before applying (scripts that support --dry-run)
 python scripts/data/migration/backfill_pdf_report_chapter_urls.py --dry-run
 
-# Apply PDF chapter URL backfill
-python scripts/data/migration/backfill_pdf_report_chapter_urls.py
-```
-
-## Link Format
-
-Old format (before migration):
-```json
-{
-  "rel": "forelder",
-  "type": "kapittel",
-  "href": "https://api.helsedirektoratet.no/innhold/kapitler/0006-0041-xxx",
-  "strukturId": "xxx"
-}
-```
-
-New format (after migration):
-```json
-{
-  "rel": "forelder",
-  "type": "kapittel",
-  "id": "0006-0041-xxx"
-}
+# Apply
+python scripts/data/migration/backfill_publish_dates.py
+python scripts/data/migration/backfill_nki_indicator_ids.py
 ```

@@ -699,7 +699,7 @@ SYNONYM_LOOKUP: Dict[str, FrozenSet[str]] = _build_lookup()
 
 
 def _tokenize_term(term: str) -> List[str]:
-    """Tokenize a synonym term using the same \w+ pattern as BM25Search."""
+    """Tokenize a synonym term using the same \\w+ pattern as BM25Search."""
     return re.findall(r"\w+", term.lower())
 
 

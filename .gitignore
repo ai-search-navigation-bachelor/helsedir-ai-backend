@@ -44,6 +44,8 @@ pip-delete-this-directory.txt
 
 # Data
 /data/
+scripts/data/gpl_queries.json
+scripts/data/gpl_test_triplets.json
 *.pkl
 *.npy
 
@@ -69,3 +71,7 @@ docker-volumes/
 
 # Claude
 .claude
+
+# Internal / not for version control
+.github/
+docs/

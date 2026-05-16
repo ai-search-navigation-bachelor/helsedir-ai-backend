@@ -14,6 +14,8 @@ pip install -r requirements.txt
 
 # Run development server
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Alternative: use the convenience runner script
+python scripts/run.py
 
 # Run tests
 pytest
@@ -60,6 +62,7 @@ app/
 - `search_service.py` - Facade for all search methods
 - `keyword_search.py` - Title-based keyword scoring
 - `bm25_search.py` - BM25 search with hierarchy (parent/child relevance boosting)
+- `bm25_hierarchy.py` - BM25HierarchyIndex: builds parent graph and propagates scores up the tree
 - `semantic_search.py` - E5 embedding-based cosine similarity search
 - `hybrid_search.py` - RRF fusion of BM25 + semantic, role/type boosting, ML reranking
 - `rrf_fusion.py` - Reciprocal Rank Fusion algorithm
@@ -91,8 +94,15 @@ Configured via environment variables:
 SEARCH_RRF_K=60                        # RRF fusion constant
 SEARCH_RRF_WEIGHT_BM25=0.3            # BM25 weight in RRF
 SEARCH_RRF_WEIGHT_SEMANTIC=0.7        # Semantic weight in RRF
-SEARCH_BM25_HIERARCHY_ENABLED=true    # Parent/child relevance boosting
-SEARCH_BOOST_TEMASIDE=1.15            # Theme page score multiplier
+SEARCH_BM25_HIERARCHY_ENABLED=true             # Parent/child relevance boosting
+SEARCH_BM25_HIERARCHY_MAX_DEPTH=4             # How many levels up to propagate
+SEARCH_BM25_HIERARCHY_DECAY=0.65             # Score decay per level
+SEARCH_BM25_HIERARCHY_SOURCE_TOP_K=400       # Top child results to consider
+SEARCH_BM25_HIERARCHY_TOP_CHILDREN=3         # Children per parent used for boost
+SEARCH_BM25_HIERARCHY_TAIL_WEIGHT=0.35       # Weight for lower-ranked children
+SEARCH_BM25_HIERARCHY_WEIGHT=0.8             # Overall hierarchy contribution weight
+SEARCH_BM25_HIERARCHY_MIN_CONTRIBUTION=0.0001 # Minimum score to propagate
+SEARCH_BOOST_TEMASIDE=1.15                   # Theme page score multiplier
 SEARCH_BOOST_RETNINGSLINJE=1.10       # Guideline score multiplier
 SEARCH_ROLE_MATCH_BOOST=1.15          # Role match multiplier
 SEARCH_ROLE_MISMATCH_PENALTY=0.85     # Role mismatch multiplier
@@ -162,6 +172,7 @@ helsedir-ai-backend/
 │   │   │   ├── search_service.py      # Facade for all search methods
 │   │   │   ├── keyword_search.py      # Title-based keyword scoring
 │   │   │   ├── bm25_search.py         # BM25 with hierarchy boosting
+│   │   │   ├── bm25_hierarchy.py      # Parent graph + score propagation
 │   │   │   ├── semantic_search.py     # E5 embedding similarity
 │   │   │   ├── hybrid_search.py       # RRF fusion + boosting + ML rerank
 │   │   │   ├── rrf_fusion.py          # Reciprocal Rank Fusion
