@@ -71,3 +71,7 @@ docker-volumes/
 
 # Claude
 .claude
+
+# Internal / not for version control
+.github/
+docs/
