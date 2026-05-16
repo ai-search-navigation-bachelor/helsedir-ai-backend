@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate synthetic search queries for documents using LLM (Groq API).
+Generate synthetic search queries for documents using OpenAI GPT-4o-mini.
 
 Used for GPL (Generative Pseudo Labeling) fine-tuning of embedding models.
 Queries are cached in data/gpl_queries.json for reuse.
@@ -10,7 +10,7 @@ Features:
 - Incremental generation: only generates missing queries to reach target
 - Caches all queries for fast reuse
 - Uses same passage format as embeddings (includes linked content)
-- Parallel generation with up to 4 Groq API keys (~4x faster)
+- Also injects title word sub-queries without LLM calls (fast augmentation)
 
 Usage:
     python scripts/ml/1_generate_queries.py                     # Generate 10 queries per doc
@@ -18,8 +18,7 @@ Usage:
     python scripts/ml/1_generate_queries.py --force              # Regenerate all queries
 
 Requirements:
-    GROQ_API_KEY in .env (free from https://console.groq.com/keys)
-    GROQ_API_KEY_2/3/4 in .env (optional — additional keys for parallel generation)
+    OPENAI_API_KEY in .env (required — model: gpt-4o-mini)
     Child content enrichment is handled automatically via enrich_with_child_content
 """
 
@@ -27,7 +26,6 @@ import argparse
 import asyncio
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -184,7 +182,6 @@ async def api_worker(
             content_id = str(item["id"])
             info_type = item.get("info_type") or ""
             queries_needed = item["_queries_needed"]
-            existing_count = item["_existing_count"]
             title = item.get("tittel") or item.get("title") or ""
             passage = item.get("_passage", "")
 
@@ -254,22 +251,28 @@ def main():
     )
     args = parser.parse_args()
 
+    # -------------------------------------------------------------------------
+    # Step 1: Dependency and database checks
+    # -------------------------------------------------------------------------
     from app.config import settings
     from app.ml.embedding_model import HealthContentEmbedding
     from app.services.data.database_service import database_service
 
-    # Check OpenAI API key
     if not settings.openai_api_key:
         print("Error: OPENAI_API_KEY not configured in .env")
         sys.exit(1)
     api_keys = [settings.openai_api_key]
 
-    # Check database
     if not database_service.is_connected():
         print("Error: Cannot connect to database")
         sys.exit(1)
 
-    # Load content
+    # -------------------------------------------------------------------------
+    # Step 2: Load and filter content from the database
+    # Temasider are excluded here — they have their own query generation script
+    # (generate_temaside_queries.py) because their content structure differs.
+    # Only searchable types (from content_type_config table) are included.
+    # -------------------------------------------------------------------------
     print("=" * 60)
     print("QUERY GENERATION FOR GPL TRAINING")
     print("=" * 60)
@@ -304,11 +307,15 @@ def main():
         print("No content found to generate queries for")
         sys.exit(1)
 
-    # Setup output path
+    # -------------------------------------------------------------------------
+    # Step 3: Load the query cache
+    # Queries are cached in gpl_queries.json so the script can be interrupted
+    # and resumed without losing progress. Re-running without --force only
+    # generates the delta needed to reach --queries-per-doc for each document.
+    # -------------------------------------------------------------------------
     output_path = project_root / args.output
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load existing cache
     cached = {}
     if output_path.exists() and not args.force:
         print(f"\nLoading cached queries from {output_path}")
@@ -318,7 +325,14 @@ def main():
     elif args.force:
         print("\n--force specified, regenerating all queries")
 
-    # Find documents needing queries
+    # -------------------------------------------------------------------------
+    # Step 4: Determine which documents still need queries
+    # Each document gets two kinds of queries:
+    # - Title sub-queries: fast, no LLM — splits multi-word titles into keywords
+    # - LLM queries: GPT-4o-mini generates realistic health professional queries
+    # The title sub-query count is subtracted from the LLM quota so we don't
+    # over-generate beyond the --queries-per-doc target.
+    # -------------------------------------------------------------------------
     items_needing_queries = []
     for item in content_items:
         content_id = str(item["id"])
@@ -333,7 +347,7 @@ def main():
         print("  Use --force to regenerate, or --queries-per-doc to increase target")
         return
 
-    # Enrich all content with child content (needed for linked_content lookup)
+    # Enrich with child content so the LLM sees the same passage used for embeddings
     print("\nEnriching content with child content...")
     enrich_with_child_content(content_items)
 
@@ -361,7 +375,12 @@ def main():
         print("\nCancelled")
         sys.exit(0)
 
-    # Run async worker pool
+    # -------------------------------------------------------------------------
+    # Step 5: Run the async worker pool and save results
+    # Each worker picks items from the queue, calls the OpenAI API, and appends
+    # results to the shared cache. Cache is saved every 10 documents and once
+    # more at the end to guard against interruption.
+    # -------------------------------------------------------------------------
     asyncio.run(_run_workers(
         items=items_needing_queries,
         api_keys=api_keys,
@@ -370,11 +389,9 @@ def main():
         output_path=output_path,
     ))
 
-    # Final save
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(cached, f, ensure_ascii=False, indent=2)
 
-    # Summary
     total_queries = sum(len(q) for q in cached.values())
     avg_queries = total_queries / len(cached) if cached else 0
 

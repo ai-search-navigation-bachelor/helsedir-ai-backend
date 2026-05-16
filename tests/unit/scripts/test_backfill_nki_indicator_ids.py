@@ -1,3 +1,5 @@
+"""Unit tests for backfill_nki_indicator_ids — indicator list normalization."""
+
 import pytest
 
 from scripts.data.migration.backfill_nki_indicator_ids import _normalize_indicator_list, save_matches_batch

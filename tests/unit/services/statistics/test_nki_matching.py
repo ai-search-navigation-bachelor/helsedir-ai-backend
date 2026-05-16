@@ -1,3 +1,5 @@
+"""Unit tests for nki_matching — indicator URL extraction, title normalization, and match planning."""
+
 import pytest
 
 from app.services.statistics.nki_matching import (

@@ -1,3 +1,5 @@
+"""Unit tests for backfill_generisk_normerende_enheter — parent resolution and synthetic link building."""
+
 import pytest
 
 from scripts.data.migration.backfill_generisk_normerende_enheter import (

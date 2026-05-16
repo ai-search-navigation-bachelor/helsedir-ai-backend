@@ -1,3 +1,5 @@
+"""Unit tests for document_metadata — PDF URL extraction, text visibility checks, and public link resolution."""
+
 import pytest
 
 from app.entities.content import ContentItem

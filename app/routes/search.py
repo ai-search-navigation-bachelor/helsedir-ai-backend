@@ -1,3 +1,7 @@
+"""
+Search routes — /search, /search/suggestions, /search/categorized, /search/category.
+"""
+
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from app.dto.request.search import SearchRequest, CategorizedSearchRequest, CategorySearchRequest

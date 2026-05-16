@@ -1,3 +1,9 @@
+"""
+Helsedirektoratet routes — /helsedir/search and /helsedir/infobit/{id}.
+
+Proxies live requests to the Helsedirektoratet API without local caching.
+"""
+
 from fastapi import APIRouter, HTTPException, Depends
 from app.dto.request.search import HelseDirectorateSearchRequest
 from app.dto.response.helsedir import HelseDirectorateSearchResponse

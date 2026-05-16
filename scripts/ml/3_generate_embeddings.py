@@ -105,7 +105,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # Check for sentence-transformers
+    # -------------------------------------------------------------------------
+    # Step 1: Dependency and database checks
+    # -------------------------------------------------------------------------
     try:
         from sentence_transformers import SentenceTransformer
         print("sentence-transformers available")
@@ -117,12 +119,16 @@ def main():
     from app.services.data.database_service import database_service
     from app.ml.embedding_model import HealthContentEmbedding
 
-    # Check database
     if not database_service.is_connected():
         print("Error: Cannot connect to database")
         sys.exit(1)
 
-    # Load E5 model
+    # -------------------------------------------------------------------------
+    # Step 2: Load the embedding model
+    # Defaults to models/finetuned-e5-gpl (output of 2_finetune_gpl.py).
+    # Falls back to the base multilingual-e5-base if the fine-tuned model
+    # has not been generated yet.
+    # -------------------------------------------------------------------------
     model_name = args.model_name
 
     if model_name.startswith("models/"):
@@ -135,7 +141,14 @@ def main():
     print(f"\nLoading model: {model_name}")
     model = HealthContentEmbedding(model_name=model_name)
 
-    # Load content from database
+    # -------------------------------------------------------------------------
+    # Step 3: Load and enrich content from the database
+    # Enrichment adds child content to parent pages so that searching for a
+    # broad topic (e.g. "fastlege") can surface the right temaside even when
+    # that specific term only appears in its children.
+    # Must mirror the same enrichment used in 2_finetune_gpl.py so that
+    # embeddings are consistent with how the model was trained.
+    # -------------------------------------------------------------------------
     print("\nLoading content from database...")
     content_items = database_service.get_all_content()
     print(f"Found {len(content_items)} content items")
@@ -144,14 +157,12 @@ def main():
         print("No content found. Run: python scripts/data/importing/import_content.py")
         sys.exit(1)
 
-    # Count types
     type_counts: Dict[str, int] = {}
     for item in content_items:
         t = item.get("info_type", "unknown")
         type_counts[t] = type_counts.get(t, 0) + 1
     print(f"Content types: {type_counts}")
 
-    # Enrich content — same logic as 2_finetune_gpl.py
     if not args.no_enrich:
         print("\nEnriching temasider with linked content...")
         enrich_temasider_with_children(content_items)
@@ -175,7 +186,12 @@ def main():
             print(f"  Preview: {passage[:200]}...")
             shown += 1
 
-    # Generate embeddings in batches
+    # -------------------------------------------------------------------------
+    # Step 4: Encode all passages into embedding vectors
+    # encode_passages formats each document into a query passage string, then
+    # encodes it in batches. Processing in batches keeps GPU/CPU memory usage
+    # predictable and allows progress reporting during the (~15-30 min) run.
+    # -------------------------------------------------------------------------
     print(f"\nGenerating embeddings (batch size: {args.batch_size})...")
 
     all_embeddings = []
@@ -196,7 +212,12 @@ def main():
     print(f"\nGenerated embeddings: {embeddings.shape}")
     print(f"  Embedding dimension: {embeddings.shape[1]}")
 
-    # Store embeddings in database with batch commits
+    # -------------------------------------------------------------------------
+    # Step 5: Store embeddings in the database
+    # Embeddings are serialized as raw float32 bytes (numpy .tobytes()) and
+    # written directly to the `content.embedding` BLOB column.
+    # Committed in batches of commit_batch_size to limit transaction size.
+    # -------------------------------------------------------------------------
     commit_batch_size = args.commit_batch_size
     print(f"\nStoring embeddings in database (batch commit size: {commit_batch_size})...")
 
@@ -213,14 +234,18 @@ def main():
             print(f"  Committed {stored_total}/{len(ids)} embeddings...")
             batch_buffer = []
 
-    # Commit remaining
+    # Flush the final partial batch
     if batch_buffer:
         stored = store_embeddings_batch(database_service, batch_buffer)
         stored_total += stored
 
     print(f"\nSuccessfully stored {stored_total}/{len(ids)} embeddings")
 
-    # Verify
+    # -------------------------------------------------------------------------
+    # Step 6: Verify a sample embedding was stored correctly
+    # Reloads one embedding from the database and checks it matches the
+    # in-memory array via np.allclose (allows for float rounding).
+    # -------------------------------------------------------------------------
     print("\nVerifying stored embeddings...")
     sample_id = ids[0]
     loaded = load_embedding(database_service, sample_id)

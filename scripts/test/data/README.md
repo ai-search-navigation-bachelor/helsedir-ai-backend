@@ -1,31 +1,22 @@
 # Data Tests
 
-Tests for data import, validation, and database operations.
+Diagnostic scripts for validating database state and API connectivity.
 
-## Test Files
+## Scripts
 
-- **`test_import.py`** - Test content import from API
-- **`test_setup.py`** - Test database setup
-- **`check_ranking_data.py`** - Validate ranking training data
-- **`test_db_connection.py`** - Quick database connection test
+- **`test_db_connection.py`** - Quick database connection check; shows content count, embedding count, search and click log totals
+- **`test_import.py`** - Test a live import from the Helsedirektoratet API without saving to the database; useful for inspecting API response fields
+- **`check_ranking_data.py`** - Verify there is enough click data to train the LTR ranking model
 
 ## Usage
 
 ```bash
-# Test database connection
+# Check database connection and row counts
 python scripts/test/data/test_db_connection.py
 
-# Test import functionality
-python scripts/test/data/test_import.py
+# Preview an API import (no DB writes)
+python scripts/test/data/test_import.py --type retningslinje --count 3
 
-# Check ranking data quality
+# Check ranking data availability
 python scripts/test/data/check_ranking_data.py
 ```
-
-## Quick DB Check
-
-The `test_db_connection.py` script provides a quick overview:
-- Total content items
-- Items with embeddings
-- Search logs count
-- Click logs count

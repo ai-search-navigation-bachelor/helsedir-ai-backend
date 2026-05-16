@@ -1,38 +1,116 @@
-# ML Workflow Scripts
+# ML Pipeline
 
-Machine learning pipeline for training and generating embeddings. These scripts have long execution times.
+Fine-tuning the E5 embedding model on Norwegian health content using **GPL (Generative Pseudo Labeling)**. These scripts are run offline when you want to train or re-train the semantic search model.
 
-## Workflow (in order)
+## What is GPL?
 
-1. **`1_generate_queries.py`** - Generate synthetic search queries using Groq LLM
-   - Generates 10 queries per document
-   - Uses GPL (Generative Pseudo Labeling) method
-   - Caches results in `data/gpl_queries.json`
-   - Time: ~3 hours for 3000 documents
+GPL is a domain adaptation method that requires no manually labeled data. Instead:
 
-2. **`2_finetune_gpl.py`** - Fine-tune E5 embedding model
-   - Trains on generated queries using contrastive learning
-   - Uses hard negative mining
-   - Saves model to `models/finetuned-e5-gpl/`
-   - Time: ~30-60 minutes
+1. An LLM generates realistic search queries for each document in the corpus.
+2. The embedding model is fine-tuned contrastively: it learns to rank the source document first for each generated query, while being pushed away from **hard negative** documents — documents that look similar but are actually wrong answers.
 
-3. **`3_generate_embeddings.py`** - Generate embeddings for all content
-   - Uses fine-tuned model (or base E5 if unavailable)
-   - Fetches and includes linked content
-   - Stores embeddings in database
-   - Time: ~15-30 minutes
+This lets us adapt the base multilingual-e5 model to Norwegian health terminology without expensive human annotation.
 
-## Quick Start
+## Pipeline (run in order)
+
+### Step 1 — Query Generation (`1_generate_queries.py`)
+
+Generates synthetic Norwegian search queries per document using OpenAI GPT-4o-mini. For each document, the script also automatically generates short keyword sub-queries by splitting multi-word titles — these require no LLM call and augment the dataset cheaply.
 
 ```bash
-# Full ML pipeline
 python scripts/ml/1_generate_queries.py
-python scripts/ml/2_finetune_gpl.py
-python scripts/ml/3_generate_embeddings.py
+
+# Options
+python scripts/ml/1_generate_queries.py --queries-per-doc 15  # more queries
+python scripts/ml/1_generate_queries.py --force               # regenerate all
 ```
+
+- Output: `data/gpl_queries.json` (cached, incremental — safe to resume if interrupted)
+- Requires: `OPENAI_API_KEY` in `.env`
+- Time: ~1–2 hours for ~3000 documents
+
+### Step 2 — Model Fine-tuning (`2_finetune_gpl.py`)
+
+The core training step. Trains the E5 model using **Multiple Negatives Ranking Loss (MNRL)** with hard negative mining.
+
+```bash
+python scripts/ml/2_finetune_gpl.py
+
+# Options
+python scripts/ml/2_finetune_gpl.py --epochs 10 --batch-size 8
+python scripts/ml/2_finetune_gpl.py --num-hard-negatives 3   # harder training
+python scripts/ml/2_finetune_gpl.py --no-use-amp              # disable mixed precision
+```
+
+- Output: `models/finetuned-e5-gpl/` (best checkpoint, not necessarily last epoch)
+- Also outputs: `data/gpl_test_triplets.json` (held-out test set reused by step 4)
+- GPU strongly recommended — CPU training is very slow
+- Time: ~30–60 minutes on GPU
+
+**Hard negative mining**: for each query, the script finds documents most similar to the correct answer (by cosine similarity) but that are actually wrong. Training against these forces the model to learn fine-grained distinctions between similar health topics — e.g. distinguishing a guideline about "Diabetes type 1" from one about "Diabetes type 2".
+
+**In-batch negatives**: MNRL additionally treats all other documents in the batch as negatives, giving the model many more negative signals per training step without extra data.
+
+**Temaside oversampling**: theme pages are a small fraction of the corpus but important for search. The script oversamples their training triplets so the model sees them proportionally.
+
+### Step 3 — Embedding Generation (`3_generate_embeddings.py`)
+
+Encodes every document in the database using the fine-tuned model and stores the embedding vectors. The passage format (how each document is represented as text) matches exactly what was used during training.
+
+```bash
+python scripts/ml/3_generate_embeddings.py
+
+# Options
+python scripts/ml/3_generate_embeddings.py --batch-size 16   # smaller batches
+python scripts/ml/3_generate_embeddings.py --no-enrich        # skip enrichment
+```
+
+- Requires: fine-tuned model at `models/finetuned-e5-gpl/` (falls back to base E5 if missing)
+- Updates the `embedding` column in the `content` table
+- Time: ~15–30 minutes
+
+After this step, enable semantic search in `.env`:
+```bash
+ML_EMBEDDING_ENABLED=true
+```
+
+### Step 4 — Evaluation (`4_evaluate_model.py`)
+
+Compares the base model against the fine-tuned model on the held-out test triplets saved by step 2. Uses the full document corpus as the retrieval pool — same conditions as live search.
+
+```bash
+# Compare base vs fine-tuned (default)
+python scripts/ml/4_evaluate_model.py
+
+# Evaluate a single model
+python scripts/ml/4_evaluate_model.py --models intfloat/multilingual-e5-base
+
+# Compare custom models
+python scripts/ml/4_evaluate_model.py \
+    --models intfloat/multilingual-e5-base models/finetuned-e5-gpl
+```
+
+Reports NDCG@10, MRR@10, and Recall@10 for each model side by side. The best value per metric is marked with `*`.
+
+**What to look for**: the fine-tuned model should show higher NDCG@10 and Recall@10 than the base model, especially on queries with Norwegian medical terms. If it doesn't, try more epochs, more hard negatives, or more queries per document in step 1.
 
 ## Requirements
 
-- `GROQ_API_KEY` in `.env` (for step 1)
-- `HELSEDIR_API_KEY` in `.env` (for step 3)
-- `sentence-transformers` package
+| Requirement | Used by |
+|---|---|
+| `OPENAI_API_KEY` in `.env` | Step 1 (query generation) |
+| GPU with CUDA | Step 2 (fine-tuning, optional but recommended) |
+| `sentence-transformers` package | Steps 2, 3, 4 |
+| Database connection | Steps 1, 2, 3 |
+| `data/gpl_queries.json` | Step 2 (generated by step 1) |
+| `data/gpl_test_triplets.json` | Step 4 (generated by step 2) |
+
+## Shared Utilities (`utils.py`)
+
+Used by multiple scripts to ensure consistent document representation across training, embedding generation, and evaluation:
+
+- `enrich_with_child_content(items)` — adds child document text to parent document passages
+- `enrich_temasider_with_children(items)` — special enrichment for temaside content using the `theme_page_content` junction table
+- `get_title_subqueries(title)` — splits multi-word Norwegian titles into component keywords for query augmentation
+
+Document formatting (`HealthContentEmbedding.format_passage`) is defined in `app/ml/embedding_model.py` and shared with the live inference path so training and retrieval use identical text representations.
