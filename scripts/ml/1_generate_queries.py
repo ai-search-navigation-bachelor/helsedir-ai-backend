@@ -18,8 +18,7 @@ Usage:
     python scripts/ml/1_generate_queries.py --force              # Regenerate all queries
 
 Requirements:
-    GROQ_API_KEY in .env (free from https://console.groq.com/keys)
-    GROQ_API_KEY_2/3/4 in .env (optional — additional keys for parallel generation)
+    OPENAI_API_KEY in .env (required — model: gpt-4o-mini)
     Child content enrichment is handled automatically via enrich_with_child_content
 """
 
