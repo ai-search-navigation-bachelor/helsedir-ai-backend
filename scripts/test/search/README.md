@@ -38,10 +38,6 @@ Evaluates multiple RRF weight variants (e.g. different BM25/semantic ratios) and
 python scripts/test/search/test_ranking_comparison.py
 ```
 
-### `test_ranking_model.py` — Ranking model unit tests
-
-Quick sanity checks on the LTR model predictions.
-
 ### `test_search.py` — Live search smoke tests
 
 Tests the search API against a running server with a set of representative queries.
