@@ -1,23 +1,26 @@
 """
-Professional Learning-to-Rank reranker for health content search (LambdaMART / XGBoost).
+Learning-to-rank reranker for health content search (XGBoost LambdaMART).
 
-This module replaces the previous TensorFlow binary classifier approach.
+Reranks the hybrid search results (BM25 + semantic + RRF) using a model trained
+on real user click data. The model learns which feature combinations predict a
+click — and thus which results are actually relevant.
 
-Why this version is better:
-- Trains a *ranking* model (LambdaMART) grouped by search_id (true LTR), not global click classification.
-- Uses IPS (inverse propensity scoring) via sample_weight to reduce position bias.
-- Works with your existing DB logging tables:
-  - search_logs
-  - search_results_shown (impressions + per-result features)
-  - click_logs (click events)
+Training data comes from three database tables:
+  - search_results_shown: one row per result shown, with retrieval scores
+  - click_logs:           which results the user clicked
+  - position_propensity:  click probability by position for IPS weighting
 
-Runtime usage:
-1) Generate candidates (BM25 + semantic + RRF fusion), scores carried on SearchResult.
-2) Call reranker.rerank(...) to sort candidates.
-3) Log shown results + clicks (already in your system).
+Key design decisions:
+  - LambdaMART (XGBRanker): trains a ranking model grouped by search session,
+    not a global binary classifier. Each search session is one query group.
+  - IPS (Inverse Propensity Scoring): clicks from position 1 are more likely
+    than from position 5, regardless of relevance. IPS divides each click signal
+    by the position's click probability, correcting for this bias.
+  - 6 features: retrieval scores (semantic, BM25), popularity (CTR), role match,
+    query length, and title/query overlap.
 
-Training usage:
-- Call reranker.train_from_database() periodically (offline job / manual).
+Training: call train_from_database() offline. Saved to models/ranking/reranker.json.
+Inference: call rerank() per search request. Falls back to a score blend if no model.
 """
 
 from __future__ import annotations
@@ -213,15 +216,28 @@ class HealthContentReranker:
             use_db_propensity: Use position propensities from DB for IPS
             verbose: Show training progress
         """
+        # ---------------------------------------------------------------------
+        # 1. Load raw training rows from the database
+        # Each row represents one search result shown in one search session,
+        # with the retrieval scores logged at search time and a 'clicked' flag
+        # joined from click_logs. Also load CTR separately — it is computed
+        # over a rolling 30-day window and is orthogonal to the retrieval scores.
+        # ---------------------------------------------------------------------
         rows = database_service.get_ltr_training_rows(days_back=days_back)
         if not rows:
             return {"trained": 0.0, "groups": 0.0, "rows": 0.0}
 
-        # Fetch smoothed CTR (last 30 days) as an orthogonal popularity signal
+        # Smoothed CTR: (clicks + 1) / (impressions + 21) over last 30 days.
+        # The prior (1/21 ≈ 0.048) shrinks CTR toward the mean for low-traffic items.
         ctr_map = database_service.get_content_ctr_map(days_back=30)
-        default_ctr = 1.0 / 21.0  # prior: 0 clicks, 0 impressions
+        default_ctr = 1.0 / 21.0
 
-        # Group by search_id
+        # ---------------------------------------------------------------------
+        # 2. Group rows by search session (search_id)
+        # LambdaMART is a listwise ranking algorithm — it needs all results from
+        # the same query together so it can compare their relative relevance.
+        # Mixing results across different queries would be meaningless.
+        # ---------------------------------------------------------------------
         groups: Dict[str, List[dict]] = {}
         for r in rows:
             sid = r.get("search_id")
@@ -229,7 +245,15 @@ class HealthContentReranker:
                 continue
             groups.setdefault(str(sid), []).append(r)
 
-        # Optional propensity table from DB for IPS weighting
+        # ---------------------------------------------------------------------
+        # 3. Load position propensities for IPS weighting
+        # Users click position 1 more often than position 5, regardless of whether
+        # position 1 is actually more relevant. Without correction, the model would
+        # learn "position 1 is always best" rather than learning from relevance.
+        # IPS divides each click signal by P(click | position), so a click at
+        # position 5 is upweighted relative to a click at position 1.
+        # Propensities are estimated from click data in the position_propensity table.
+        # ---------------------------------------------------------------------
         pos_prop: Dict[int, float] = {}
         if use_db_propensity:
             try:
@@ -248,15 +272,21 @@ class HealthContentReranker:
             if len(items) < min_group_size:
                 continue
 
-            # Sort by position (stable)
+            # Sort by original display position so items are in presentation order
             items_sorted = sorted(items, key=lambda x: int(x.get("position") or 10**9))
 
-            # Get query for this group (same for all items in group)
+            # Query-level features are the same for every result in this group
             query_text = str(items_sorted[0].get("query", "")).lower()
             query_terms = set(re.findall(r'\w+', query_text))
             query_len = float(len(query_terms))
 
-            # First pass: build feature dicts
+            # -------------------------------------------------------------
+            # 4. Build feature vectors and IPS-weighted labels for each result
+            # Label = click * (1 / propensity_at_position)
+            # A click at position 5 (propensity ≈ 0.4) gets weight 2.5×,
+            # while a click at position 1 (propensity ≈ 1.0) gets weight 1.0×.
+            # Non-clicked results always get label 0.
+            # -------------------------------------------------------------
             feat_dicts: List[Dict[str, float]] = []
             labels: List[float] = []
 
@@ -266,7 +296,7 @@ class HealthContentReranker:
             for rr in items_sorted:
                 pos = int(rr.get("position") or 0)
                 if pos <= 0:
-                    pos = 10  # fallback
+                    pos = 10  # fallback for missing position
                 any_pos = True
 
                 clicked = int(rr.get("clicked") or 0)
@@ -275,7 +305,7 @@ class HealthContentReranker:
 
                 content_id = rr.get("content_id", "")
 
-                # Title-query Jaccard overlap
+                # Jaccard overlap between query and document title
                 title_text = str(rr.get("title", "")).lower()
                 title_terms = set(re.findall(r'\w+', title_text))
                 if query_terms or title_terms:
@@ -294,8 +324,6 @@ class HealthContentReranker:
 
                 feat_dicts.append(feat_dict)
 
-                # IPS-weighted label: scale click signal by inverse propensity
-                # to correct for position bias (items shown higher get more clicks).
                 prop = propensity_for_position(pos, pos_prop if pos_prop else None)
                 ips_weight = 1.0 / max(float(prop), 1e-6)
                 labels.append(float(clicked) * ips_weight)
@@ -303,9 +331,9 @@ class HealthContentReranker:
             if not any_pos:
                 continue
             if require_any_click and not any_click:
+                # Sessions with no clicks provide no positive signal — skip them
                 continue
 
-            # Second pass: build feature vectors
             feats: List[List[float]] = []
             for fd in feat_dicts:
                 feats.append([fd[n] for n in self.feature_names])
@@ -323,6 +351,15 @@ class HealthContentReranker:
         y = np.asarray(y_all, dtype=np.float32)
         qid = np.asarray(qid_all, dtype=np.int32)
 
+        # ---------------------------------------------------------------------
+        # 5. Train the XGBoost LambdaMART model
+        # rank:pairwise uses the LambdaMART loss, which directly optimizes
+        # pairwise ranking (is result A ranked above result B when it should be?).
+        # qid groups rows by search session so the model only compares results
+        # within the same query, never across different queries.
+        # Hyperparameters: conservative depth (6) and regularization (reg_lambda=1)
+        # to avoid overfitting on limited click data.
+        # ---------------------------------------------------------------------
         self.model = xgb.XGBRanker(
             objective="rank:pairwise",
             learning_rate=0.08,
@@ -336,6 +373,7 @@ class HealthContentReranker:
         )
 
         self.model.fit(X, y, qid=qid, verbose=verbose)
+        # Store feature names in the booster so SHAP explanations are named
         self.model.get_booster().feature_names = self.feature_names
 
         return {"trained": 1.0, "groups": float(used_groups), "rows": float(used_rows)}
