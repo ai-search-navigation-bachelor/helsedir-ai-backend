@@ -1,3 +1,7 @@
+"""
+Logging route — POST /log for recording user interaction events (clicks, impressions).
+"""
+
 from fastapi import APIRouter, HTTPException
 from app.dto.request.logging import LogRequest
 from app.dto.response.logging import LogResponse
